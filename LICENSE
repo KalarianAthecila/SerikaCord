@@ -1,21 +1,113 @@
-MIT License
+SerikaCord Source Available License
 
-Copyright (c) 2026 serika.dev
+Copyright (c) 2026 Serika.dev - All Rights Reserved
 
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
+TERMS AND CONDITIONS
 
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
+1. DEFINITIONS
 
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
+"Software" refers to SerikaCord and all associated source code, documentation,
+configuration files, and related materials in this repository.
+
+"You" refers to any individual or entity that accesses, views, or uses the Software.
+
+"Derivative Work" means any work that is based on or derived from the Software.
+
+"Commercial Use" means any use of the Software intended for or directed toward
+commercial advantage or monetary compensation.
+
+"Competing Product" means any software, service, or application that provides
+similar functionality to the Software, including but not limited to chat
+applications, communication platforms, and social networking services.
+
+2. GRANT OF LIMITED RIGHTS
+
+Subject to the terms and conditions of this License, the copyright holders grant
+You a limited, non-exclusive, non-transferable, revocable license to:
+
+a) View and study the source code for personal educational purposes.
+
+b) Fork the repository for personal learning and experimentation only.
+
+c) Submit contributions (pull requests, bug reports, documentation improvements)
+   to the official repository.
+
+d) Reference the code for educational purposes with proper attribution.
+
+3. RESTRICTIONS
+
+You may NOT, without explicit prior written permission from the copyright holders:
+
+a) Use the Software or any portion thereof to create, develop, or operate a
+   Competing Product.
+
+b) Use the Software for any Commercial Use.
+
+c) Redistribute, sublicense, sell, lease, or otherwise transfer the Software or
+   any rights therein.
+
+d) Remove, alter, or obscure any copyright notices, license terms, or attribution
+   notices in the Software.
+
+e) Claim ownership of the Software or represent that You created the Software.
+
+f) Use the Software to provide services to third parties.
+
+g) Deploy or host the Software in any production environment without explicit
+   written permission.
+
+h) Incorporate any portion of the Software into other projects, whether
+   open-source or proprietary.
+
+i) Use the names, trademarks, logos, or branding of Serika.dev, SerikaCord, or
+   any associated entities without explicit written permission.
+
+4. CONTRIBUTIONS
+
+By submitting any contribution to the Software, You:
+
+a) Grant the copyright holders a perpetual, worldwide, non-exclusive, royalty-free,
+   irrevocable license to use, reproduce, modify, display, perform, sublicense,
+   and distribute Your contribution.
+
+b) Represent that You have the legal right to grant such license.
+
+c) Understand that Your contribution may be incorporated into the Software at
+   the sole discretion of the copyright holders.
+
+5. NO WARRANTY
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+PARTICULAR PURPOSE, AND NONINFRINGEMENT.
+
+6. LIMITATION OF LIABILITY
+
+IN NO EVENT SHALL THE COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES, OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT, OR OTHERWISE, ARISING FROM, OUT
+OF, OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+7. TERMINATION
+
+This License automatically terminates if You violate any of its terms. Upon
+termination, You must immediately cease all use of the Software and destroy all
+copies in Your possession or control.
+
+8. GOVERNING LAW
+
+This License shall be governed by and construed in accordance with the laws of
+the jurisdiction where the primary copyright holder resides, without regard to
+conflict of law principles.
+
+9. CONTACT
+
+For permissions beyond this License, commercial licensing inquiries, or other
+questions, please contact: legal@serika.dev
+
+---
+
+By accessing, viewing, downloading, or using the Software in any way, You
+acknowledge that You have read, understood, and agree to be bound by the terms
+and conditions of this License.
+
+Last Updated: January 2026
