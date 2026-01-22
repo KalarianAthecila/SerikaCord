@@ -187,7 +187,14 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## 📄 License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+This project is licensed under the **SerikaCord Source Available License** - see the [LICENSE](LICENSE) file for details.
+
+**Key points:**
+- ✅ View and study source code for personal education
+- ✅ Fork for personal learning and experimentation
+- ❌ Commercial use prohibited without written permission
+- ❌ Creating competing products prohibited
+- ❌ Redistribution prohibited
 
 ## 🙏 Acknowledgments
 
