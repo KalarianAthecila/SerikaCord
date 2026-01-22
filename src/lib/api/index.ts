@@ -48,6 +48,7 @@ const rateLimitPlugin = new Elysia({ name: 'rateLimit' })
 
 // User routes
 const userRoutes = new Elysia({ prefix: '/users' })
+  // Support both /me and /@me for compatibility
   .get('/me', async ({ headers, cookie, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user) {
@@ -69,6 +70,66 @@ const userRoutes = new Elysia({ prefix: '/users' })
       settings: user.settings,
       createdAt: user.createdAt,
     };
+  })
+  .get('/@me', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    return {
+      id: user._id,
+      username: user.username,
+      displayName: user.displayName,
+      avatar: user.avatar,
+      banner: user.banner,
+      bio: user.bio,
+      status: user.status,
+      customStatus: user.customStatus,
+      isPremium: user.isPremium,
+      isVerified: user.isVerified,
+      settings: user.settings,
+      createdAt: user.createdAt,
+    };
+  })
+  .get('/@me/servers', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    // Import ServerMember to get user's servers
+    const { ServerMember, Server } = await import('@/lib/models');
+    
+    const memberships = await ServerMember.find({ userId: user._id })
+      .populate({
+        path: 'serverId',
+        select: 'name icon description memberCount isOfficial isVerified vanityUrlCode ownerId',
+      });
+
+    const servers = memberships
+      .filter(m => m.serverId) // Filter out any null references
+      .map(m => {
+        const server = m.serverId as any;
+        return {
+          id: server._id,
+          name: server.name,
+          icon: server.icon,
+          description: server.description,
+          memberCount: server.memberCount,
+          isOfficial: server.isOfficial,
+          isVerified: server.isVerified,
+          vanityUrlCode: server.vanityUrlCode,
+          isOwner: server.ownerId?.toString() === user._id.toString(),
+          joinedAt: m.joinedAt,
+          roles: m.roles,
+          nickname: m.nickname,
+        };
+      });
+
+    return servers;
   })
   .put('/me', async ({ headers, cookie, body, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);

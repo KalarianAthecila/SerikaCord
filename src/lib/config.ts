@@ -6,6 +6,10 @@ export const config = {
   PORT: process.env.PORT || 3000,
   NODE_ENV: process.env.NODE_ENV || 'development',
   
+  // Accounts API (external auth service)
+  ACCOUNTS_API_URL: process.env.ACCOUNTS_URL || 'https://accounts.serika.dev',
+  ACCOUNTS_SERVICE_KEY: process.env.AUTH_INTERNAL_KEY || process.env.AUTH_SERVICE_INTERNAL_KEY || 'serika-internal-auth-key-change-in-production',
+  
   // Database
   MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/serikacord',
   MONGO_DB_NAME: process.env.MONGO_DB_NAME || 'serikacord',

@@ -72,10 +72,10 @@ export function CreateChannelDialog({ open, onOpenChange }: CreateChannelDialogP
 
   return (
     <Dialog open={open} onOpenChange={(o) => { onOpenChange(o); if (!o) resetForm(); }}>
-      <DialogContent className="bg-[#313338] border-none text-white max-w-md">
+      <DialogContent className="bg-[#0a0a0a] border border-[#1a1a1a] text-white max-w-md">
         <DialogHeader>
           <DialogTitle className="text-xl font-bold">Create Channel</DialogTitle>
-          <DialogDescription className="text-[#b5bac1]">
+          <DialogDescription className="text-[#888888]">
             in {currentServer?.name}
           </DialogDescription>
         </DialogHeader>
@@ -89,30 +89,30 @@ export function CreateChannelDialog({ open, onOpenChange }: CreateChannelDialogP
 
           {/* Channel Type */}
           <div className="space-y-3">
-            <Label className="text-xs font-bold uppercase text-[#b5bac1]">
+            <Label className="text-xs font-bold uppercase text-[#888888]">
               Channel Type
             </Label>
             <div className="space-y-2">
               <button
                 onClick={() => setChannelType("text")}
-                className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors ${
+                className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
                   channelType === "text"
-                    ? "bg-[#43444b]"
-                    : "bg-[#2b2d31] hover:bg-[#35373c]"
+                    ? "bg-[#8B5CF6]/10 border-[#8B5CF6]"
+                    : "bg-[#111111] border-[#222222] hover:border-[#333333]"
                 }`}
               >
-                <Hash className="w-6 h-6 text-[#949ba4]" />
+                <Hash className="w-6 h-6 text-[#666666]" />
                 <div className="text-left">
                   <div className="font-medium">Text</div>
-                  <div className="text-xs text-[#949ba4]">
+                  <div className="text-xs text-[#666666]">
                     Send messages, images, GIFs, emoji, and more
                   </div>
                 </div>
                 <div
                   className={`ml-auto w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     channelType === "text"
-                      ? "border-[#5865F2] bg-[#5865F2]"
-                      : "border-[#949ba4]"
+                      ? "border-[#8B5CF6] bg-[#8B5CF6]"
+                      : "border-[#666666]"
                   }`}
                 >
                   {channelType === "text" && (
@@ -123,24 +123,24 @@ export function CreateChannelDialog({ open, onOpenChange }: CreateChannelDialogP
 
               <button
                 onClick={() => setChannelType("voice")}
-                className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors ${
+                className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
                   channelType === "voice"
-                    ? "bg-[#43444b]"
-                    : "bg-[#2b2d31] hover:bg-[#35373c]"
+                    ? "bg-[#8B5CF6]/10 border-[#8B5CF6]"
+                    : "bg-[#111111] border-[#222222] hover:border-[#333333]"
                 }`}
               >
-                <Volume2 className="w-6 h-6 text-[#949ba4]" />
+                <Volume2 className="w-6 h-6 text-[#666666]" />
                 <div className="text-left">
                   <div className="font-medium">Voice</div>
-                  <div className="text-xs text-[#949ba4]">
+                  <div className="text-xs text-[#666666]">
                     Hang out together with voice and video
                   </div>
                 </div>
                 <div
                   className={`ml-auto w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     channelType === "voice"
-                      ? "border-[#5865F2] bg-[#5865F2]"
-                      : "border-[#949ba4]"
+                      ? "border-[#8B5CF6] bg-[#8B5CF6]"
+                      : "border-[#666666]"
                   }`}
                 >
                   {channelType === "voice" && (
@@ -153,11 +153,11 @@ export function CreateChannelDialog({ open, onOpenChange }: CreateChannelDialogP
 
           {/* Channel Name */}
           <div className="space-y-2">
-            <Label htmlFor="channelName" className="text-xs font-bold uppercase text-[#b5bac1]">
+            <Label htmlFor="channelName" className="text-xs font-bold uppercase text-[#888888]">
               Channel Name
             </Label>
             <div className="relative">
-              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#949ba4]">
+              <div className="absolute left-3 top-1/2 -translate-y-1/2 text-[#666666]">
                 {channelType === "text" ? (
                   <Hash className="w-5 h-5" />
                 ) : (
@@ -169,7 +169,7 @@ export function CreateChannelDialog({ open, onOpenChange }: CreateChannelDialogP
                 value={channelName}
                 onChange={(e) => setChannelName(e.target.value.toLowerCase().replace(/\s+/g, "-"))}
                 placeholder="new-channel"
-                className="pl-10 bg-[#1e1f22] border-none text-white placeholder:text-[#6d6f78] focus-visible:ring-[#5865F2] focus-visible:ring-offset-0"
+                className="pl-10 bg-[#111111] border-[#222222] text-white placeholder:text-[#555555] focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-0"
               />
             </div>
           </div>
@@ -186,7 +186,7 @@ export function CreateChannelDialog({ open, onOpenChange }: CreateChannelDialogP
           <Button
             onClick={handleCreate}
             disabled={!channelName.trim() || isLoading}
-            className="bg-[#5865F2] hover:bg-[#4752c4] text-white"
+            className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
           >
             {isLoading ? "Creating..." : "Create Channel"}
           </Button>

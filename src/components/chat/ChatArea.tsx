@@ -162,9 +162,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
   if (!currentChannel) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#313338] text-[#949ba4]">
-        <div className="w-40 h-40 mb-4 rounded-full bg-[#404249] flex items-center justify-center">
-          <Hash className="w-20 h-20 text-[#5865F2]" />
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] text-[#666666]">
+        <div className="w-40 h-40 mb-4 rounded-full bg-[#111111] flex items-center justify-center">
+          <Hash className="w-20 h-20 text-[#8B5CF6]" />
         </div>
         <h2 className="text-xl font-semibold text-white mb-2">
           {currentServer ? "Select a channel" : "Welcome to SerikaCord"}
@@ -179,14 +179,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-[#313338] min-w-0">
+    <div className="flex-1 flex flex-col bg-[#0a0a0a] min-w-0">
       {/* Channel Header */}
-      <div className="h-12 px-4 flex items-center justify-between border-b border-[#1f2023] shadow-sm flex-shrink-0">
+      <div className="h-12 px-4 flex items-center justify-between border-b border-[#1a1a1a] flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Hash className="w-6 h-6 text-[#80848e] flex-shrink-0" />
+          <Hash className="w-6 h-6 text-[#555555] flex-shrink-0" />
           <span className="font-semibold text-white truncate">{currentChannel.name}</span>
         </div>
-        <div className="flex items-center gap-4 text-[#b5bac1]">
+        <div className="flex items-center gap-4 text-[#888888]">
           <button className="hover:text-white transition-colors">
             <Bell className="w-5 h-5" />
           </button>
@@ -202,14 +202,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           >
             <Users className="w-5 h-5" />
           </button>
-          <div className="h-6 w-px bg-[#3f4147]" />
+          <div className="h-6 w-px bg-[#222222]" />
           <div className="relative">
             <input
               type="text"
               placeholder="Search"
-              className="w-32 h-6 px-2 rounded bg-[#1e1f22] text-sm text-white placeholder:text-[#949ba4] focus:outline-none focus:w-48 transition-all"
+              className="w-32 h-6 px-2 rounded bg-[#111111] text-sm text-white placeholder:text-[#666666] focus:outline-none focus:w-48 transition-all"
             />
-            <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[#949ba4]" />
+            <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666666]" />
           </div>
           <button className="hover:text-white transition-colors">
             <Inbox className="w-5 h-5" />
@@ -224,14 +224,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       <ScrollArea className="flex-1" ref={scrollRef}>
         <div className="flex flex-col py-4">
           {/* Channel Welcome */}
-          <div className="px-4 pb-4 mb-4 border-b border-[#3f4147]">
-            <div className="w-16 h-16 mb-2 rounded-full bg-[#404249] flex items-center justify-center">
+          <div className="px-4 pb-4 mb-4 border-b border-[#1a1a1a]">
+            <div className="w-16 h-16 mb-2 rounded-full bg-[#111111] flex items-center justify-center">
               <Hash className="w-10 h-10 text-white" />
             </div>
             <h1 className="text-3xl font-bold text-white mb-2">
               Welcome to #{currentChannel.name}!
             </h1>
-            <p className="text-[#949ba4]">
+            <p className="text-[#666666]">
               This is the start of the #{currentChannel.name} channel.
             </p>
           </div>
@@ -239,17 +239,17 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           {/* Messages */}
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <div className="w-8 h-8 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
+              <div className="w-8 h-8 border-2 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
             </div>
           ) : groupedMessages.length === 0 ? (
-            <div className="text-center text-[#949ba4] py-8">
+            <div className="text-center text-[#666666] py-8">
               No messages yet. Be the first to say something!
             </div>
           ) : (
             groupedMessages.map((group, groupIndex) => (
               <div
                 key={groupIndex}
-                className="group px-4 py-0.5 hover:bg-[#2e3035] message-hover"
+                className="group px-4 py-0.5 hover:bg-[#111111] message-hover"
               >
                 <div className="flex gap-4">
                   {/* Avatar (only show for first message in group) */}
@@ -257,7 +257,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                     {group.messages[0] === group.messages[0] && (
                       <Avatar className="w-10 h-10 mt-0.5">
                         <AvatarImage src={group.author.avatar} alt={group.author.displayName} />
-                        <AvatarFallback className="bg-[#5865F2] text-white">
+                        <AvatarFallback className="bg-[#8B5CF6] text-white">
                           {group.author.displayName.charAt(0).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
@@ -270,14 +270,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                       <span className="font-medium text-white hover:underline cursor-pointer">
                         {group.author.displayName}
                       </span>
-                      <span className="text-xs text-[#949ba4]">
+                      <span className="text-xs text-[#666666]">
                         {formatTimestamp(group.messages[0].createdAt)}
                       </span>
                     </div>
 
                     {/* Messages */}
                     {group.messages.map((message) => (
-                      <div key={message.id} className="text-[#dbdee1] leading-relaxed">
+                      <div key={message.id} className="text-[#888888] leading-relaxed">
                         {message.content}
                         {message.attachments?.map((attachment) => (
                           <div key={attachment.id} className="mt-2">
@@ -292,7 +292,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                                 href={attachment.url}
                                 target="_blank"
                                 rel="noopener noreferrer"
-                                className="text-[#00a8fc] hover:underline"
+                                className="text-[#8B5CF6] hover:underline"
                               >
                                 {attachment.filename}
                               </a>
@@ -311,8 +311,8 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
       {/* Message Input */}
       <div className="px-4 pb-6 flex-shrink-0">
-        <div className="relative bg-[#383a40] rounded-lg">
-          <button className="absolute left-4 top-1/2 -translate-y-1/2 text-[#b5bac1] hover:text-[#dbdee1] transition-colors">
+        <div className="relative bg-[#111111] rounded-lg border border-[#1a1a1a]">
+          <button className="absolute left-4 top-1/2 -translate-y-1/2 text-[#888888] hover:text-white transition-colors">
             <PlusCircle className="w-6 h-6" />
           </button>
           <Textarea
@@ -321,23 +321,23 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             placeholder={`Message #${currentChannel.name}`}
-            className="w-full min-h-[44px] max-h-[300px] py-2.5 pl-14 pr-36 bg-transparent border-none text-[#dbdee1] placeholder:text-[#6d6f78] resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            className="w-full min-h-[44px] max-h-[300px] py-2.5 pl-14 pr-36 bg-transparent border-none text-white placeholder:text-[#555555] resize-none focus-visible:ring-0 focus-visible:ring-offset-0"
             rows={1}
           />
-          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-4 text-[#b5bac1]">
-            <button className="hover:text-[#dbdee1] transition-colors">
+          <div className="absolute right-4 top-1/2 -translate-y-1/2 flex items-center gap-4 text-[#888888]">
+            <button className="hover:text-white transition-colors">
               <Gift className="w-6 h-6" />
             </button>
-            <button className="hover:text-[#dbdee1] transition-colors">
+            <button className="hover:text-white transition-colors">
               <Sticker className="w-6 h-6" />
             </button>
-            <button className="hover:text-[#dbdee1] transition-colors">
+            <button className="hover:text-white transition-colors">
               <Smile className="w-6 h-6" />
             </button>
             {newMessage.trim() && (
               <button
                 onClick={handleSendMessage}
-                className="text-[#5865F2] hover:text-[#7983f5] transition-colors"
+                className="text-[#8B5CF6] hover:text-[#A78BFA] transition-colors"
               >
                 <SendHorizontal className="w-6 h-6" />
               </button>

@@ -7,10 +7,23 @@ export interface IInvite extends Document {
   channelId: Types.ObjectId;
   inviterId: Types.ObjectId;
   
+  // Usage
   uses: number;
   maxUses: number; // 0 = unlimited
   maxAge: number; // in seconds, 0 = never expires
   temporary: boolean; // Kick when disconnect if not assigned role
+  
+  // Invite type
+  type: 'normal' | 'vanity'; // Vanity = custom URL for partnered/discoverable
+  isVanity: boolean;
+  
+  // Metadata for invite splash page
+  metadata?: {
+    memberCount?: number;
+    onlineCount?: number;
+    serverDescription?: string;
+    serverFeatures?: string[];
+  };
   
   expiresAt?: Date;
   
@@ -57,6 +70,22 @@ const InviteSchema = new Schema<IInvite>({
     type: Boolean,
     default: false,
   },
+  type: {
+    type: String,
+    enum: ['normal', 'vanity'],
+    default: 'normal',
+  },
+  isVanity: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  metadata: {
+    memberCount: { type: Number, default: null },
+    onlineCount: { type: Number, default: null },
+    serverDescription: { type: String, default: null },
+    serverFeatures: [{ type: String }],
+  },
   expiresAt: {
     type: Date,
     default: null,
@@ -67,5 +96,7 @@ const InviteSchema = new Schema<IInvite>({
 
 // Auto-expire invites
 InviteSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+// Index for vanity lookups
+InviteSchema.index({ code: 1, isVanity: 1 });
 
 export const Invite = mongoose.models.Invite || mongoose.model<IInvite>('Invite', InviteSchema);

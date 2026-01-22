@@ -9,12 +9,25 @@ interface Server {
   ownerId: string;
 }
 
+type ChannelType = 
+  | "text" 
+  | "voice" 
+  | "category" 
+  | "announcement" 
+  | "stage" 
+  | "forum" 
+  | "dm" 
+  | "group_dm";
+
 interface Channel {
   id: string;
   name: string;
-  type: "text" | "voice" | "announcement";
+  type: ChannelType;
   serverId: string;
   position: number;
+  parentId?: string; // Category parent
+  isNsfw?: boolean;
+  topic?: string;
 }
 
 interface ServerContextType {

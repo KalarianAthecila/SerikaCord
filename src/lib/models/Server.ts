@@ -6,6 +6,7 @@ export interface IServer extends Document {
   description?: string;
   icon?: string;
   banner?: string;
+  splash?: string; // Invite splash image
   ownerId: Types.ObjectId;
   
   // Settings
@@ -25,8 +26,18 @@ export interface IServer extends Document {
   premiumTier: 0 | 1 | 2 | 3;
   premiumSubscriptionCount: number;
   
+  // Partnership & Discovery
+  isPartnered: boolean;
+  partneredAt?: Date;
+  isDiscoverable: boolean;
+  discoverableAt?: Date;
+  discoverySplash?: string;
+  discoveryDescription?: string;
+  discoveryCategories: string[];
+  
   // Invite
   vanityUrlCode?: string;
+  vanityUrlUses: number;
   
   // Security
   mfaLevel: 0 | 1;
@@ -38,6 +49,16 @@ export interface IServer extends Document {
   // Templates
   isTemplate: boolean;
   templateId?: string;
+  
+  // Welcome Screen
+  welcomeScreen?: {
+    description?: string;
+    channels: Array<{
+      channelId: Types.ObjectId;
+      description: string;
+      emoji?: string;
+    }>;
+  };
   
   // Timestamps
   createdAt: Date;
@@ -62,6 +83,10 @@ const ServerSchema = new Schema<IServer>({
     default: null,
   },
   banner: {
+    type: String,
+    default: null,
+  },
+  splash: {
     type: String,
     default: null,
   },
@@ -119,10 +144,44 @@ const ServerSchema = new Schema<IServer>({
     type: Number,
     default: 0,
   },
+  isPartnered: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  partneredAt: {
+    type: Date,
+    default: null,
+  },
+  isDiscoverable: {
+    type: Boolean,
+    default: false,
+    index: true,
+  },
+  discoverableAt: {
+    type: Date,
+    default: null,
+  },
+  discoverySplash: {
+    type: String,
+    default: null,
+  },
+  discoveryDescription: {
+    type: String,
+    maxlength: 300,
+    default: null,
+  },
+  discoveryCategories: [{
+    type: String,
+  }],
   vanityUrlCode: {
     type: String,
     unique: true,
     sparse: true,
+  },
+  vanityUrlUses: {
+    type: Number,
+    default: 0,
   },
   mfaLevel: {
     type: Number,
@@ -145,12 +204,19 @@ const ServerSchema = new Schema<IServer>({
     type: String,
     default: null,
   },
+  welcomeScreen: {
+    description: { type: String, maxlength: 300, default: null },
+    channels: [{
+      channelId: { type: Schema.Types.ObjectId, ref: 'Channel' },
+      description: { type: String, maxlength: 50 },
+      emoji: { type: String, default: null },
+    }],
+  },
 }, {
   timestamps: true,
 });
 
 // Indexes
 ServerSchema.index({ name: 'text', description: 'text' });
-ServerSchema.index({ vanityUrlCode: 1 }, { sparse: true });
 
 export const Server = mongoose.models.Server || mongoose.model<IServer>('Server', ServerSchema);

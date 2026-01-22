@@ -51,12 +51,12 @@ export function MemberSidebar() {
   if (!currentServer) return null;
 
   return (
-    <div className="w-60 h-full bg-[#2b2d31] flex-shrink-0">
+    <div className="w-60 h-full bg-[#0a0a0a] border-l border-[#1a1a1a] flex-shrink-0">
       <ScrollArea className="h-full">
         <div className="py-4">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
-              <div className="w-6 h-6 border-2 border-[#5865F2] border-t-transparent rounded-full animate-spin" />
+              <div className="w-6 h-6 border-2 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
             </div>
           ) : (
             <>
@@ -64,7 +64,7 @@ export function MemberSidebar() {
               {onlineMembers.length > 0 && (
                 <div className="mb-4">
                   <div className="px-4 mb-2">
-                    <span className="text-xs font-semibold uppercase text-[#949ba4]">
+                    <span className="text-xs font-semibold uppercase text-[#666666]">
                       Online — {onlineMembers.length}
                     </span>
                   </div>
@@ -78,7 +78,7 @@ export function MemberSidebar() {
               {offlineMembers.length > 0 && (
                 <div>
                   <div className="px-4 mb-2">
-                    <span className="text-xs font-semibold uppercase text-[#949ba4]">
+                    <span className="text-xs font-semibold uppercase text-[#666666]">
                       Offline — {offlineMembers.length}
                     </span>
                   </div>
@@ -89,7 +89,7 @@ export function MemberSidebar() {
               )}
 
               {members.length === 0 && (
-                <div className="text-center text-[#949ba4] text-sm py-8">
+                <div className="text-center text-[#666666] text-sm py-8">
                   No members found
                 </div>
               )}
@@ -111,7 +111,7 @@ function MemberItem({ member }: MemberItemProps) {
   return (
     <button
       className={cn(
-        "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-3 hover:bg-[#35373c]/50 transition-all group",
+        "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-3 hover:bg-[#111111] transition-all group",
         isOffline && "opacity-50"
       )}
       style={{ width: "calc(100% - 16px)" }}
@@ -119,17 +119,17 @@ function MemberItem({ member }: MemberItemProps) {
       <div className="relative flex-shrink-0">
         <Avatar className="w-8 h-8">
           <AvatarImage src={member.avatar} alt={member.displayName} />
-          <AvatarFallback className="bg-[#5865F2] text-white text-xs">
+          <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
             {member.displayName.charAt(0).toUpperCase()}
           </AvatarFallback>
         </Avatar>
         <div
           className={cn(
-            "absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-[2.5px] border-[#2b2d31]",
-            member.status === "online" && "status-online",
-            member.status === "idle" && "status-idle",
-            member.status === "dnd" && "status-dnd",
-            member.status === "offline" && "status-offline"
+            "absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-[2.5px] border-[#0a0a0a]",
+            member.status === "online" && "bg-[#8B5CF6]",
+            member.status === "idle" && "bg-[#A78BFA]",
+            member.status === "dnd" && "bg-red-500",
+            member.status === "offline" && "bg-[#555555]"
           )}
         />
       </div>
@@ -139,7 +139,7 @@ function MemberItem({ member }: MemberItemProps) {
             "text-sm font-medium truncate",
             member.roles?.[0]?.color
               ? `text-[${member.roles[0].color}]`
-              : "text-[#f2f3f5]"
+              : "text-white"
           )}
           style={member.roles?.[0]?.color ? { color: member.roles[0].color } : undefined}
         >

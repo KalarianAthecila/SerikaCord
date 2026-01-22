@@ -15,11 +15,17 @@ interface Session {
   ipAddress?: string;
 }
 
-// JWT payload structure
+// JWT payload structure (supports both local and accounts.serika.dev tokens)
 interface JWTPayload {
-  sub: string;
-  sid: string;
-  type: 'access' | 'refresh';
+  // Local token fields
+  sub?: string;
+  sid?: string;
+  type?: 'access' | 'refresh';
+  // Accounts.serika.dev token fields
+  user?: { id: string; email?: string };
+  userId?: string;
+  username?: string;
+  // Common fields
   iat: number;
   exp: number;
 }
@@ -98,20 +104,70 @@ export async function createTokenPair(userId: string, sessionId: string): Promis
 }
 
 // Verify JWT token
-export async function verifyToken(token: string): Promise<{ valid: boolean; payload?: JWTPayload; error?: string }> {
+export async function verifyToken(token: string): Promise<{ valid: boolean; payload?: JWTPayload; error?: string; accountsUser?: any }> {
+  // First try local verification
   try {
     const secret = getJWTSecret();
     const { payload } = await jose.jwtVerify(token, secret);
     
+    console.log('✅ Local JWT verification succeeded');
     return {
       valid: true,
       payload: payload as unknown as JWTPayload,
     };
-  } catch (error) {
-    if (error instanceof jose.errors.JWTExpired) {
-      return { valid: false, error: 'Token expired' };
+  } catch (localError) {
+    console.log('⚠️ Local JWT verification failed, trying accounts API...');
+    console.log('   Accounts URL:', config.ACCOUNTS_API_URL);
+    console.log('   Service key set:', !!config.ACCOUNTS_SERVICE_KEY);
+    
+    // Local verification failed - try accounts.serika.dev internal verify
+    try {
+      const verifyResponse = await fetch(`${config.ACCOUNTS_API_URL}/internal/verify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-service-key': config.ACCOUNTS_SERVICE_KEY,
+        },
+        body: JSON.stringify({ token, checkBan: true }),
+      });
+      
+      const data = await verifyResponse.json();
+      console.log('   Accounts API response:', JSON.stringify(data));
+      
+      if (data.valid && data.user) {
+        // Decode the token payload for consistent interface
+        const parts = token.split('.');
+        let payload: JWTPayload = { iat: 0, exp: 0 };
+        
+        if (parts.length === 3) {
+          try {
+            payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString());
+          } catch {
+            // Use defaults
+          }
+        }
+        
+        return {
+          valid: true,
+          payload: {
+            ...payload,
+            user: { id: data.user.id, email: data.user.email },
+            userId: data.user.id,
+            username: data.user.username,
+          },
+          accountsUser: data.user,
+        };
+      }
+      
+      return { valid: false, error: data.error || 'Token verification failed' };
+    } catch (accountsError) {
+      console.error('Accounts API verification failed:', accountsError);
+      
+      if (localError instanceof jose.errors.JWTExpired) {
+        return { valid: false, error: 'Token expired' };
+      }
+      return { valid: false, error: 'Invalid token' };
     }
-    return { valid: false, error: 'Invalid token' };
   }
 }
 
@@ -188,17 +244,25 @@ export async function authenticateRequest(
     return { user: null, error: verification.error || 'Invalid token' };
   }
 
-  const { sub: userId, sid: sessionId, type } = verification.payload;
+  // Support both local tokens (sub, sid) and accounts.serika.dev tokens (user.id, userId)
+  const userId = verification.payload.sub || verification.payload.user?.id || verification.payload.userId;
+  const sessionId = verification.payload.sid;
+  const type = verification.payload.type;
 
-  // Only accept access tokens for auth
-  if (type !== 'access') {
-    return { user: null, error: 'Invalid token type' };
+  if (!userId) {
+    return { user: null, error: 'Invalid token: no user ID' };
   }
 
-  // Verify session exists
-  const session = await getSession(sessionId);
-  if (!session) {
-    return { user: null, error: 'Session expired or invalid' };
+  // For local tokens, verify session exists
+  // For accounts.serika.dev tokens, skip session check (they manage their own sessions)
+  if (sessionId) {
+    if (type && type !== 'access') {
+      return { user: null, error: 'Invalid token type' };
+    }
+    const session = await getSession(sessionId);
+    if (!session) {
+      return { user: null, error: 'Session expired or invalid' };
+    }
   }
 
   // Get user from cache or database
@@ -206,7 +270,38 @@ export async function authenticateRequest(
   let user = await cache.get<IUser>(cacheKey);
 
   if (!user) {
-    const dbUser = await User.findById(userId);
+    let dbUser = await User.findById(userId);
+    
+    // If user not found locally but we have accountsUser from verification, create locally
+    if (!dbUser && verification.accountsUser) {
+      const accountsUser = verification.accountsUser;
+      
+      // Create or update user in local database
+      dbUser = await User.findOneAndUpdate(
+        { _id: userId },
+        {
+          $setOnInsert: {
+            _id: userId,
+            username: accountsUser.username,
+            displayName: accountsUser.username,
+            email: accountsUser.email || `${accountsUser.username}@serika.dev`,
+            avatar: accountsUser.avatar,
+            banner: accountsUser.banner,
+            isPremium: accountsUser.isPremium || false,
+            isVerified: accountsUser.isVerified || true,
+            status: 'online',
+          },
+          $set: {
+            displayName: accountsUser.displayName || accountsUser.username,
+            avatar: accountsUser.avatar,
+            banner: accountsUser.banner,
+            isPremium: accountsUser.isPremium || false,
+          },
+        },
+        { upsert: true, new: true }
+      );
+    }
+    
     if (!dbUser) {
       return { user: null, error: 'User not found' };
     }
@@ -223,7 +318,7 @@ export async function authenticateRequest(
     };
   }
 
-  return { user: user as IUser, session };
+  return { user: user as IUser, session: undefined };
 }
 
 // Refresh access token
@@ -234,22 +329,32 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ tokens
     return { error: verification.error || 'Invalid refresh token' };
   }
 
-  const { sub: userId, sid: sessionId, type } = verification.payload;
+  const userId = verification.payload.sub || verification.payload.user?.id || verification.payload.userId;
+  const sessionId = verification.payload.sid;
+  const type = verification.payload.type;
 
-  if (type !== 'refresh') {
+  if (!userId) {
+    return { error: 'Invalid token: no user ID' };
+  }
+
+  // Only check type for local tokens
+  if (type && type !== 'refresh') {
     return { error: 'Invalid token type' };
   }
 
-  // Verify session still exists
-  const session = await getSession(sessionId);
-  if (!session) {
-    return { error: 'Session expired' };
+  // Verify session still exists (only for local tokens)
+  if (sessionId) {
+    const session = await getSession(sessionId);
+    if (!session) {
+      return { error: 'Session expired' };
+    }
+    // Generate new token pair
+    const tokens = await createTokenPair(userId, sessionId);
+    return { tokens };
   }
 
-  // Generate new token pair
-  const tokens = await createTokenPair(userId, sessionId);
-
-  return { tokens };
+  // For accounts.serika.dev tokens, proxy to accounts API
+  return { error: 'Use accounts.serika.dev refresh endpoint' };
 }
 
 // Register new user

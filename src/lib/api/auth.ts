@@ -1,12 +1,9 @@
 import { Elysia, t } from 'elysia';
 import { config } from '../config';
 import { 
-  registerUser, 
-  login, 
   verifyEmail, 
   requestPasswordReset, 
   resetPassword, 
-  refreshAccessToken,
   deleteSession,
   verifyToken,
   handleDiscordOAuth,
@@ -14,7 +11,7 @@ import {
 } from '../services/auth';
 
 export const authRoutes = new Elysia({ prefix: '/auth' })
-  // Register
+  // Register - proxies to accounts.serika.dev
   .post('/register', async ({ body, set }) => {
     const { email, username, password, displayName } = body;
 
@@ -30,26 +27,34 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       return { error: 'Username can only contain letters, numbers, and underscores' };
     }
 
-    const result = await registerUser({ email, username, password, displayName });
+    try {
+      // Proxy to accounts API
+      const accountsResponse = await fetch(`${config.ACCOUNTS_API_URL}/api/auth/register`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ email, username, password, displayName }),
+      });
 
-    if (result.error) {
-      set.status = 400;
-      return { error: result.error };
+      const data = await accountsResponse.json();
+
+      if (!accountsResponse.ok) {
+        set.status = accountsResponse.status;
+        return { error: data.error || 'Registration failed' };
+      }
+
+      set.status = 201;
+      return { 
+        success: true, 
+        message: data.message || 'Account created. Please check your email to verify your account.',
+        user: data.user,
+      };
+    } catch (error) {
+      console.error('Register proxy error:', error);
+      set.status = 500;
+      return { error: 'Failed to connect to authentication service' };
     }
-
-    // TODO: Send verification email
-    // await sendVerificationEmail(result.user!.email, result.user!.verificationToken);
-
-    set.status = 201;
-    return { 
-      success: true, 
-      message: 'Account created. Please check your email to verify your account.',
-      user: {
-        id: result.user!._id,
-        username: result.user!.username,
-        email: result.user!.email,
-      },
-    };
   }, {
     body: t.Object({
       email: t.String({ format: 'email' }),
@@ -59,43 +64,55 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }),
   })
 
-  // Login
+  // Login - proxies to accounts.serika.dev
   .post('/login', async ({ body, set, headers }) => {
     const { emailOrUsername, password } = body;
 
-    const result = await login(emailOrUsername, password, {
-      userAgent: headers['user-agent'],
-      ipAddress: headers['x-forwarded-for'] || headers['x-real-ip'],
-    });
+    try {
+      // Proxy to accounts API (accounts API uses 'email' field)
+      const accountsResponse = await fetch(`${config.ACCOUNTS_API_URL}/api/auth/login`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'User-Agent': headers['user-agent'] || 'SerikaCord/1.0',
+          'X-Forwarded-For': headers['x-forwarded-for'] || headers['x-real-ip'] || '',
+        },
+        body: JSON.stringify({ 
+          email: emailOrUsername, 
+          password,
+          rememberMe: true,
+          productId: 'serikacord',
+        }),
+      });
 
-    if (result.error || !result.tokens) {
-      set.status = 401;
-      return { error: result.error || 'Authentication failed' };
+      const data = await accountsResponse.json();
+
+      if (!accountsResponse.ok) {
+        set.status = accountsResponse.status;
+        return { error: data.error || 'Authentication failed' };
+      }
+
+      // Set cookies from accounts response (accounts returns token/refreshToken directly)
+      if (data.token) {
+        set.headers['Set-Cookie'] = [
+          `auth_token=${data.token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
+          `refresh_token=${data.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${90 * 24 * 60 * 60}`,
+        ].join(', ');
+      }
+
+      return {
+        success: true,
+        user: data.user,
+        tokens: {
+          accessToken: data.token,
+          refreshToken: data.refreshToken,
+        },
+      };
+    } catch (error) {
+      console.error('Login proxy error:', error);
+      set.status = 500;
+      return { error: 'Failed to connect to authentication service' };
     }
-
-    // Set cookies
-    set.headers['Set-Cookie'] = [
-      `auth_token=${result.tokens.accessToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
-      `refresh_token=${result.tokens.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${90 * 24 * 60 * 60}`,
-    ].join(', ');
-
-    return {
-      success: true,
-      user: {
-        id: result.user!._id,
-        username: result.user!.username,
-        displayName: result.user!.displayName,
-        avatar: result.user!.avatar,
-        email: result.user!.email,
-        isPremium: result.user!.isPremium,
-        isVerified: result.user!.isVerified,
-      },
-      tokens: {
-        accessToken: result.tokens.accessToken,
-        refreshToken: result.tokens.refreshToken,
-        expiresAt: result.tokens.expiresAt,
-      },
-    };
   }, {
     body: t.Object({
       emailOrUsername: t.String(),
@@ -127,8 +144,8 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     return { success: true };
   })
 
-  // Refresh token
-  .post('/refresh', async ({ cookie, set }) => {
+  // Refresh token - proxies to accounts.serika.dev
+  .post('/refresh', async ({ cookie, set, headers }) => {
     const cookieValue = cookie.refresh_token?.value;
     const refreshToken = typeof cookieValue === 'string' ? cookieValue : undefined;
 
@@ -137,23 +154,36 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       return { error: 'No refresh token provided' };
     }
 
-    const result = await refreshAccessToken(refreshToken);
+    try {
+      const accountsResponse = await fetch(`${config.ACCOUNTS_API_URL}/api/auth/refresh`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Cookie': `refresh_token=${refreshToken}`,
+        },
+      });
 
-    if (result.error || !result.tokens) {
-      set.status = 401;
-      return { error: result.error || 'Failed to refresh token' };
+      const data = await accountsResponse.json();
+
+      if (!accountsResponse.ok) {
+        set.status = accountsResponse.status;
+        return { error: data.error || 'Failed to refresh token' };
+      }
+
+      // Set new access token cookie
+      if (data.tokens?.accessToken) {
+        set.headers['Set-Cookie'] = `auth_token=${data.tokens.accessToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`;
+      }
+
+      return {
+        success: true,
+        tokens: data.tokens,
+      };
+    } catch (error) {
+      console.error('Refresh token proxy error:', error);
+      set.status = 500;
+      return { error: 'Failed to connect to authentication service' };
     }
-
-    // Set new access token cookie
-    set.headers['Set-Cookie'] = `auth_token=${result.tokens.accessToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`;
-
-    return {
-      success: true,
-      tokens: {
-        accessToken: result.tokens.accessToken,
-        expiresAt: result.tokens.expiresAt,
-      },
-    };
   })
 
   // Verify email

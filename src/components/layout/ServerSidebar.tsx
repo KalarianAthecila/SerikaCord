@@ -28,19 +28,19 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
 
   return (
     <TooltipProvider delayDuration={0}>
-      <div className="flex flex-col items-center w-[72px] h-full bg-[#1e1f22] py-3 gap-2">
+      <div className="flex flex-col items-center w-[72px] h-full bg-[#0a0a0a] py-3 gap-2 border-r border-[#1a1a1a]">
         {/* Home Button (DMs) */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               onClick={handleHomeClick}
               className={cn(
-                "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#313338] transition-all duration-200 hover:rounded-[16px] hover:bg-[#5865F2] group",
-                !currentServer && "rounded-[16px] bg-[#5865F2]"
+                "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#111111] transition-all duration-200 hover:rounded-[16px] hover:bg-[#8B5CF6] group",
+                !currentServer && "rounded-[16px] bg-[#8B5CF6]"
               )}
             >
               <svg
-                className="w-7 h-7 text-[#dbdee1] group-hover:text-white"
+                className="w-7 h-7 text-[#888888] group-hover:text-white"
                 viewBox="0 0 28 20"
                 fill="currentColor"
               >
@@ -55,12 +55,12 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
               />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right" className="bg-[#111214] text-white border-none">
+          <TooltipContent side="right" className="bg-[#111111] text-white border border-[#222222]">
             Direct Messages
           </TooltipContent>
         </Tooltip>
 
-        <Separator className="w-8 h-0.5 bg-[#35363c] rounded-full" />
+        <Separator className="w-8 h-0.5 bg-[#222222] rounded-full" />
 
         {/* Server List */}
         <div className="flex-1 w-full overflow-y-auto scrollbar-hide">
@@ -71,14 +71,14 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                   <button
                     onClick={() => handleServerClick(server)}
                     className={cn(
-                      "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#313338] transition-all duration-200 hover:rounded-[16px] group overflow-hidden",
+                      "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#111111] transition-all duration-200 hover:rounded-[16px] group overflow-hidden",
                       currentServer?.id === server.id && "rounded-[16px]"
                     )}
                   >
                     {server.icon ? (
                       <Avatar className="w-12 h-12 rounded-none">
                         <AvatarImage src={server.icon} alt={server.name} />
-                        <AvatarFallback className="rounded-none bg-[#5865F2] text-white">
+                        <AvatarFallback className="rounded-none bg-[#8B5CF6] text-white">
                           {server.name.charAt(0).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
@@ -96,7 +96,7 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                     />
                   </button>
                 </TooltipTrigger>
-                <TooltipContent side="right" className="bg-[#111214] text-white border-none">
+                <TooltipContent side="right" className="bg-[#111111] text-white border border-[#222222]">
                   {server.name}
                 </TooltipContent>
               </Tooltip>
@@ -104,19 +104,19 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
           </div>
         </div>
 
-        <Separator className="w-8 h-0.5 bg-[#35363c] rounded-full" />
+        <Separator className="w-8 h-0.5 bg-[#222222] rounded-full" />
 
         {/* Add Server Button */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               onClick={onCreateServer}
-              className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#313338] transition-all duration-200 hover:rounded-[16px] hover:bg-[#23a55a] group"
+              className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#111111] transition-all duration-200 hover:rounded-[16px] hover:bg-[#8B5CF6] group"
             >
-              <Plus className="w-6 h-6 text-[#23a55a] group-hover:text-white transition-colors" />
+              <Plus className="w-6 h-6 text-[#8B5CF6] group-hover:text-white transition-colors" />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right" className="bg-[#111214] text-white border-none">
+          <TooltipContent side="right" className="bg-[#111111] text-white border border-[#222222]">
             Add a Server
           </TooltipContent>
         </Tooltip>
@@ -124,11 +124,11 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
         {/* Explore Servers */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#313338] transition-all duration-200 hover:rounded-[16px] hover:bg-[#23a55a] group">
-              <Compass className="w-6 h-6 text-[#23a55a] group-hover:text-white transition-colors" />
+            <button className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#111111] transition-all duration-200 hover:rounded-[16px] hover:bg-[#8B5CF6] group">
+              <Compass className="w-6 h-6 text-[#8B5CF6] group-hover:text-white transition-colors" />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right" className="bg-[#111214] text-white border-none">
+          <TooltipContent side="right" className="bg-[#111111] text-white border border-[#222222]">
             Explore Discoverable Servers
           </TooltipContent>
         </Tooltip>
@@ -136,11 +136,11 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
         {/* Download Apps */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#313338] transition-all duration-200 hover:rounded-[16px] hover:bg-[#23a55a] group">
-              <Download className="w-6 h-6 text-[#23a55a] group-hover:text-white transition-colors" />
+            <button className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#111111] transition-all duration-200 hover:rounded-[16px] hover:bg-[#8B5CF6] group">
+              <Download className="w-6 h-6 text-[#8B5CF6] group-hover:text-white transition-colors" />
             </button>
           </TooltipTrigger>
-          <TooltipContent side="right" className="bg-[#111214] text-white border-none">
+          <TooltipContent side="right" className="bg-[#111111] text-white border border-[#222222]">
             Download Apps
           </TooltipContent>
         </Tooltip>

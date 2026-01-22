@@ -6,11 +6,19 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Eye, EyeOff, Loader2, Check, X } from "lucide-react";
+import { cn } from "@/lib/utils";
+
+const passwordRequirements = [
+  { id: 'length', label: 'At least 8 characters', test: (p: string) => p.length >= 8 },
+  { id: 'number', label: 'Contains a number', test: (p: string) => /\d/.test(p) },
+  { id: 'special', label: 'Contains a special character', test: (p: string) => /[!@#$%^&*(),.?":{}|<>]/.test(p) },
+];
 
 export default function RegisterPage() {
   const router = useRouter();
   const [isLoading, setIsLoading] = useState(false);
+  const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState("");
   const [formData, setFormData] = useState({
     email: "",
@@ -46,107 +54,154 @@ export default function RegisterPage() {
   };
 
   return (
-    <Card className="bg-[#313338] border-none shadow-2xl">
-      <CardHeader className="text-center space-y-1">
-        <CardTitle className="text-2xl font-bold text-white">Create an account</CardTitle>
-        <CardDescription className="text-[#b5bac1]">
-          Join SerikaCord and start chatting!
-        </CardDescription>
-      </CardHeader>
-      <CardContent>
-        <form onSubmit={handleSubmit} className="space-y-4">
-          {error && (
-            <div className="p-3 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
-              {error}
-            </div>
-          )}
-          
-          <div className="space-y-2">
-            <Label htmlFor="email" className="text-xs font-bold uppercase text-[#b5bac1]">
-              Email <span className="text-red-400">*</span>
-            </Label>
-            <Input
-              id="email"
-              type="email"
-              required
-              value={formData.email}
-              onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-              className="bg-[#1e1f22] border-none text-white placeholder:text-[#6d6f78] focus-visible:ring-[#5865F2] focus-visible:ring-offset-0"
-            />
-          </div>
+    <div className="bg-[#0a0a0a] border border-[#1a1a1a] rounded-lg p-8">
+      {/* Header */}
+      <div className="text-center mb-6">
+        <h1 className="text-2xl font-semibold text-white mb-2">
+          Create an account
+        </h1>
+        <p className="text-[#888888] text-sm">
+          Join SerikaCord and start chatting
+        </p>
+      </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="displayName" className="text-xs font-bold uppercase text-[#b5bac1]">
-              Display Name <span className="text-red-400">*</span>
-            </Label>
-            <Input
-              id="displayName"
-              type="text"
-              required
-              value={formData.displayName}
-              onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
-              className="bg-[#1e1f22] border-none text-white placeholder:text-[#6d6f78] focus-visible:ring-[#5865F2] focus-visible:ring-offset-0"
-            />
+      {/* Form */}
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <div className="p-3 rounded-md bg-red-500/10 border border-red-500/20 text-red-400 text-sm">
+            {error}
           </div>
+        )}
+        
+        {/* Email Field */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium text-[#888888]">
+            Email
+          </Label>
+          <Input
+            type="email"
+            required
+            value={formData.email}
+            onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+            className="h-11 bg-[#111111] border-[#222222] text-white placeholder:text-[#555555] rounded-md focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6] focus-visible:ring-[#8B5CF6] transition-colors"
+            placeholder="you@example.com"
+          />
+        </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="username" className="text-xs font-bold uppercase text-[#b5bac1]">
-              Username <span className="text-red-400">*</span>
-            </Label>
-            <Input
-              id="username"
-              type="text"
-              required
-              value={formData.username}
-              onChange={(e) => setFormData({ ...formData, username: e.target.value })}
-              className="bg-[#1e1f22] border-none text-white placeholder:text-[#6d6f78] focus-visible:ring-[#5865F2] focus-visible:ring-offset-0"
-              placeholder="This is how others will see you"
-            />
-          </div>
+        {/* Display Name Field */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium text-[#888888]">
+            Display Name
+          </Label>
+          <Input
+            type="text"
+            required
+            value={formData.displayName}
+            onChange={(e) => setFormData({ ...formData, displayName: e.target.value })}
+            className="h-11 bg-[#111111] border-[#222222] text-white placeholder:text-[#555555] rounded-md focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6] focus-visible:ring-[#8B5CF6] transition-colors"
+            placeholder="John Doe"
+          />
+        </div>
 
-          <div className="space-y-2">
-            <Label htmlFor="password" className="text-xs font-bold uppercase text-[#b5bac1]">
-              Password <span className="text-red-400">*</span>
-            </Label>
+        {/* Username Field */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium text-[#888888]">
+            Username
+          </Label>
+          <Input
+            type="text"
+            required
+            value={formData.username}
+            onChange={(e) => setFormData({ ...formData, username: e.target.value.toLowerCase().replace(/[^a-z0-9_]/g, '') })}
+            className="h-11 bg-[#111111] border-[#222222] text-white placeholder:text-[#555555] rounded-md focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6] focus-visible:ring-[#8B5CF6] transition-colors"
+            placeholder="johndoe"
+          />
+          <p className="text-xs text-[#555555]">Only letters, numbers, and underscores</p>
+        </div>
+
+        {/* Password Field */}
+        <div className="space-y-2">
+          <Label className="text-sm font-medium text-[#888888]">
+            Password
+          </Label>
+          <div className="relative">
             <Input
-              id="password"
-              type="password"
+              type={showPassword ? "text" : "password"}
               required
               minLength={8}
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
-              className="bg-[#1e1f22] border-none text-white placeholder:text-[#6d6f78] focus-visible:ring-[#5865F2] focus-visible:ring-offset-0"
+              className="h-11 bg-[#111111] border-[#222222] text-white placeholder:text-[#555555] rounded-md focus:border-[#8B5CF6] focus:ring-1 focus:ring-[#8B5CF6] focus-visible:ring-[#8B5CF6] transition-colors pr-11"
+              placeholder="Create a password"
             />
+            <button
+              type="button"
+              onClick={() => setShowPassword(!showPassword)}
+              className="absolute right-3 top-1/2 -translate-y-1/2 text-[#555555] hover:text-white transition-colors"
+            >
+              {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+            </button>
           </div>
+          
+          {/* Password Requirements */}
+          {formData.password && (
+            <div className="mt-2 space-y-1">
+              {passwordRequirements.map((req) => (
+                <div 
+                  key={req.id}
+                  className={cn(
+                    "flex items-center gap-2 text-xs transition-colors",
+                    req.test(formData.password) ? "text-[#8B5CF6]" : "text-[#555555]"
+                  )}
+                >
+                  {req.test(formData.password) ? (
+                    <Check className="w-3 h-3" />
+                  ) : (
+                    <X className="w-3 h-3" />
+                  )}
+                  {req.label}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
 
-          <Button
-            type="submit"
-            disabled={isLoading}
-            className="w-full bg-[#5865F2] hover:bg-[#4752c4] text-white font-medium h-11"
+        {/* Submit Button */}
+        <Button
+          type="submit"
+          disabled={isLoading}
+          className="w-full h-11 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium rounded-md transition-colors disabled:opacity-50 mt-2"
+        >
+          {isLoading ? (
+            <Loader2 className="w-4 h-4 animate-spin" />
+          ) : (
+            "Create account"
+          )}
+        </Button>
+
+        {/* Terms */}
+        <p className="text-xs text-[#555555] leading-relaxed">
+          By registering, you agree to our{" "}
+          <Link href="/terms" className="text-[#8B5CF6] hover:underline">
+            Terms of Service
+          </Link>{" "}
+          and{" "}
+          <Link href="/privacy" className="text-[#8B5CF6] hover:underline">
+            Privacy Policy
+          </Link>
+        </p>
+
+        {/* Login Link */}
+        <p className="text-sm text-center text-[#888888] pt-2">
+          Already have an account?{" "}
+          <Link 
+            href="/login" 
+            className="text-[#8B5CF6] hover:text-[#A78BFA] transition-colors font-medium"
           >
-            {isLoading ? "Creating account..." : "Continue"}
-          </Button>
-
-          <p className="text-xs text-[#949ba4]">
-            By registering, you agree to SerikaCord&apos;s{" "}
-            <Link href="/terms" className="text-[#00a8fc] hover:underline">
-              Terms of Service
-            </Link>{" "}
-            and{" "}
-            <Link href="/privacy" className="text-[#00a8fc] hover:underline">
-              Privacy Policy
-            </Link>
-            .
-          </p>
-
-          <p className="text-sm text-[#949ba4]">
-            Already have an account?{" "}
-            <Link href="/login" className="text-[#00a8fc] hover:underline">
-              Log In
-            </Link>
-          </p>
-        </form>
-      </CardContent>
-    </Card>
+            Sign in
+          </Link>
+        </p>
+      </form>
+    </div>
   );
 }

@@ -1,5 +1,25 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
+export type BadgeId = 
+  | 'staff' | 'admin' | 'moderator' 
+  | 'partner' | 'serika_plus' | 'early_supporter'
+  | 'verified_bot_developer' | 'bug_hunter' | 'bug_hunter_gold'
+  | 'server_owner' | 'active_developer'
+  | 'hypesquad_bravery' | 'hypesquad_brilliance' | 'hypesquad_balance';
+
+export interface IUserCustomization {
+  profileColor?: string;          // Primary profile color (Serika+ only)
+  profileAccentColor?: string;    // Accent color for profile
+  aboutMeStyle?: 'default' | 'card' | 'minimal';
+  bannerAnimation?: 'none' | 'parallax' | 'pulse' | 'gradient';
+  theme?: 'dark' | 'light' | 'oled' | 'custom';
+  customTheme?: {
+    primary?: string;
+    secondary?: string;
+    accent?: string;
+  };
+}
+
 export interface IUser extends Document {
   _id: Types.ObjectId;
   
@@ -25,12 +45,24 @@ export interface IUser extends Document {
   status?: 'online' | 'idle' | 'dnd' | 'offline' | 'invisible';
   customStatus?: string;
   
+  // Badges
+  badges: BadgeId[];
+  
+  // Customization (Serika+ features)
+  customization: IUserCustomization;
+  
   // Flags
   isBot: boolean;
   isSystem: boolean;
   isPremium: boolean;
+  premiumSince?: Date;
+  premiumTier?: 'monthly' | 'yearly' | 'lifetime';
   isBanned: boolean;
   banReason?: string;
+  
+  // Staff flags
+  isStaff: boolean;
+  staffRole?: 'admin' | 'moderator' | 'support';
   
   // Relationships
   friends: Types.ObjectId[];
@@ -145,6 +177,40 @@ const UserSchema = new Schema<IUser>({
     maxlength: 128,
     default: null,
   },
+  badges: [{
+    type: String,
+    enum: [
+      'staff', 'admin', 'moderator',
+      'partner', 'serika_plus', 'early_supporter',
+      'verified_bot_developer', 'bug_hunter', 'bug_hunter_gold',
+      'server_owner', 'active_developer',
+      'hypesquad_bravery', 'hypesquad_brilliance', 'hypesquad_balance',
+    ],
+  }],
+  customization: {
+    profileColor: { type: String, default: null },
+    profileAccentColor: { type: String, default: null },
+    aboutMeStyle: {
+      type: String,
+      enum: ['default', 'card', 'minimal'],
+      default: 'default',
+    },
+    bannerAnimation: {
+      type: String,
+      enum: ['none', 'parallax', 'pulse', 'gradient'],
+      default: 'none',
+    },
+    theme: {
+      type: String,
+      enum: ['dark', 'light', 'oled', 'custom'],
+      default: 'dark',
+    },
+    customTheme: {
+      primary: { type: String, default: null },
+      secondary: { type: String, default: null },
+      accent: { type: String, default: null },
+    },
+  },
   isBot: {
     type: Boolean,
     default: false,
@@ -156,6 +222,24 @@ const UserSchema = new Schema<IUser>({
   isPremium: {
     type: Boolean,
     default: false,
+  },
+  premiumSince: {
+    type: Date,
+    default: null,
+  },
+  premiumTier: {
+    type: String,
+    enum: ['monthly', 'yearly', 'lifetime'],
+    default: null,
+  },
+  isStaff: {
+    type: Boolean,
+    default: false,
+  },
+  staffRole: {
+    type: String,
+    enum: ['admin', 'moderator', 'support'],
+    default: null,
   },
   isBanned: {
     type: Boolean,
