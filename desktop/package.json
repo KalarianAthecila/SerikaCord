@@ -5,6 +5,10 @@
   "main": "main.js",
   "author": "SerikaCord Team",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/serika-dev/SerikaCord.git"
+  },
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
@@ -25,6 +29,8 @@
     "appId": "dev.serika.serikacord",
     "productName": "SerikaCord",
     "copyright": "Copyright © 2026 SerikaCord",
+    "generateUpdatesFilesForAllChannels": false,
+    "publish": null,
     "directories": {
       "output": "dist",
       "buildResources": "resources"
