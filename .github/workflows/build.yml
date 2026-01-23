@@ -89,13 +89,27 @@ jobs:
         working-directory: mobile
         run: npm ci || npm install
 
-      - name: Add Android platform
-        working-directory: mobile
-        run: npx cap add android || true
-
       - name: Sync Capacitor
         working-directory: mobile
         run: npx cap sync android
+
+      - name: Generate debug keystore
+        working-directory: mobile/android/app
+        run: |
+          keytool -genkeypair -v -keystore debug.keystore \
+            -storepass android -alias androiddebugkey -keypass android \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=Android Debug,O=Android,C=US"
+
+      - name: Generate release keystore
+        working-directory: mobile/android/app
+        run: |
+          keytool -genkeypair -v -keystore release.keystore \
+            -storepass ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'serikacord' }} \
+            -alias serikacord \
+            -keypass ${{ secrets.ANDROID_KEY_PASSWORD || 'serikacord' }} \
+            -keyalg RSA -keysize 2048 -validity 10000 \
+            -dname "CN=SerikaCord,O=Serika,C=US"
 
       - name: Make gradlew executable
         working-directory: mobile/android
@@ -103,6 +117,9 @@ jobs:
 
       - name: Build Android APK
         working-directory: mobile/android
+        env:
+          KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD || 'serikacord' }}
+          KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD || 'serikacord' }}
         run: ./gradlew assembleRelease
 
       - name: Upload Android APK
