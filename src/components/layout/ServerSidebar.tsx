@@ -118,7 +118,10 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
         {/* Explore Servers */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#111111] transition-all duration-200 hover:rounded-[16px] hover:bg-[#8B5CF6] group">
+            <button 
+              onClick={() => router.push("/channels/explore")}
+              className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[#111111] transition-all duration-200 hover:rounded-[16px] hover:bg-[#8B5CF6] group"
+            >
               <Compass className="w-6 h-6 text-[#8B5CF6] group-hover:text-white transition-colors" />
             </button>
           </TooltipTrigger>

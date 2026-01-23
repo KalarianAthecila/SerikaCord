@@ -1,5 +1,6 @@
 "use client";
 
+import { useState } from "react";
 import { 
   Shield, 
   ShieldCheck, 
@@ -14,8 +15,16 @@ import {
   Zap,
   Flame,
   Scale,
+  ChevronDown,
 } from "lucide-react";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
 
 // Badge definitions
@@ -195,9 +204,11 @@ interface BadgeListProps {
   size?: 'sm' | 'md' | 'lg';
   maxDisplay?: number;
   className?: string;
+  expandable?: boolean;
 }
 
-export function BadgeList({ badges, size = 'md', maxDisplay = 5, className }: BadgeListProps) {
+export function BadgeList({ badges, size = 'md', maxDisplay = 5, className, expandable = true }: BadgeListProps) {
+  const [showAllBadges, setShowAllBadges] = useState(false);
   const displayBadges = badges.slice(0, maxDisplay);
   const remaining = badges.length - maxDisplay;
   
@@ -208,28 +219,79 @@ export function BadgeList({ badges, size = 'md', maxDisplay = 5, className }: Ba
           <Badge key={badgeId} id={badgeId} size={size} />
         ))}
         {remaining > 0 && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <div 
+          expandable ? (
+            <>
+              <button
+                onClick={() => setShowAllBadges(true)}
                 className={cn(
-                  "flex items-center justify-center rounded-md bg-[#111111] text-[#888888] text-xs font-medium cursor-default border border-[#222222]",
-                  size === 'sm' && "w-5 h-5",
-                  size === 'md' && "w-6 h-6 text-[10px]",
-                  size === 'lg' && "w-8 h-8 text-xs",
+                  "flex items-center justify-center gap-0.5 rounded-md bg-[#111111] text-[#888888] text-xs font-medium cursor-pointer border border-[#222222] hover:bg-[#1a1a1a] hover:text-white transition-colors",
+                  size === 'sm' && "h-5 px-1.5",
+                  size === 'md' && "h-6 px-2 text-[10px]",
+                  size === 'lg' && "h-8 px-2.5 text-xs",
                 )}
               >
                 +{remaining}
-              </div>
-            </TooltipTrigger>
-            <TooltipContent 
-              side="top" 
-              className="bg-[#0a0a0a] text-white border border-[#222222] px-3 py-2"
-            >
-              <div className="text-sm">
-                {remaining} more badge{remaining > 1 ? 's' : ''}
-              </div>
-            </TooltipContent>
-          </Tooltip>
+                <ChevronDown className="w-3 h-3" />
+              </button>
+              
+              <Dialog open={showAllBadges} onOpenChange={setShowAllBadges}>
+                <DialogContent className="bg-[#111111] border-[#222222] max-w-md">
+                  <DialogHeader>
+                    <DialogTitle className="text-white">All Badges ({badges.length})</DialogTitle>
+                  </DialogHeader>
+                  <ScrollArea className="max-h-[400px]">
+                    <div className="grid grid-cols-1 gap-2 pr-4">
+                      {badges.map((badgeId) => {
+                        const config = BADGE_CONFIG[badgeId];
+                        if (!config) return null;
+                        const Icon = config.icon;
+                        return (
+                          <div
+                            key={badgeId}
+                            className="flex items-center gap-3 p-3 rounded-lg bg-[#0a0a0a] hover:bg-[#1a1a1a] transition-colors"
+                          >
+                            <div
+                              className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                              style={{ backgroundColor: `${config.color}20` }}
+                            >
+                              <Icon className="w-5 h-5" style={{ color: config.color }} />
+                            </div>
+                            <div className="min-w-0">
+                              <p className="font-semibold text-white text-sm">{config.name}</p>
+                              <p className="text-xs text-[#888888] truncate">{config.description}</p>
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </ScrollArea>
+                </DialogContent>
+              </Dialog>
+            </>
+          ) : (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div 
+                  className={cn(
+                    "flex items-center justify-center rounded-md bg-[#111111] text-[#888888] text-xs font-medium cursor-default border border-[#222222]",
+                    size === 'sm' && "w-5 h-5",
+                    size === 'md' && "w-6 h-6 text-[10px]",
+                    size === 'lg' && "w-8 h-8 text-xs",
+                  )}
+                >
+                  +{remaining}
+                </div>
+              </TooltipTrigger>
+              <TooltipContent 
+                side="top" 
+                className="bg-[#0a0a0a] text-white border border-[#222222] px-3 py-2"
+              >
+                <div className="text-sm">
+                  {remaining} more badge{remaining > 1 ? 's' : ''}
+                </div>
+              </TooltipContent>
+            </Tooltip>
+          )
         )}
       </div>
     </TooltipProvider>

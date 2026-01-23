@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ServerProvider } from "@/contexts/ServerContext";
@@ -9,7 +9,7 @@ import { ChannelSidebar } from "@/components/layout/ChannelSidebar";
 import { CreateServerDialog } from "@/components/dialogs/CreateServerDialog";
 import { CreateChannelDialog } from "@/components/dialogs/CreateChannelDialog";
 import { UserSettingsDialog } from "@/components/dialogs/UserSettingsDialog";
-import { Loader2, MessageSquare, Menu, X } from "lucide-react";
+import { Loader2, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -85,6 +85,13 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
   const [showCreateChannel, setShowCreateChannel] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  
+  // Touch handling for swipe gestures
+  const touchStartX = useRef(0);
+  const touchEndX = useRef(0);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [isDragging, setIsDragging] = useState(false);
+  const [dragOffset, setDragOffset] = useState(0);
 
   // Listen for custom events from UserPanel
   useEffect(() => {
@@ -100,48 +107,116 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('popstate', handleRouteChange);
   }, []);
 
-  return (
-    <div className="flex h-screen bg-[#0a0a0a] overflow-hidden">
-      {/* Mobile Menu Toggle */}
-      <button
-        onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-        className="fixed top-3 left-3 z-50 p-2 rounded-lg bg-[#111111] border border-[#222222] md:hidden"
-      >
-        {mobileMenuOpen ? (
-          <X className="w-5 h-5 text-white" />
-        ) : (
-          <Menu className="w-5 h-5 text-white" />
-        )}
-      </button>
+  // Swipe gesture handlers for mobile
+  const handleTouchStart = useCallback((e: React.TouchEvent) => {
+    if (window.innerWidth >= 768) return; // Only on mobile
+    touchStartX.current = e.touches[0].clientX;
+    setIsDragging(true);
+  }, []);
 
+  const handleTouchMove = useCallback((e: React.TouchEvent) => {
+    if (window.innerWidth >= 768 || !isDragging) return;
+    touchEndX.current = e.touches[0].clientX;
+    const diff = touchEndX.current - touchStartX.current;
+    
+    // Only allow dragging in the right direction
+    if (mobileMenuOpen) {
+      // Can only swipe left to close
+      if (diff < 0) {
+        setDragOffset(Math.max(diff, -312)); // -312 = sidebar width (72 + 240)
+      }
+    } else {
+      // Can only swipe right to open, from left edge
+      if (diff > 0 && touchStartX.current < 30) {
+        setDragOffset(Math.min(diff, 312));
+      }
+    }
+  }, [isDragging, mobileMenuOpen]);
+
+  const handleTouchEnd = useCallback(() => {
+    if (window.innerWidth >= 768) return;
+    setIsDragging(false);
+    
+    const diff = touchEndX.current - touchStartX.current;
+    const threshold = 100;
+    
+    if (mobileMenuOpen) {
+      // Close if swiped left enough
+      if (diff < -threshold) {
+        setMobileMenuOpen(false);
+      }
+    } else {
+      // Open if swiped right enough from left edge
+      if (diff > threshold && touchStartX.current < 30) {
+        setMobileMenuOpen(true);
+      }
+    }
+    
+    setDragOffset(0);
+    touchStartX.current = 0;
+    touchEndX.current = 0;
+  }, [mobileMenuOpen]);
+
+  // Calculate sidebar position during drag
+  const getSidebarTransform = useCallback(() => {
+    if (typeof window === 'undefined') return undefined;
+    if (window.innerWidth >= 768) return undefined;
+    
+    if (isDragging && dragOffset !== 0) {
+      if (mobileMenuOpen) {
+        return `translateX(${dragOffset}px)`;
+      } else {
+        return `translateX(${-312 + dragOffset}px)`;
+      }
+    }
+    return mobileMenuOpen ? 'translateX(0)' : 'translateX(-100%)';
+  }, [isDragging, dragOffset, mobileMenuOpen]);
+
+  // Track if we're on mobile
+  const [isMobile, setIsMobile] = useState(false);
+  
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+
+  return (
+    <div 
+      ref={containerRef}
+      className="flex h-screen bg-[#0a0a0a] overflow-hidden"
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+    >
       {/* Mobile Overlay */}
       {mobileMenuOpen && (
         <div
-          className="fixed inset-0 bg-black/50 z-30 md:hidden"
+          className="fixed inset-0 bg-black/50 z-30 md:hidden transition-opacity"
           onClick={() => setMobileMenuOpen(false)}
         />
       )}
 
-      {/* Server Sidebar - Hidden on mobile unless menu open */}
-      <div className={cn(
-        "fixed md:relative z-40 h-full transition-transform duration-200 md:translate-x-0",
-        mobileMenuOpen ? "translate-x-0" : "-translate-x-full"
-      )}>
+      {/* Combined Sidebars for mobile swipe */}
+      <div 
+        className={cn(
+          "fixed md:relative z-40 h-full flex md:translate-x-0",
+          !isDragging && "transition-transform duration-200"
+        )}
+        style={isMobile ? { transform: getSidebarTransform() } : undefined}
+      >
         <ServerSidebar onCreateServer={() => setShowCreateServer(true)} />
+        <ChannelSidebar onCreateChannel={() => setShowCreateChannel(true)} />
       </div>
 
-      {/* Channel Sidebar - Hidden on mobile unless menu open */}
-      <div className={cn(
-        "fixed md:relative z-40 h-full transition-transform duration-200 md:translate-x-0",
-        mobileMenuOpen ? "translate-x-[72px]" : "-translate-x-full"
-      )}>
-        <ChannelSidebar
-          onCreateChannel={() => setShowCreateChannel(true)}
-        />
-      </div>
+      {/* Swipe indicator for mobile - shows on left edge */}
+      {isMobile && !mobileMenuOpen && (
+        <div className="fixed left-0 top-1/2 -translate-y-1/2 w-1 h-20 bg-[#8B5CF6]/30 rounded-r-full z-50" />
+      )}
 
       {/* Main Content */}
-      <main className="flex-1 flex min-w-0 pt-14 md:pt-0">{children}</main>
+      <main className="flex-1 flex min-w-0">{children}</main>
 
       {/* Dialogs */}
       <CreateServerDialog

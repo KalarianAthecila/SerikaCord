@@ -473,44 +473,166 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
               {/* Appearance Tab */}
               {activeTab === "appearance" && (
-                <div>
-                  <h2 className="text-xl font-bold text-white mb-5">Appearance</h2>
+                <div className="space-y-6">
+                  <h2 className="text-xl font-bold text-white">Appearance</h2>
                   
-                  <div className="bg-[#0a0a0a] rounded-lg p-4 mb-6">
+                  {/* Theme Selection */}
+                  <div className="bg-[#0a0a0a] rounded-lg p-5">
                     <h3 className="text-base font-bold text-white mb-4">Theme</h3>
-                    <div className="grid grid-cols-2 gap-4">
-                      <button className="p-4 bg-[#111111] border-2 border-[#8B5CF6] rounded-lg text-left">
-                        <div className="flex items-center justify-between mb-2">
-                          <span className="text-white font-medium">Dark</span>
-                          <Check className="w-5 h-5 text-[#8B5CF6]" />
+                    <div className="grid grid-cols-3 gap-3">
+                      <button className="group p-3 bg-[#111111] border-2 border-[#8B5CF6] rounded-xl text-left transition-all hover:scale-[1.02]">
+                        <div className="aspect-video bg-[#0a0a0a] rounded-lg mb-3 overflow-hidden relative">
+                          <div className="absolute inset-0 flex">
+                            <div className="w-3 bg-[#111111]" />
+                            <div className="w-6 bg-[#0f0f0f]" />
+                            <div className="flex-1 bg-[#0a0a0a]" />
+                          </div>
                         </div>
-                        <p className="text-xs text-[#b5bac1]">A dark theme that&apos;s easy on the eyes</p>
+                        <div className="flex items-center justify-between">
+                          <span className="text-white font-medium text-sm">Dark</span>
+                          <Check className="w-4 h-4 text-[#8B5CF6]" />
+                        </div>
                       </button>
-                      <button className="p-4 bg-[#111111] border border-[#222222] rounded-lg text-left opacity-50 cursor-not-allowed">
-                        <div className="mb-2">
-                          <span className="text-white font-medium">Light</span>
+                      <button className="group p-3 bg-[#111111] border border-[#222222] rounded-xl text-left opacity-50 cursor-not-allowed">
+                        <div className="aspect-video bg-[#1a1a1a] rounded-lg mb-3 overflow-hidden relative">
+                          <div className="absolute inset-0 flex">
+                            <div className="w-3 bg-[#2a2a2a]" />
+                            <div className="w-6 bg-[#222222]" />
+                            <div className="flex-1 bg-[#1a1a1a]" />
+                          </div>
                         </div>
-                        <p className="text-xs text-[#b5bac1]">Coming soon</p>
+                        <span className="text-[#888888] font-medium text-sm">Midnight</span>
+                        <p className="text-xs text-[#555555]">Soon</p>
+                      </button>
+                      <button className="group p-3 bg-[#111111] border border-[#222222] rounded-xl text-left opacity-50 cursor-not-allowed">
+                        <div className="aspect-video bg-[#ffffff] rounded-lg mb-3 overflow-hidden relative">
+                          <div className="absolute inset-0 flex">
+                            <div className="w-3 bg-[#e5e5e5]" />
+                            <div className="w-6 bg-[#f0f0f0]" />
+                            <div className="flex-1 bg-[#ffffff]" />
+                          </div>
+                        </div>
+                        <span className="text-[#888888] font-medium text-sm">Light</span>
+                        <p className="text-xs text-[#555555]">Soon</p>
                       </button>
                     </div>
                   </div>
 
-                  <div className="bg-[#0a0a0a] rounded-lg p-4">
+                  {/* Accent Color */}
+                  <div className="bg-[#0a0a0a] rounded-lg p-5">
+                    <h3 className="text-base font-bold text-white mb-2">Accent Color</h3>
+                    <p className="text-sm text-[#888888] mb-4">Choose your primary accent color</p>
+                    <div className="flex gap-2 flex-wrap">
+                      {[
+                        { color: '#8B5CF6', name: 'Purple' },
+                        { color: '#6366F1', name: 'Indigo' },
+                        { color: '#3B82F6', name: 'Blue' },
+                        { color: '#06B6D4', name: 'Cyan' },
+                        { color: '#10B981', name: 'Emerald' },
+                        { color: '#F59E0B', name: 'Amber' },
+                        { color: '#EF4444', name: 'Red' },
+                        { color: '#EC4899', name: 'Pink' },
+                      ].map((c) => (
+                        <button
+                          key={c.color}
+                          className={cn(
+                            "w-10 h-10 rounded-full transition-all hover:scale-110 relative",
+                            c.color === '#8B5CF6' && "ring-2 ring-white ring-offset-2 ring-offset-[#0a0a0a]"
+                          )}
+                          style={{ backgroundColor: c.color }}
+                          title={c.name}
+                        >
+                          {c.color === '#8B5CF6' && (
+                            <Check className="w-5 h-5 text-white absolute inset-0 m-auto" />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Font Size */}
+                  <div className="bg-[#0a0a0a] rounded-lg p-5">
+                    <h3 className="text-base font-bold text-white mb-2">Chat Font Size</h3>
+                    <p className="text-sm text-[#888888] mb-4">Adjust the size of text in chat</p>
+                    <div className="flex items-center gap-4">
+                      <span className="text-xs text-[#888888]">12px</span>
+                      <input 
+                        type="range" 
+                        min="12" 
+                        max="20" 
+                        defaultValue="14"
+                        className="flex-1 accent-[#8B5CF6] h-1 bg-[#222222] rounded-full appearance-none cursor-pointer"
+                      />
+                      <span className="text-xs text-[#888888]">20px</span>
+                    </div>
+                    <p className="text-sm text-[#dcddde] mt-3">Preview: This is how your chat will look.</p>
+                  </div>
+
+                  {/* Message Display */}
+                  <div className="bg-[#0a0a0a] rounded-lg p-5">
                     <h3 className="text-base font-bold text-white mb-4">Message Display</h3>
                     <div className="space-y-4">
-                      <label className="flex items-center justify-between cursor-pointer">
+                      <label className="flex items-center justify-between cursor-pointer group">
                         <div>
-                          <p className="text-white font-medium">Compact Mode</p>
-                          <p className="text-sm text-[#b5bac1]">Display messages in a compact format</p>
+                          <p className="text-white font-medium group-hover:text-[#8B5CF6] transition-colors">Compact Mode</p>
+                          <p className="text-sm text-[#888888]">Display messages in a compact format</p>
                         </div>
-                        <input type="checkbox" className="w-5 h-5 accent-[#8B5CF6]" />
+                        <div className="relative">
+                          <input type="checkbox" className="sr-only peer" />
+                          <div className="w-11 h-6 bg-[#222222] rounded-full peer peer-checked:bg-[#8B5CF6] transition-colors" />
+                          <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full peer-checked:translate-x-5 transition-transform" />
+                        </div>
                       </label>
-                      <label className="flex items-center justify-between cursor-pointer">
+                      <label className="flex items-center justify-between cursor-pointer group">
                         <div>
-                          <p className="text-white font-medium">Show Timestamps</p>
-                          <p className="text-sm text-[#b5bac1]">Display message timestamps</p>
+                          <p className="text-white font-medium group-hover:text-[#8B5CF6] transition-colors">Show Timestamps</p>
+                          <p className="text-sm text-[#888888]">Display message timestamps</p>
                         </div>
-                        <input type="checkbox" className="w-5 h-5 accent-[#8B5CF6]" defaultChecked />
+                        <div className="relative">
+                          <input type="checkbox" className="sr-only peer" defaultChecked />
+                          <div className="w-11 h-6 bg-[#222222] rounded-full peer peer-checked:bg-[#8B5CF6] transition-colors" />
+                          <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full peer-checked:translate-x-5 transition-transform" />
+                        </div>
+                      </label>
+                      <label className="flex items-center justify-between cursor-pointer group">
+                        <div>
+                          <p className="text-white font-medium group-hover:text-[#8B5CF6] transition-colors">Show Role Colors</p>
+                          <p className="text-sm text-[#888888]">Color usernames by their highest role</p>
+                        </div>
+                        <div className="relative">
+                          <input type="checkbox" className="sr-only peer" defaultChecked />
+                          <div className="w-11 h-6 bg-[#222222] rounded-full peer peer-checked:bg-[#8B5CF6] transition-colors" />
+                          <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full peer-checked:translate-x-5 transition-transform" />
+                        </div>
+                      </label>
+                    </div>
+                  </div>
+
+                  {/* Animations */}
+                  <div className="bg-[#0a0a0a] rounded-lg p-5">
+                    <h3 className="text-base font-bold text-white mb-4">Animations</h3>
+                    <div className="space-y-4">
+                      <label className="flex items-center justify-between cursor-pointer group">
+                        <div>
+                          <p className="text-white font-medium group-hover:text-[#8B5CF6] transition-colors">Enable Animations</p>
+                          <p className="text-sm text-[#888888]">Show smooth transitions and animations</p>
+                        </div>
+                        <div className="relative">
+                          <input type="checkbox" className="sr-only peer" defaultChecked />
+                          <div className="w-11 h-6 bg-[#222222] rounded-full peer peer-checked:bg-[#8B5CF6] transition-colors" />
+                          <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full peer-checked:translate-x-5 transition-transform" />
+                        </div>
+                      </label>
+                      <label className="flex items-center justify-between cursor-pointer group">
+                        <div>
+                          <p className="text-white font-medium group-hover:text-[#8B5CF6] transition-colors">Animated Emojis</p>
+                          <p className="text-sm text-[#888888]">Play animated emojis automatically</p>
+                        </div>
+                        <div className="relative">
+                          <input type="checkbox" className="sr-only peer" defaultChecked />
+                          <div className="w-11 h-6 bg-[#222222] rounded-full peer peer-checked:bg-[#8B5CF6] transition-colors" />
+                          <div className="absolute left-1 top-1 w-4 h-4 bg-white rounded-full peer-checked:translate-x-5 transition-transform" />
+                        </div>
                       </label>
                     </div>
                   </div>

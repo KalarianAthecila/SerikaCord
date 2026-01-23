@@ -32,10 +32,12 @@ export function MemberSidebar() {
       const response = await fetch(`/api/servers/${currentServer.id}/members`);
       if (response.ok) {
         const data = await response.json();
-        setMembers(data);
+        // Ensure data is an array
+        setMembers(Array.isArray(data) ? data : data?.members || []);
       }
     } catch (error) {
       console.error("Failed to fetch members:", error);
+      setMembers([]);
     } finally {
       setIsLoading(false);
     }

@@ -9,6 +9,12 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   ChevronRight,
   Pencil,
   Circle,
@@ -19,9 +25,11 @@ import {
   Users,
   Crown,
   Check,
+  ChevronDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, type BadgeId } from "@/lib/constants/badges";
+import { ScrollArea } from "@/components/ui/scroll-area";
 
 interface UserProfilePopupProps {
   children: React.ReactNode;
@@ -38,9 +46,10 @@ const statusOptions = [
 type StatusValue = typeof statusOptions[number]['value'];
 
 export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupProps) {
-  const { user } = useAuth();
+  const { user, refresh } = useAuth();
   const [open, setOpen] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
+  const [showBadgesDialog, setShowBadgesDialog] = useState(false);
   const [copied, setCopied] = useState(false);
   const [currentStatus, setCurrentStatus] = useState<StatusValue>((user?.status as StatusValue) || "online");
 
@@ -56,11 +65,15 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
     setCurrentStatus(status);
     setShowStatusMenu(false);
     try {
-      await fetch("/api/users/me", {
+      const response = await fetch("/api/users/me", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
+      if (response.ok) {
+        // Refresh auth context to update status everywhere
+        await refresh();
+      }
     } catch (error) {
       console.error("Failed to update status:", error);
     }
@@ -77,26 +90,69 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
     if (!user?.badges || user.badges.length === 0) return null;
 
     const badges = getBadgesByPriority(user.badges as BadgeId[]);
+    const displayCount = 6;
+    const remaining = badges.length - displayCount;
 
     return (
-      <div className="flex items-center gap-1.5 flex-wrap">
-        {badges.slice(0, 8).map((badge) => {
-          const IconComponent = badge.icon;
-          return (
-            <div
-              key={badge.id}
-              className="w-6 h-6 rounded flex items-center justify-center"
-              style={{ backgroundColor: `${badge.color}20` }}
-              title={`${badge.name}: ${badge.description}`}
+      <>
+        <div className="flex items-center gap-1.5 flex-wrap">
+          {badges.slice(0, displayCount).map((badge) => {
+            const IconComponent = badge.icon;
+            return (
+              <div
+                key={badge.id}
+                className="w-7 h-7 rounded-md flex items-center justify-center cursor-pointer hover:scale-110 transition-transform"
+                style={{ backgroundColor: `${badge.color}20` }}
+                title={`${badge.name}: ${badge.description}`}
+              >
+                <IconComponent className="w-4 h-4" style={{ color: badge.color }} />
+              </div>
+            );
+          })}
+          {remaining > 0 && (
+            <button
+              onClick={() => setShowBadgesDialog(true)}
+              className="h-7 px-2 rounded-md bg-[#222222] hover:bg-[#333333] text-xs text-[#888888] hover:text-white font-medium transition-colors flex items-center gap-1"
             >
-              <IconComponent className="w-3.5 h-3.5" style={{ color: badge.color }} />
-            </div>
-          );
-        })}
-        {badges.length > 8 && (
-          <span className="text-xs text-[#888888]">+{badges.length - 8}</span>
-        )}
-      </div>
+              +{remaining}
+              <ChevronDown className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
+        {/* Badges Dialog */}
+        <Dialog open={showBadgesDialog} onOpenChange={setShowBadgesDialog}>
+          <DialogContent className="bg-[#111111] border-[#222222] max-w-md">
+            <DialogHeader>
+              <DialogTitle className="text-white">Badges</DialogTitle>
+            </DialogHeader>
+            <ScrollArea className="max-h-[400px]">
+              <div className="grid grid-cols-1 gap-2 pr-4">
+                {badges.map((badge) => {
+                  const IconComponent = badge.icon;
+                  return (
+                    <div
+                      key={badge.id}
+                      className="flex items-center gap-3 p-3 rounded-lg bg-[#0a0a0a] hover:bg-[#1a1a1a] transition-colors"
+                    >
+                      <div
+                        className="w-10 h-10 rounded-lg flex items-center justify-center flex-shrink-0"
+                        style={{ backgroundColor: `${badge.color}20` }}
+                      >
+                        <IconComponent className="w-5 h-5" style={{ color: badge.color }} />
+                      </div>
+                      <div className="min-w-0">
+                        <p className="font-semibold text-white text-sm">{badge.name}</p>
+                        <p className="text-xs text-[#888888] truncate">{badge.description}</p>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </ScrollArea>
+          </DialogContent>
+        </Dialog>
+      </>
     );
   };
 
@@ -208,53 +264,54 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                 <span className="text-sm text-[#dcddde]">Edit Profiles</span>
               </button>
 
-              {/* Status Selector */}
-              <div className="relative">
-                <button
-                  onClick={() => setShowStatusMenu(!showStatusMenu)}
-                  className="w-full flex items-center justify-between px-3 py-2 rounded hover:bg-[#1a1a1a] transition-colors"
-                >
-                  <div className="flex items-center gap-3">
-                    <div
-                      className="w-4 h-4 rounded-full flex items-center justify-center"
-                      style={{ backgroundColor: currentStatusOption.color }}
-                    >
-                      {currentStatusOption.value === "dnd" && (
-                        <div className="w-2 h-0.5 bg-[#111111] rounded" />
-                      )}
-                    </div>
-                    <span className="text-sm text-[#dcddde]">{currentStatusOption.label}</span>
-                  </div>
-                  <ChevronRight className={cn(
-                    "w-4 h-4 text-[#888888] transition-transform",
-                    showStatusMenu && "rotate-90"
-                  )} />
-                </button>
-
-                {/* Status submenu */}
-                {showStatusMenu && (
-                  <div className="absolute left-full top-0 ml-1 w-[180px] bg-[#0a0a0a] border border-[#222222] rounded-lg overflow-hidden shadow-xl z-10">
-                    {statusOptions.map((status) => (
-                      <button
-                        key={status.value}
-                        onClick={() => handleStatusChange(status.value)}
-                        className="w-full flex items-center justify-between px-3 py-2 hover:bg-[#1a1a1a] transition-colors"
+              {/* Status Selector - Using Popover to prevent overflow */}
+              <Popover open={showStatusMenu} onOpenChange={setShowStatusMenu}>
+                <PopoverTrigger asChild>
+                  <button
+                    className="w-full flex items-center justify-between px-3 py-2 rounded hover:bg-[#1a1a1a] transition-colors"
+                  >
+                    <div className="flex items-center gap-3">
+                      <div
+                        className="w-4 h-4 rounded-full flex items-center justify-center"
+                        style={{ backgroundColor: currentStatusOption.color }}
                       >
-                        <div className="flex items-center gap-2">
-                          <div
-                            className="w-3 h-3 rounded-full"
-                            style={{ backgroundColor: status.color }}
-                          />
-                          <span className="text-sm text-[#dcddde]">{status.label}</span>
-                        </div>
-                        {currentStatus === status.value && (
-                          <Check className="w-4 h-4 text-[#8B5CF6]" />
+                        {currentStatusOption.value === "dnd" && (
+                          <div className="w-2 h-0.5 bg-[#111111] rounded" />
                         )}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
+                      </div>
+                      <span className="text-sm text-[#dcddde]">{currentStatusOption.label}</span>
+                    </div>
+                    <ChevronRight className={cn(
+                      "w-4 h-4 text-[#888888] transition-transform",
+                      showStatusMenu && "rotate-90"
+                    )} />
+                  </button>
+                </PopoverTrigger>
+                <PopoverContent
+                  side="right"
+                  align="start"
+                  className="w-[180px] p-0 bg-[#0a0a0a] border-[#222222] shadow-xl"
+                >
+                  {statusOptions.map((status) => (
+                    <button
+                      key={status.value}
+                      onClick={() => handleStatusChange(status.value)}
+                      className="w-full flex items-center justify-between px-3 py-2 hover:bg-[#1a1a1a] transition-colors"
+                    >
+                      <div className="flex items-center gap-2">
+                        <div
+                          className="w-3 h-3 rounded-full"
+                          style={{ backgroundColor: status.color }}
+                        />
+                        <span className="text-sm text-[#dcddde]">{status.label}</span>
+                      </div>
+                      {currentStatus === status.value && (
+                        <Check className="w-4 h-4 text-[#8B5CF6]" />
+                      )}
+                    </button>
+                  ))}
+                </PopoverContent>
+              </Popover>
 
               <div className="h-px bg-[#222222] my-1" />
 
