@@ -32,8 +32,21 @@ export function MemberSidebar() {
       const response = await fetch(`/api/servers/${currentServer.id}/members`);
       if (response.ok) {
         const data = await response.json();
-        // Ensure data is an array
-        setMembers(Array.isArray(data) ? data : data?.members || []);
+        // Transform the API response - members have userId populated
+        const rawMembers = Array.isArray(data) ? data : data?.members || [];
+        const transformedMembers = rawMembers.map((m: { _id?: string; userId?: { _id?: string; username?: string; displayName?: string; avatar?: string; status?: string }; roles?: Array<{ _id?: string; name?: string; color?: string }> }) => ({
+          id: m._id || m.userId?._id || '',
+          username: m.userId?.username || 'Unknown',
+          displayName: m.userId?.displayName || m.userId?.username || 'Unknown',
+          avatar: m.userId?.avatar,
+          status: m.userId?.status || 'offline',
+          roles: m.roles?.map((r: { _id?: string; name?: string; color?: string }) => ({
+            id: r._id || '',
+            name: r.name || '',
+            color: r.color,
+          })) || [],
+        }));
+        setMembers(transformedMembers);
       }
     } catch (error) {
       console.error("Failed to fetch members:", error);
