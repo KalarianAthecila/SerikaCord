@@ -138,10 +138,12 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
   if (isMobile) {
     return (
       <div className="flex h-screen bg-[#0a0a0a] overflow-hidden">
-        {/* Mobile Server List (left edge) */}
-        <MobileServerList 
-          onCreateServer={() => setShowCreateServer(true)}
-        />
+        {/* Mobile Server List - Only show in servers view */}
+        {mobileView === "servers" && (
+          <MobileServerList 
+            onCreateServer={() => setShowCreateServer(true)}
+          />
+        )}
 
         {/* Mobile Content Area */}
         <div className="flex-1 flex flex-col min-w-0">

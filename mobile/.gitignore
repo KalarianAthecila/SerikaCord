@@ -1,0 +1,17 @@
+# Android
+android/
+ios/
+
+# Dependencies
+node_modules/
+
+# Build outputs
+*.apk
+*.ipa
+
+# Local configuration
+*.local
+
+# IDE
+.idea/
+*.iml

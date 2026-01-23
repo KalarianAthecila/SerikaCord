@@ -113,28 +113,28 @@ export function MobileNotificationsView() {
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a]">
+    <div className="flex flex-col h-full bg-[#000000]">
       {/* Header */}
-      <div className="px-4 py-4 border-b border-[#1a1a1a]">
+      <div className="px-5 pt-8 pb-4 bg-gradient-to-b from-black/80 to-transparent backdrop-blur-sm sticky top-0 z-10 safe-area-top">
         <div className="flex items-center justify-between mb-4">
-          <h1 className="text-2xl font-bold text-white">Notifications</h1>
+          <h1 className="text-3xl font-bold text-white tracking-tight">Notifications</h1>
           <button 
             onClick={() => router.push("/channels/settings/notifications")}
-            className="p-2 rounded-full hover:bg-[#1a1a1a] transition-colors"
+            className="p-2.5 rounded-full bg-[#1a1a1a] text-white hover:bg-[#252525] transition-all active:scale-95"
           >
-            <Settings className="w-5 h-5 text-[#888888]" />
+            <Settings className="w-5 h-5" />
           </button>
         </div>
 
         {/* Filter Tabs */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 overflow-x-auto pb-2 scrollbar-hide">
           <button
             onClick={() => setFilter("all")}
             className={cn(
-              "px-4 py-1.5 rounded-full text-sm font-medium transition-colors",
+              "px-5 py-2 rounded-full text-sm font-bold transition-all whitespace-nowrap active:scale-95",
               filter === "all" 
-                ? "bg-[#8B5CF6] text-white" 
-                : "bg-[#1a1a1a] text-[#888888] hover:text-white"
+                ? "bg-[#8B5CF6] text-white shadow-lg shadow-purple-500/20" 
+                : "bg-[#1a1a1a] text-neutral-400 hover:text-white"
             )}
           >
             All
@@ -142,10 +142,10 @@ export function MobileNotificationsView() {
           <button
             onClick={() => setFilter("mentions")}
             className={cn(
-              "px-4 py-1.5 rounded-full text-sm font-medium transition-colors",
+              "px-5 py-2 rounded-full text-sm font-bold transition-all whitespace-nowrap active:scale-95",
               filter === "mentions" 
-                ? "bg-[#8B5CF6] text-white" 
-                : "bg-[#1a1a1a] text-[#888888] hover:text-white"
+                ? "bg-[#8B5CF6] text-white shadow-lg shadow-purple-500/20" 
+                : "bg-[#1a1a1a] text-neutral-400 hover:text-white"
             )}
           >
             Mentions
@@ -153,15 +153,15 @@ export function MobileNotificationsView() {
           <button
             onClick={() => setFilter("unread")}
             className={cn(
-              "px-4 py-1.5 rounded-full text-sm font-medium transition-colors flex items-center gap-1",
+              "px-5 py-2 rounded-full text-sm font-bold transition-all whitespace-nowrap flex items-center gap-2 active:scale-95",
               filter === "unread" 
-                ? "bg-[#8B5CF6] text-white" 
-                : "bg-[#1a1a1a] text-[#888888] hover:text-white"
+                ? "bg-[#8B5CF6] text-white shadow-lg shadow-purple-500/20" 
+                : "bg-[#1a1a1a] text-neutral-400 hover:text-white"
             )}
           >
             Unread
             {unreadCount > 0 && (
-              <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-[#ED4245] text-white text-xs font-bold rounded-full">
+              <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-[#ED4245] text-white text-[10px] font-bold rounded-full">
                 {unreadCount}
               </span>
             )}
@@ -171,90 +171,107 @@ export function MobileNotificationsView() {
 
       {/* Mark All Read Button */}
       {unreadCount > 0 && (
-        <button
-          onClick={handleMarkAllRead}
-          className="flex items-center justify-center gap-2 px-4 py-2 mx-4 mt-3 rounded-lg bg-[#1a1a1a] text-[#888888] hover:text-white transition-colors"
-        >
-          <Check className="w-4 h-4" />
-          <span className="text-sm">Mark all as read</span>
-        </button>
+        <div className="px-5 mb-2">
+          <button
+            onClick={handleMarkAllRead}
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[#1a1a1a] text-neutral-400 hover:text-white transition-all active:scale-95 border border-white/5"
+          >
+            <Check className="w-4 h-4" />
+            <span className="text-sm font-medium">Mark all as read</span>
+          </button>
+        </div>
       )}
 
       {/* Notifications List */}
-      <ScrollArea className="flex-1">
-        <div className="pb-20">
+      <ScrollArea className="flex-1 px-2">
+        <div className="pb-24 pt-2">
           {isLoading ? (
-            <div className="flex items-center justify-center py-12">
-              <div className="w-8 h-8 border-2 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
+            <div className="flex items-center justify-center py-20">
+              <div className="w-10 h-10 border-4 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
             </div>
           ) : filteredNotifications.length === 0 ? (
-            <div className="flex flex-col items-center justify-center py-12 px-4 text-center">
-              <div className="w-16 h-16 rounded-full bg-[#1a1a1a] flex items-center justify-center mb-4">
-                <Bell className="w-8 h-8 text-[#666666]" />
+            <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+              <div className="w-20 h-20 rounded-3xl bg-[#1a1a1a] flex items-center justify-center mb-6">
+                <Bell className="w-10 h-10 text-neutral-500" />
               </div>
-              <h3 className="text-lg font-semibold text-white mb-2">
+              <h3 className="text-xl font-bold text-white mb-2">
                 {filter === "all" ? "No notifications" : `No ${filter} notifications`}
               </h3>
-              <p className="text-[#666666] text-sm">
+              <p className="text-neutral-500 text-base">
                 {filter === "all" 
                   ? "When you receive notifications, they'll appear here" 
                   : `You don't have any ${filter} notifications`}
               </p>
             </div>
           ) : (
-            <div className="divide-y divide-[#1a1a1a]">
+            <div className="space-y-1">
               {filteredNotifications.map((notification) => (
                 <button
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification)}
                   className={cn(
-                    "w-full flex items-start gap-3 px-4 py-3 hover:bg-[#111111] transition-colors text-left",
-                    !notification.isRead && "bg-[#8B5CF6]/5"
+                    "w-full flex items-start gap-4 px-4 py-4 hover:bg-[#1a1a1a]/50 active:bg-[#1a1a1a] rounded-2xl transition-all text-left group",
+                    !notification.isRead && "bg-[#8B5CF6]/5 border border-[#8B5CF6]/20"
                   )}
                 >
-                  <div className="relative flex-shrink-0">
-                    <Avatar className="w-10 h-10">
+                  <div className="relative flex-shrink-0 mt-0.5">
+                    <Avatar className="w-12 h-12 border border-white/5">
                       <AvatarImage src={notification.avatar} />
-                      <AvatarFallback className="bg-[#8B5CF6] text-white">
+                      <AvatarFallback className="bg-[#8B5CF6] text-white font-bold">
                         {notification.title.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="absolute -bottom-1 -right-1 w-5 h-5 rounded-full bg-[#1a1a1a] flex items-center justify-center text-[#8B5CF6]">
+                    <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#111111] flex items-center justify-center shadow-sm border border-black">
                       {getNotificationIcon(notification.type)}
                     </div>
                   </div>
                   
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-start justify-between gap-3">
                       <span className={cn(
-                        "font-medium truncate",
-                        notification.isRead ? "text-[#888888]" : "text-white"
+                        "font-semibold truncate text-[16px] leading-tight",
+                        notification.isRead ? "text-neutral-400" : "text-white"
                       )}>
                         {notification.title}
                       </span>
-                      <span className="text-xs text-[#666666] flex-shrink-0">
+                      <span className="text-xs font-medium text-neutral-600 flex-shrink-0 whitespace-nowrap">
                         {formatTimestamp(notification.timestamp)}
                       </span>
                     </div>
-                    <p className="text-sm text-[#666666] line-clamp-2 mt-0.5">
+                    <p className={cn(
+                        "text-[15px] leading-snug mt-1 line-clamp-2",
+                        notification.isRead ? "text-neutral-500" : "text-neutral-300"
+                    )}>
                       {notification.description}
                     </p>
 
                     {/* Friend Request Actions */}
                     {notification.type === "friend_request" && !notification.isRead && (
-                      <div className="flex items-center gap-2 mt-2">
-                        <button className="flex items-center justify-center w-8 h-8 rounded-full bg-[#23A559] hover:bg-[#1A7D41] text-white transition-colors">
-                          <Check className="w-4 h-4" />
+                      <div className="flex items-center gap-3 mt-3">
+                        <button 
+                          className="flex items-center justify-center px-4 py-2 rounded-lg bg-[#23A559] hover:bg-[#1A7D41] text-white transition-all active:scale-95 font-bold text-xs"
+                          onClick={(e) => {
+                             e.stopPropagation();
+                             // Add accept logic
+                          }}
+                        >
+                          <Check className="w-4 h-4 mr-1" /> Accept
                         </button>
-                        <button className="flex items-center justify-center w-8 h-8 rounded-full bg-[#ED4245] hover:bg-[#C03537] text-white transition-colors">
-                          <X className="w-4 h-4" />
+                        <button 
+                          className="flex items-center justify-center px-4 py-2 rounded-lg bg-[#ED4245] hover:bg-[#C03537] text-white transition-all active:scale-95 font-bold text-xs"
+                          onClick={(e) => {
+                             e.stopPropagation();
+                             // Add deny logic
+                          }}
+                        >
+                          <X className="w-4 h-4 mr-1" /> Decline
                         </button>
                       </div>
                     )}
                   </div>
 
                   {!notification.isRead && (
-                    <div className="w-2 h-2 rounded-full bg-[#8B5CF6] flex-shrink-0 mt-2" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-[#8B5CF6] flex-shrink-0 mt-2 shadow-[0_0_10px_rgba(139,92,246,0.5)]" />
                   )}
                 </button>
               ))}
