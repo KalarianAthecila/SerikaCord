@@ -70,8 +70,8 @@ export function MemberSidebar() {
                       Online — {onlineMembers.length}
                     </span>
                   </div>
-                  {onlineMembers.map((member) => (
-                    <MemberItem key={member.id} member={member} />
+                  {onlineMembers.map((member, index) => (
+                    <MemberItem key={member.id || `online-${index}`} member={member} />
                   ))}
                 </div>
               )}
@@ -84,8 +84,8 @@ export function MemberSidebar() {
                       Offline — {offlineMembers.length}
                     </span>
                   </div>
-                  {offlineMembers.map((member) => (
-                    <MemberItem key={member.id} member={member} />
+                  {offlineMembers.map((member, index) => (
+                    <MemberItem key={member.id || `offline-${index}`} member={member} />
                   ))}
                 </div>
               )}
@@ -120,9 +120,9 @@ function MemberItem({ member }: MemberItemProps) {
     >
       <div className="relative flex-shrink-0">
         <Avatar className="w-8 h-8">
-          <AvatarImage src={member.avatar} alt={member.displayName} />
+          <AvatarImage src={member.avatar} alt={member.displayName || member.username} />
           <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
-            {member.displayName.charAt(0).toUpperCase()}
+            {(member.displayName || member.username || "?").charAt(0).toUpperCase()}
           </AvatarFallback>
         </Avatar>
         <div
@@ -145,7 +145,7 @@ function MemberItem({ member }: MemberItemProps) {
           )}
           style={member.roles?.[0]?.color ? { color: member.roles[0].color } : undefined}
         >
-          {member.displayName}
+          {member.displayName || member.username || "Unknown"}
         </div>
       </div>
     </button>
