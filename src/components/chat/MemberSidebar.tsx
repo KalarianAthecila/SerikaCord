@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from "react";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { cn } from "@/lib/utils";
 
 interface Member {
@@ -84,7 +85,7 @@ export function MemberSidebar() {
                     </span>
                   </div>
                   {onlineMembers.map((member, index) => (
-                    <MemberItem key={member.id || `online-${index}`} member={member} />
+                    <MemberItem key={member.id || `online-${index}`} member={member} serverId={currentServer.id} />
                   ))}
                 </div>
               )}
@@ -98,7 +99,7 @@ export function MemberSidebar() {
                     </span>
                   </div>
                   {offlineMembers.map((member, index) => (
-                    <MemberItem key={member.id || `offline-${index}`} member={member} />
+                    <MemberItem key={member.id || `offline-${index}`} member={member} serverId={currentServer.id} />
                   ))}
                 </div>
               )}
@@ -118,49 +119,57 @@ export function MemberSidebar() {
 
 interface MemberItemProps {
   member: Member;
+  serverId?: string;
 }
 
-function MemberItem({ member }: MemberItemProps) {
+function MemberItem({ member, serverId }: MemberItemProps) {
   const isOffline = member.status === "offline";
 
   return (
-    <button
-      className={cn(
-        "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-3 hover:bg-[#111111] transition-all group",
-        isOffline && "opacity-50"
-      )}
-      style={{ width: "calc(100% - 16px)" }}
+    <MemberProfilePopup 
+      member={member} 
+      serverId={serverId}
+      side="left"
+      align="start"
     >
-      <div className="relative flex-shrink-0">
-        <Avatar className="w-8 h-8">
-          <AvatarImage src={member.avatar} alt={member.displayName || member.username} />
-          <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
-            {(member.displayName || member.username || "?").charAt(0).toUpperCase()}
-          </AvatarFallback>
-        </Avatar>
-        <div
-          className={cn(
-            "absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-[2.5px] border-[#0a0a0a]",
-            member.status === "online" && "bg-[#8B5CF6]",
-            member.status === "idle" && "bg-[#A78BFA]",
-            member.status === "dnd" && "bg-red-500",
-            member.status === "offline" && "bg-[#555555]"
-          )}
-        />
-      </div>
-      <div className="flex-1 min-w-0 text-left">
-        <div
-          className={cn(
-            "text-sm font-medium truncate",
-            member.roles?.[0]?.color
-              ? `text-[${member.roles[0].color}]`
-              : "text-white"
-          )}
-          style={member.roles?.[0]?.color ? { color: member.roles[0].color } : undefined}
-        >
-          {member.displayName || member.username || "Unknown"}
+      <button
+        className={cn(
+          "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-3 hover:bg-[#111111] transition-all group",
+          isOffline && "opacity-50"
+        )}
+        style={{ width: "calc(100% - 16px)" }}
+      >
+        <div className="relative flex-shrink-0">
+          <Avatar className="w-8 h-8">
+            <AvatarImage src={member.avatar} alt={member.displayName || member.username} />
+            <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
+              {(member.displayName || member.username || "?").charAt(0).toUpperCase()}
+            </AvatarFallback>
+          </Avatar>
+          <div
+            className={cn(
+              "absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-[2.5px] border-[#0a0a0a]",
+              member.status === "online" && "bg-[#8B5CF6]",
+              member.status === "idle" && "bg-[#A78BFA]",
+              member.status === "dnd" && "bg-red-500",
+              member.status === "offline" && "bg-[#555555]"
+            )}
+          />
         </div>
-      </div>
-    </button>
+        <div className="flex-1 min-w-0 text-left">
+          <div
+            className={cn(
+              "text-sm font-medium truncate",
+              member.roles?.[0]?.color
+                ? `text-[${member.roles[0].color}]`
+                : "text-white"
+            )}
+            style={member.roles?.[0]?.color ? { color: member.roles[0].color } : undefined}
+          >
+            {member.displayName || member.username || "Unknown"}
+          </div>
+        </div>
+      </button>
+    </MemberProfilePopup>
   );
 }

@@ -1,6 +1,6 @@
 {
   "name": "serikacord-desktop",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "SerikaCord Desktop App",
   "main": "main.js",
   "author": "SerikaCord Team",
@@ -73,12 +73,27 @@
       ]
     },
     "linux": {
-      "icon": "resources/icon.png",
+      "icon": "resources/icons",
       "category": "Network;Chat;InstantMessaging",
+      "desktop": {
+        "Name": "SerikaCord",
+        "Comment": "Chat with friends and communities",
+        "Keywords": "chat;discord;messaging;voice;video",
+        "StartupWMClass": "serikacord"
+      },
       "target": [
-        "AppImage",
-        "deb",
-        "tar.gz"
+        {
+          "target": "AppImage",
+          "arch": ["x64"]
+        },
+        {
+          "target": "deb",
+          "arch": ["x64"]
+        },
+        {
+          "target": "tar.gz",
+          "arch": ["x64"]
+        }
       ],
       "maintainer": "SerikaCord Team"
     },

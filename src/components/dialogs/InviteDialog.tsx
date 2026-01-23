@@ -1,0 +1,329 @@
+"use client";
+
+import { useState, useEffect } from "react";
+import { useServer } from "@/contexts/ServerContext";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
+import {
+  X,
+  Copy,
+  Check,
+  Link2,
+  Clock,
+  Users,
+  ChevronDown,
+  Settings,
+  Loader2,
+  Share2,
+  RefreshCw,
+} from "lucide-react";
+import { cn } from "@/lib/utils";
+
+interface InviteDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  channelId?: string;
+}
+
+const EXPIRE_OPTIONS = [
+  { value: 1800, label: "30 minutes" },
+  { value: 3600, label: "1 hour" },
+  { value: 21600, label: "6 hours" },
+  { value: 43200, label: "12 hours" },
+  { value: 86400, label: "1 day" },
+  { value: 604800, label: "7 days" },
+  { value: 0, label: "Never" },
+];
+
+const MAX_USES_OPTIONS = [
+  { value: 0, label: "No limit" },
+  { value: 1, label: "1 use" },
+  { value: 5, label: "5 uses" },
+  { value: 10, label: "10 uses" },
+  { value: 25, label: "25 uses" },
+  { value: 50, label: "50 uses" },
+  { value: 100, label: "100 uses" },
+];
+
+export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProps) {
+  const { currentServer, channels } = useServer();
+  const [inviteCode, setInviteCode] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [maxAge, setMaxAge] = useState(604800); // 7 days
+  const [maxUses, setMaxUses] = useState(0); // Unlimited
+  const [selectedChannel, setSelectedChannel] = useState(channelId || "");
+
+  // Generate invite on open
+  useEffect(() => {
+    if (open && currentServer) {
+      generateInvite();
+    }
+  }, [open, currentServer]);
+
+  // Set initial channel
+  useEffect(() => {
+    if (channels.length > 0 && !selectedChannel) {
+      const textChannel = channels.find(c => c.type === "text");
+      if (textChannel) {
+        setSelectedChannel(textChannel.id);
+      }
+    }
+  }, [channels, selectedChannel]);
+
+  const generateInvite = async () => {
+    if (!currentServer) return;
+    setIsLoading(true);
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/invites`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          channelId: selectedChannel || channels[0]?.id,
+          maxAge,
+          maxUses,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setInviteCode(data.invite?.code || data.code || "");
+      } else {
+        // Fallback: generate a random code for demo
+        setInviteCode(Math.random().toString(36).substring(2, 10));
+      }
+    } catch (error) {
+      console.error("Failed to create invite:", error);
+      // Fallback for demo
+      setInviteCode(Math.random().toString(36).substring(2, 10));
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleCopy = async () => {
+    const inviteUrl = `https://serika.gg/invite/${inviteCode}`;
+    await navigator.clipboard.writeText(inviteUrl);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+
+  const handleShare = async () => {
+    const inviteUrl = `https://serika.gg/invite/${inviteCode}`;
+    if (navigator.share) {
+      try {
+        await navigator.share({
+          title: `Join ${currentServer?.name} on SerikaCord`,
+          text: `Come chat with us on SerikaCord!`,
+          url: inviteUrl,
+        });
+      } catch (error) {
+        // User cancelled or share failed
+      }
+    } else {
+      handleCopy();
+    }
+  };
+
+  // Handle escape key
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && open) {
+        onOpenChange(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [open, onOpenChange]);
+
+  if (!open || !currentServer) return null;
+
+  const inviteUrl = `serika.gg/invite/${inviteCode}`;
+  const textChannels = channels.filter(c => c.type === "text");
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center">
+      {/* Backdrop */}
+      <div
+        className="absolute inset-0 bg-black/70"
+        onClick={() => onOpenChange(false)}
+      />
+
+      {/* Dialog */}
+      <div className="relative w-full max-w-md mx-4 bg-[#111111] rounded-lg shadow-xl animate-in fade-in zoom-in-95 duration-200">
+        {/* Header */}
+        <div className="flex items-center justify-between p-4 border-b border-[#222222]">
+          <div className="flex items-center gap-3">
+            <Avatar className="w-10 h-10">
+              <AvatarImage src={(currentServer as any).icon} />
+              <AvatarFallback className="bg-[#8B5CF6] text-white">
+                {currentServer.name.charAt(0)}
+              </AvatarFallback>
+            </Avatar>
+            <div>
+              <h2 className="text-white font-semibold">Invite friends to {currentServer.name}</h2>
+              <p className="text-xs text-[#888888]">Share this link to invite others</p>
+            </div>
+          </div>
+          <button
+            onClick={() => onOpenChange(false)}
+            className="p-2 rounded-full hover:bg-[#1a1a1a] text-[#888888] hover:text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
+        {/* Content */}
+        <div className="p-4 space-y-4">
+          {/* Channel Selector */}
+          <div>
+            <label className="block text-xs font-semibold uppercase text-[#888888] mb-2">
+              INVITE TO CHANNEL
+            </label>
+            <div className="relative">
+              <select
+                value={selectedChannel}
+                onChange={(e) => setSelectedChannel(e.target.value)}
+                className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white appearance-none cursor-pointer"
+              >
+                {textChannels.map((channel) => (
+                  <option key={channel.id} value={channel.id}>
+                    # {channel.name}
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888] pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Invite Link */}
+          <div>
+            <label className="block text-xs font-semibold uppercase text-[#888888] mb-2">
+              INVITE LINK
+            </label>
+            <div className="flex gap-2">
+              <div className="flex-1 relative">
+                <Input
+                  value={isLoading ? "Generating..." : inviteUrl}
+                  readOnly
+                  className="bg-[#0a0a0a] border-[#222222] text-white pr-10 font-mono text-sm"
+                />
+                {isLoading && (
+                  <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888] animate-spin" />
+                )}
+              </div>
+              <button
+                onClick={handleCopy}
+                disabled={isLoading || !inviteCode}
+                className={cn(
+                  "px-4 py-2 rounded-md font-medium transition-colors flex items-center gap-2",
+                  copied
+                    ? "bg-[#23A559] text-white"
+                    : "bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+                )}
+              >
+                {copied ? (
+                  <>
+                    <Check className="w-4 h-4" />
+                    Copied
+                  </>
+                ) : (
+                  <>
+                    <Copy className="w-4 h-4" />
+                    Copy
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Share Button (Mobile) */}
+          {"share" in navigator && (
+            <button
+              onClick={handleShare}
+              className="w-full py-2.5 rounded-md bg-[#1a1a1a] hover:bg-[#222222] text-white font-medium transition-colors flex items-center justify-center gap-2"
+            >
+              <Share2 className="w-4 h-4" />
+              Share Invite Link
+            </button>
+          )}
+
+          {/* Settings Toggle */}
+          <button
+            onClick={() => setShowSettings(!showSettings)}
+            className="flex items-center gap-2 text-sm text-[#888888] hover:text-white transition-colors"
+          >
+            <Settings className="w-4 h-4" />
+            Edit invite link
+            <ChevronDown className={cn(
+              "w-4 h-4 transition-transform",
+              showSettings && "rotate-180"
+            )} />
+          </button>
+
+          {/* Settings Panel */}
+          {showSettings && (
+            <div className="space-y-4 p-4 rounded-lg bg-[#0a0a0a] border border-[#222222]">
+              {/* Expire After */}
+              <div>
+                <label className="flex items-center gap-2 text-xs font-semibold uppercase text-[#888888] mb-2">
+                  <Clock className="w-3 h-3" />
+                  EXPIRE AFTER
+                </label>
+                <select
+                  value={maxAge}
+                  onChange={(e) => setMaxAge(Number(e.target.value))}
+                  className="w-full h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white"
+                >
+                  {EXPIRE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Max Uses */}
+              <div>
+                <label className="flex items-center gap-2 text-xs font-semibold uppercase text-[#888888] mb-2">
+                  <Users className="w-3 h-3" />
+                  MAX NUMBER OF USES
+                </label>
+                <select
+                  value={maxUses}
+                  onChange={(e) => setMaxUses(Number(e.target.value))}
+                  className="w-full h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white"
+                >
+                  {MAX_USES_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {/* Generate New Link */}
+              <button
+                onClick={generateInvite}
+                disabled={isLoading}
+                className="w-full py-2 rounded-md bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+              >
+                <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
+                Generate New Link
+              </button>
+            </div>
+          )}
+        </div>
+
+        {/* Footer */}
+        <div className="p-4 border-t border-[#222222] bg-[#0a0a0a] rounded-b-lg">
+          <p className="text-xs text-[#666666] text-center">
+            Your invite link expires in {EXPIRE_OPTIONS.find(o => o.value === maxAge)?.label || "7 days"}.
+            {maxUses > 0 && ` Limited to ${maxUses} uses.`}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}

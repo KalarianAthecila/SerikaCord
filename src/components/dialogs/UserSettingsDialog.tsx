@@ -75,7 +75,7 @@ const statusOptions = [
 ];
 
 export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogProps) {
-  const { user, logout } = useAuth();
+  const { user, logout, updateUser, refresh } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>("profiles");
   const [displayName, setDisplayName] = useState("");
   const [bio, setBio] = useState("");
@@ -136,9 +136,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       });
 
       if (response.ok) {
+        // Update local state immediately
+        updateUser({
+          displayName,
+          bio,
+          customStatus,
+          status: status as "online" | "idle" | "dnd" | "offline",
+        });
         setHasChanges(false);
-        // Refresh user data
-        window.location.reload();
+        // Refresh to get full updated data
+        await refresh();
       }
     } catch (error) {
       console.error("Failed to save settings:", error);
@@ -241,9 +248,20 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
   return (
     <div className="fixed inset-0 z-50 bg-[#0a0a0a]">
-      <div className="h-full flex">
+      <div className="h-full flex flex-col md:flex-row">
+        {/* Mobile Header */}
+        <div className="md:hidden flex items-center justify-between p-4 border-b border-[#1a1a1a]">
+          <h2 className="text-lg font-semibold text-white">Settings</h2>
+          <button
+            onClick={() => onOpenChange(false)}
+            className="p-2 rounded-full hover:bg-[#1a1a1a] text-[#888888]"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+
         {/* Sidebar */}
-        <div className="w-[218px] bg-[#0a0a0a] flex flex-col border-r border-[#1a1a1a]">
+        <div className="hidden md:flex w-56 lg:w-64 bg-[#0a0a0a] flex-col border-r border-[#1a1a1a]">
           {/* User Header */}
           <div className="p-4 border-b border-[#1a1a1a]">
             <div className="flex items-center gap-3">
@@ -321,10 +339,39 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
           </ScrollArea>
         </div>
 
+        {/* Mobile Tab Navigation */}
+        <div className="md:hidden overflow-x-auto border-b border-[#1a1a1a]">
+          <div className="flex px-4 py-2 gap-2">
+            {menuSections.flatMap(s => s.items).slice(0, 6).map((item) => (
+              <button
+                key={item.id}
+                onClick={() => setActiveTab(item.id)}
+                className={cn(
+                  "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm whitespace-nowrap transition-colors",
+                  activeTab === item.id
+                    ? "bg-[#8B5CF6] text-white"
+                    : "bg-[#1a1a1a] text-[#888888]"
+                )}
+              >
+                <item.icon className="w-4 h-4" />
+                {item.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {/* Content */}
         <div className="flex-1 bg-[#111111] relative flex flex-col overflow-hidden">
+          {/* Desktop Close Button */}
+          <button
+            onClick={() => onOpenChange(false)}
+            className="hidden md:flex absolute top-4 right-4 z-10 p-2 rounded-full hover:bg-[#1a1a1a] text-[#888888] hover:text-white transition-colors"
+          >
+            <X className="w-5 h-5" />
+          </button>
+
           <ScrollArea className="flex-1 [&_[data-radix-scroll-area-viewport]]:!overflow-y-scroll [&_[data-radix-scroll-area-scrollbar]]:!flex">
-            <div className="max-w-[740px] py-10 px-10 mx-auto pb-24">
+            <div className="max-w-[740px] py-6 px-4 md:py-10 md:px-10 mx-auto pb-24">
               {/* Profiles Tab */}
               {activeTab === "profiles" && (
                 <div>
@@ -341,7 +388,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                   </div>
 
                   {/* Profile Preview Card */}
-                  <div className="grid grid-cols-2 gap-8">
+                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
                     <div>
                       {/* Banner promo for premium */}
                       {!user?.isPremium && (
@@ -399,7 +446,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     {/* Preview */}
                     <div>
                       <h3 className="text-xs font-bold text-[#b5bac1] uppercase mb-3">Preview</h3>
-                      <div className="bg-[#232428] rounded-lg overflow-hidden w-[300px]">
+                      <div className="bg-[#232428] rounded-lg overflow-hidden w-full max-w-[300px]">
                         <div
                           className="h-[60px]"
                           style={{

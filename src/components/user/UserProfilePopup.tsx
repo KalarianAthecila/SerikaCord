@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -46,12 +46,14 @@ const statusOptions = [
 type StatusValue = typeof statusOptions[number]['value'];
 
 export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupProps) {
-  const { user, refresh } = useAuth();
+  const { user, refresh, updateUser } = useAuth();
   const [open, setOpen] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [showBadgesDialog, setShowBadgesDialog] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [currentStatus, setCurrentStatus] = useState<StatusValue>((user?.status as StatusValue) || "online");
+
+  // Use user status directly, fallback to online
+  const currentStatus: StatusValue = (user?.status as StatusValue) || "online";
 
   const handleCopyUserId = async () => {
     if (user?.id) {
@@ -62,20 +64,24 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
   };
 
   const handleStatusChange = async (status: StatusValue) => {
-    setCurrentStatus(status);
+    // Immediately update local state for instant UI feedback
+    updateUser({ status });
     setShowStatusMenu(false);
+    
     try {
       const response = await fetch("/api/users/me", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ status }),
       });
-      if (response.ok) {
-        // Refresh auth context to update status everywhere
+      if (!response.ok) {
+        // If update failed, refresh to get the correct status back
         await refresh();
       }
     } catch (error) {
       console.error("Failed to update status:", error);
+      // Refresh to restore correct state
+      await refresh();
     }
   };
 
