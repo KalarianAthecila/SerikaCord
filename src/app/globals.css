@@ -123,3 +123,21 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Twemoji styling */
+.twemoji img.emoji {
+  display: inline-block;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.2em;
+  margin: 0 0.05em;
+}
+
+/* Large emoji when message is only emojis */
+.twemoji-large img.emoji {
+  display: inline-block;
+  width: 2.5em;
+  height: 2.5em;
+  vertical-align: -0.4em;
+  margin: 0 0.1em;
+}

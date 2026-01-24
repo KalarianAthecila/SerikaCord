@@ -56,6 +56,7 @@ import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
 import { Twemoji } from "@/components/ui/twemoji";
+import { LinkEmbed } from "@/components/chat/LinkEmbed";
 
 interface Message {
   id: string;
@@ -786,6 +787,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                               {message.content}
                               {message.edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
                             </Twemoji>
+
+                            {/* Link Embeds */}
+                            <LinkEmbed content={message.content} />
 
                             {/* Attachments */}
                             {message.attachments?.map((attachment) => (

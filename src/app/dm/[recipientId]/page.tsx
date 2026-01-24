@@ -28,6 +28,7 @@ import Link from "next/link";
 import { Twemoji } from "@/components/ui/twemoji";
 import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { LinkEmbed } from "@/components/chat/LinkEmbed";
 
 interface User {
   id: string;
@@ -413,9 +414,12 @@ export default function DMConversationPage() {
                             </span>
                           </div>
                           {group.messages.map((message, msgIndex) => (
-                            <Twemoji key={`${groupIndex}-${msgIndex}-${message.id}`} className="text-[#dcddde] break-words">
-                              {message.content}
-                            </Twemoji>
+                            <div key={`${groupIndex}-${msgIndex}-${message.id}`}>
+                              <Twemoji className="text-[#dcddde] break-words">
+                                {message.content}
+                              </Twemoji>
+                              <LinkEmbed content={message.content} />
+                            </div>
                           ))}
                         </div>
                       </div>

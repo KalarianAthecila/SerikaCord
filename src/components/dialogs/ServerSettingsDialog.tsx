@@ -1032,9 +1032,9 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </div>
       ) : (
         <div className="space-y-1">
-          {members.map((member) => (
+          {members.map((member, index) => (
             <div
-              key={member.id}
+              key={member.id || `member-${index}`}
               className="flex items-center gap-3 p-3 rounded-lg hover:bg-[#111111] transition-colors"
             >
               <Avatar className="w-10 h-10">

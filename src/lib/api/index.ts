@@ -12,6 +12,7 @@ import { channelRoutes } from './channels';
 import { uploadRoutes } from './uploads';
 import { dmRoutes } from './dms';
 import { adminRoutes } from './admin';
+import { oembedRoutes } from './oembed';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
 import { Types } from 'mongoose';
 
@@ -753,7 +754,8 @@ export const api = new Elysia({ prefix: '/api' })
   .use(channelRoutes)
   .use(dmRoutes)
   .use(uploadRoutes)
-  .use(adminRoutes);
+  .use(adminRoutes)
+  .use(oembedRoutes);
 
 // Initialize database connection
 export async function initializeAPI() {
