@@ -5,6 +5,13 @@ import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, isV
 import { cache, getPublisher } from '@/lib/db';
 import { Types } from 'mongoose';
 
+// Helper to safely compare IDs (handles both ObjectId and string)
+function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
+  const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
+  const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
+  return str1 === str2;
+}
+
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
   const authHeader = headers.authorization ?? null;
@@ -106,7 +113,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     }
 
     // Check if friends or can DM
-    const isFriend = user.friends.some((f: Types.ObjectId) => f.equals(recipient._id));
+    const isFriend = user.friends.some((f: Types.ObjectId | string) => compareIds(f, recipient._id));
     if (!isFriend && recipient.settings.privacy.directMessages !== 'everyone') {
       set.status = 403;
       return { error: 'You cannot message this user' };
@@ -198,17 +205,17 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     }
 
     // Check if blocked
-    if (user.blockedUsers.some((b: Types.ObjectId) => b.equals(recipient._id))) {
-      set.status = 400;
+    if (user.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, recipient._id))) {
+      set.status = 403;
       return { error: 'You have blocked this user' };
     }
-    if (recipient.blockedUsers.some((b: Types.ObjectId) => b.equals(user._id))) {
+    if (recipient.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, user._id))) {
       set.status = 403;
       return { error: 'You cannot message this user' };
     }
 
     // Check DM permissions
-    const isFriend = user.friends.some((f: Types.ObjectId) => f.equals(recipient._id));
+    const isFriend = user.friends.some((f: Types.ObjectId | string) => compareIds(f, recipient._id));
     if (!isFriend && recipient.settings.privacy.directMessages !== 'everyone') {
       set.status = 403;
       return { error: 'You cannot message this user' };

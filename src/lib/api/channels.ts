@@ -6,6 +6,13 @@ import { cache, getPublisher } from '@/lib/db';
 import { config } from '@/lib/config';
 import { Types } from 'mongoose';
 
+// Helper to safely compare IDs (handles both ObjectId and string)
+function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
+  const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
+  const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
+  return str1 === str2;
+}
+
 // Store active SSE connections for server channels
 const activeConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
@@ -49,7 +56,7 @@ async function checkChannelAccess(userId: string, channelId: string): Promise<{
 
   // DM channels
   if (channel.type === 'dm' || channel.type === 'group_dm') {
-    if (!channel.recipientIds.some((r: Types.ObjectId) => r.equals(userId))) {
+    if (!channel.recipientIds.some((r: Types.ObjectId | string) => compareIds(r, userId))) {
       return { hasAccess: false, error: 'You do not have access to this channel' };
     }
     return { hasAccess: true, channel };
@@ -684,7 +691,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     if (existingReaction) {
       // Check if user already reacted
-      if (!existingReaction.userIds.some((id: Types.ObjectId) => id.equals(user._id))) {
+      if (!existingReaction.userIds.some((id: Types.ObjectId | string) => compareIds(id, user._id))) {
         existingReaction.userIds.push(user._id);
         existingReaction.count++;
       }
@@ -758,7 +765,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     if (reactionIndex !== -1) {
       const reaction = reactions[reactionIndex];
-      reaction.userIds = reaction.userIds.filter(id => !id.equals(user._id));
+      reaction.userIds = reaction.userIds.filter((id: Types.ObjectId | string) => !compareIds(id, user._id));
       reaction.count = reaction.userIds.length;
 
       if (reaction.count === 0) {

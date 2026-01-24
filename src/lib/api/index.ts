@@ -13,7 +13,14 @@ import { uploadRoutes } from './uploads';
 import { dmRoutes } from './dms';
 import { adminRoutes } from './admin';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
-import type { Types } from 'mongoose';
+import { Types } from 'mongoose';
+
+// Helper to safely compare IDs (handles both ObjectId and string)
+function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
+  const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
+  const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
+  return str1 === str2;
+}
 
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -367,25 +374,25 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: `User "${username}" not found. Make sure you entered the correct username.` };
     }
 
-    if (targetUser._id.equals(user._id)) {
+    if (compareIds(targetUser._id, user._id)) {
       set.status = 400;
       return { error: 'You cannot send a friend request to yourself' };
     }
 
     // Check if already friends
-    if (user.friends.some((f: Types.ObjectId) => f.equals(targetUser._id))) {
+    if (user.friends.some((f: Types.ObjectId | string) => compareIds(f, targetUser._id))) {
       set.status = 400;
       return { error: `You're already friends with ${targetUser.displayName || targetUser.username}` };
     }
 
     // Check if blocked
-    if (user.blockedUsers.some((b: Types.ObjectId) => b.equals(targetUser._id))) {
+    if (user.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, targetUser._id))) {
       set.status = 400;
       return { error: 'You have blocked this user. Unblock them first to send a friend request.' };
     }
 
     // Check if target blocked the user
-    if (targetUser.blockedUsers.some((b: Types.ObjectId) => b.equals(user._id))) {
+    if (targetUser.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, user._id))) {
       set.status = 403;
       return { error: 'Unable to send friend request to this user' };
     }
@@ -397,19 +404,19 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Check if request already pending
-    if (user.pendingFriendRequests.outgoing.some((p: Types.ObjectId) => p.equals(targetUser._id))) {
+    if (user.pendingFriendRequests.outgoing.some((p: Types.ObjectId | string) => compareIds(p, targetUser._id))) {
       set.status = 400;
       return { error: `You already sent a friend request to ${targetUser.displayName || targetUser.username}` };
     }
 
     // Check if they sent us a request - auto-accept
-    if (user.pendingFriendRequests.incoming.some((p: Types.ObjectId) => p.equals(targetUser._id))) {
+    if (user.pendingFriendRequests.incoming.some((p: Types.ObjectId | string) => compareIds(p, targetUser._id))) {
       // Accept the friend request
       user.pendingFriendRequests.incoming = user.pendingFriendRequests.incoming.filter(
-        (p: Types.ObjectId) => !p.equals(targetUser._id)
+        (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
       );
       targetUser.pendingFriendRequests.outgoing = targetUser.pendingFriendRequests.outgoing.filter(
-        (p: Types.ObjectId) => !p.equals(user._id)
+        (p: Types.ObjectId | string) => !compareIds(p, user._id)
       );
       
       user.friends.push(targetUser._id);
@@ -467,17 +474,17 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Check if there's a pending request
-    if (!user.pendingFriendRequests.incoming.some((p: Types.ObjectId) => p.equals(targetUser._id))) {
+    if (!user.pendingFriendRequests.incoming.some((p: Types.ObjectId | string) => compareIds(p, targetUser._id))) {
       set.status = 400;
       return { error: 'No pending friend request from this user' };
     }
 
     // Accept the request
     user.pendingFriendRequests.incoming = user.pendingFriendRequests.incoming.filter(
-      (p: Types.ObjectId) => !p.equals(targetUser._id)
+      (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
     );
     targetUser.pendingFriendRequests.outgoing = targetUser.pendingFriendRequests.outgoing.filter(
-      (p: Types.ObjectId) => !p.equals(user._id)
+      (p: Types.ObjectId | string) => !compareIds(p, user._id)
     );
     
     user.friends.push(targetUser._id);
@@ -595,21 +602,21 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Already blocked?
-    if (user.blockedUsers.some((b: Types.ObjectId) => b.equals(targetUser._id))) {
+    if (user.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, targetUser._id))) {
       set.status = 400;
       return { error: 'User is already blocked' };
     }
 
     // Remove from friends if present
-    user.friends = user.friends.filter((f: Types.ObjectId) => !f.equals(targetUser._id));
-    targetUser.friends = targetUser.friends.filter((f: Types.ObjectId) => !f.equals(user._id));
+    user.friends = user.friends.filter((f: Types.ObjectId | string) => !compareIds(f, targetUser._id));
+    targetUser.friends = targetUser.friends.filter((f: Types.ObjectId | string) => !compareIds(f, user._id));
 
     // Remove any pending requests
     user.pendingFriendRequests.incoming = user.pendingFriendRequests.incoming.filter(
-      (p: Types.ObjectId) => !p.equals(targetUser._id)
+      (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
     );
     user.pendingFriendRequests.outgoing = user.pendingFriendRequests.outgoing.filter(
-      (p: Types.ObjectId) => !p.equals(targetUser._id)
+      (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
     );
     targetUser.pendingFriendRequests.incoming = targetUser.pendingFriendRequests.incoming.filter(
       (p: Types.ObjectId) => !p.equals(user._id)
@@ -650,7 +657,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: 'User not found' };
     }
 
-    user.blockedUsers = user.blockedUsers.filter((b: Types.ObjectId) => !b.equals(targetUser._id));
+    user.blockedUsers = user.blockedUsers.filter((b: Types.ObjectId | string) => !compareIds(b, targetUser._id));
     await user.save();
 
     return { success: true, message: 'User unblocked' };
@@ -681,14 +688,14 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Check if actually friends
-    if (!user.friends.some((f: Types.ObjectId) => f.equals(targetUser._id))) {
+    if (!user.friends.some((f: Types.ObjectId | string) => compareIds(f, targetUser._id))) {
       set.status = 400;
       return { error: 'You are not friends with this user' };
     }
 
     // Remove from friends
-    user.friends = user.friends.filter((f: Types.ObjectId) => !f.equals(targetUser._id));
-    targetUser.friends = targetUser.friends.filter((f: Types.ObjectId) => !f.equals(user._id));
+    user.friends = user.friends.filter((f: Types.ObjectId | string) => !compareIds(f, targetUser._id));
+    targetUser.friends = targetUser.friends.filter((f: Types.ObjectId | string) => !compareIds(f, user._id));
 
     await Promise.all([user.save(), targetUser.save()]);
 
