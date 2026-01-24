@@ -54,8 +54,10 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import data from "@emoji-mart/data";
-import Picker from "@emoji-mart/react";
+import dynamic from "next/dynamic";
+import { Theme } from "emoji-picker-react";
+
+const EmojiPicker = dynamic(() => import("emoji-picker-react"), { ssr: false });
 
 interface Message {
   id: string;
@@ -470,8 +472,8 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     }
   };
 
-  const handleEmojiSelect = (emoji: { native: string }) => {
-    setNewMessage((prev) => prev + emoji.native);
+  const handleEmojiSelect = (emojiObject: any) => {
+    setNewMessage((prev) => prev + emojiObject.emoji);
     setShowEmojiPicker(false);
     textareaRef.current?.focus();
   };
@@ -831,10 +833,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                                     </button>
                                   </PopoverTrigger>
                                   <PopoverContent className="w-auto p-0 border-none" side="top" align="end">
-                                    <Picker
-                                      data={data}
-                                      onEmojiSelect={(emoji: { native: string }) => handleAddReaction(message.id, emoji.native)}
-                                      theme="dark"
+                                    <EmojiPicker
+                                      onEmojiClick={(emojiObject) => handleAddReaction(message.id, emojiObject.emoji)}
+                                      theme={Theme.DARK}
                                     />
                                   </PopoverContent>
                                 </Popover>
@@ -979,7 +980,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                 align="end"
                 className="w-auto p-0 border-none bg-transparent shadow-xl"
               >
-                <Picker data={data} onEmojiSelect={handleEmojiSelect} theme="dark" />
+                <EmojiPicker onEmojiClick={handleEmojiSelect} theme={Theme.DARK} />
               </PopoverContent>
             </Popover>
             {(newMessage.trim() || attachments.length > 0) && (
