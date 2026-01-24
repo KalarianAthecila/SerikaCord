@@ -36,7 +36,7 @@ export function MemberSidebar() {
         // Transform the API response - members have userId populated
         const rawMembers = Array.isArray(data) ? data : data?.members || [];
         const transformedMembers = rawMembers.map((m: { _id?: string; userId?: { _id?: string; username?: string; displayName?: string; avatar?: string; status?: string }; roles?: Array<{ _id?: string; name?: string; color?: string }> }) => ({
-          id: m._id || m.userId?._id || '',
+          id: m.userId?._id || m._id || '',
           username: m.userId?.username || 'Unknown',
           displayName: m.userId?.displayName || m.userId?.username || 'Unknown',
           avatar: m.userId?.avatar,
