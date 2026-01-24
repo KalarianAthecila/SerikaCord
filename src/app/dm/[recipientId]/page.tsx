@@ -25,6 +25,9 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
+import { Twemoji } from "@/components/ui/twemoji";
+import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 interface User {
   id: string;
@@ -69,6 +72,12 @@ export default function DMConversationPage() {
   const [showUserProfile, setShowUserProfile] = useState(true);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
+
+  const handleEmojiSelect = (emoji: string) => {
+    setNewMessage((prev) => prev + emoji);
+    setShowEmojiPicker(false);
+  };
 
   // Redirect if not authenticated
   useEffect(() => {
@@ -404,9 +413,9 @@ export default function DMConversationPage() {
                             </span>
                           </div>
                           {group.messages.map((message, msgIndex) => (
-                            <div key={`${groupIndex}-${msgIndex}-${message.id}`} className="text-[#dcddde] break-words">
+                            <Twemoji key={`${groupIndex}-${msgIndex}-${message.id}`} className="text-[#dcddde] break-words">
                               {message.content}
-                            </div>
+                            </Twemoji>
                           ))}
                         </div>
                       </div>
@@ -442,9 +451,16 @@ export default function DMConversationPage() {
                 <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
                   <ImageIcon className="w-5 h-5" />
                 </button>
-                <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
-                  <Smile className="w-5 h-5" />
-                </button>
+                <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
+                  <PopoverTrigger asChild>
+                    <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+                      <Smile className="w-5 h-5" />
+                    </button>
+                  </PopoverTrigger>
+                  <PopoverContent side="top" align="end" className="w-auto p-0 border-none bg-transparent">
+                    <CustomEmojiPicker onEmojiSelect={handleEmojiSelect} />
+                  </PopoverContent>
+                </Popover>
                 <button
                   onClick={sendMessage}
                   disabled={!newMessage.trim() || isSending}

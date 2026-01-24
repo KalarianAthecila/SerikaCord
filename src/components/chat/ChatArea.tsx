@@ -54,10 +54,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import dynamic from "next/dynamic";
-import { Theme } from "emoji-picker-react";
-
-const EmojiPicker = dynamic(() => import("emoji-picker-react"), { ssr: false });
+import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
+import { Twemoji } from "@/components/ui/twemoji";
 
 interface Message {
   id: string;
@@ -130,6 +128,15 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   // Reaction picker
   const [reactionPickerMessage, setReactionPickerMessage] = useState<string | null>(null);
 
+  // Server emojis
+  const [serverEmojis, setServerEmojis] = useState<Array<{
+    id: string;
+    name: string;
+    url: string;
+    serverId: string;
+    animated?: boolean;
+  }>>([]);
+
   // Typing indicator
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
 
@@ -140,6 +147,26 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     window.addEventListener("resize", checkMobile);
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
+
+  // Fetch server emojis
+  useEffect(() => {
+    const fetchServerEmojis = async () => {
+      if (!currentServer) {
+        setServerEmojis([]);
+        return;
+      }
+      try {
+        const response = await fetch(`/api/servers/${currentServer.id}/emojis`);
+        if (response.ok) {
+          const data = await response.json();
+          setServerEmojis(data.emojis || []);
+        }
+      } catch (error) {
+        console.error("Failed to fetch server emojis:", error);
+      }
+    };
+    fetchServerEmojis();
+  }, [currentServer]);
 
   const fetchMessages = useCallback(async () => {
     if (!currentChannel) return;
@@ -472,8 +499,8 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     }
   };
 
-  const handleEmojiSelect = (emojiObject: any) => {
-    setNewMessage((prev) => prev + emojiObject.emoji);
+  const handleEmojiSelect = (emoji: string, isCustom?: boolean) => {
+    setNewMessage((prev) => prev + emoji);
     setShowEmojiPicker(false);
     textareaRef.current?.focus();
   };
@@ -755,10 +782,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                           </div>
                         ) : (
                           <>
-                            <div className="text-[#888888] leading-relaxed">
+                            <Twemoji className="text-[#888888] leading-relaxed">
                               {message.content}
                               {message.edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
-                            </div>
+                            </Twemoji>
 
                             {/* Attachments */}
                             {message.attachments?.map((attachment) => (
@@ -833,9 +860,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                                     </button>
                                   </PopoverTrigger>
                                   <PopoverContent className="w-auto p-0 border-none" side="top" align="end">
-                                    <EmojiPicker
-                                      onEmojiClick={(emojiObject) => handleAddReaction(message.id, emojiObject.emoji)}
-                                      theme={Theme.DARK}
+                                    <CustomEmojiPicker
+                                      onEmojiSelect={(emoji) => handleAddReaction(message.id, emoji)}
+                                      serverEmojis={serverEmojis}
                                     />
                                   </PopoverContent>
                                 </Popover>
@@ -980,7 +1007,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                 align="end"
                 className="w-auto p-0 border-none bg-transparent shadow-xl"
               >
-                <EmojiPicker onEmojiClick={handleEmojiSelect} theme={Theme.DARK} />
+                <CustomEmojiPicker onEmojiSelect={handleEmojiSelect} serverEmojis={serverEmojis} />
               </PopoverContent>
             </Popover>
             {(newMessage.trim() || attachments.length > 0) && (
