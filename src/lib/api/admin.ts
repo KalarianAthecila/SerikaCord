@@ -573,14 +573,22 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
         const { Channel } = await import('@/lib/models/Channel');
         const { Message } = await import('@/lib/models/Message');
         const { encryptForStorage } = await import('@/lib/security/encryption');
+        const { Types } = await import('mongoose');
         
         await ensureSerikaBroadcastUser();
         
-        // Get all users
-        const allUsers = await User.find({ isSystem: { $ne: true } }).select('_id');
+        // Get all users (excluding system users and banned users)
+        const allUsers = await User.find({ 
+          isSystem: { $ne: true },
+          isBanned: { $ne: true }
+        }).select('_id');
+        
+        console.log(`Broadcasting to ${allUsers.length} users`);
         
         // Send DM to each user (in batches)
         const batchSize = 50;
+        const broadcastUserId = new Types.ObjectId(SERIKA_BROADCAST_ID);
+        
         for (let i = 0; i < allUsers.length; i += batchSize) {
           const batch = allUsers.slice(i, i + batchSize);
           
@@ -589,13 +597,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
               // Get or create DM channel with system user
               let channel = await Channel.findOne({
                 type: 'dm',
-                recipientIds: { $all: [SERIKA_BROADCAST_ID, targetUser._id] },
+                recipientIds: { $all: [broadcastUserId, targetUser._id], $size: 2 },
               });
               
               if (!channel) {
                 channel = new Channel({
                   type: 'dm',
-                  recipientIds: [SERIKA_BROADCAST_ID, targetUser._id],
+                  recipientIds: [broadcastUserId, targetUser._id],
                 });
                 await channel.save();
               }
@@ -604,7 +612,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
               const encryptedContent = await encryptForStorage(message.trim());
               const dmMessage = new Message({
                 channelId: channel._id,
-                authorId: SERIKA_BROADCAST_ID,
+                authorId: broadcastUserId,
                 content: encryptedContent,
                 type: 'default',
               });
@@ -621,6 +629,8 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
             }
           }));
         }
+        
+        console.log(`Broadcast complete: ${dmCount} DMs sent`);
       } catch (err) {
         console.error('Failed to send broadcast DMs:', err);
       }
