@@ -13,6 +13,7 @@ import { uploadRoutes } from './uploads';
 import { dmRoutes } from './dms';
 import { adminRoutes } from './admin';
 import { oembedRoutes } from './oembed';
+import { experimentRoutes, instanceRoutes } from './experiments';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
 import { Types } from 'mongoose';
 
@@ -755,12 +756,17 @@ export const api = new Elysia({ prefix: '/api' })
   .use(dmRoutes)
   .use(uploadRoutes)
   .use(adminRoutes)
-  .use(oembedRoutes);
+  .use(oembedRoutes)
+  .use(experimentRoutes)
+  .use(instanceRoutes);
 
 // Initialize database connection
 export async function initializeAPI() {
   await connectDB();
   await ensureSerikaBroadcastUser();
+  // Ensure system users exist
+  const { ensureSystemUsers } = await import('@/lib/services/systemUsers');
+  await ensureSystemUsers();
   console.log('✅ API initialized');
 }
 

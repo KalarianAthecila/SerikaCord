@@ -84,9 +84,16 @@ interface Message {
       id?: string;
       name: string;
       animated?: boolean;
+      url?: string;
     };
     count: number;
     userIds: string[];
+  }>;
+  customEmojis?: Array<{
+    id: string;
+    name: string;
+    animated?: boolean;
+    url: string;
   }>;
 }
 
@@ -783,7 +790,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                           </div>
                         ) : (
                           <>
-                            <Twemoji className="text-[#888888] leading-relaxed">
+                            <Twemoji className="text-[#888888] leading-relaxed" customEmojis={message.customEmojis}>
                               {message.content}
                               {message.edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
                             </Twemoji>

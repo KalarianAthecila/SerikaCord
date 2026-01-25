@@ -8,3 +8,5 @@ export { Invite, type IInvite } from './Invite';
 export { ServerEmoji, type IServerEmoji } from './ServerEmoji';
 export { AdminLog, type IAdminLog, type AdminActionType } from './AdminLog';
 export { PlatformSettings, getPlatformSettings, updatePlatformSettings, getEncryptionKey, type IPlatformSettings } from './PlatformSettings';
+export { Experiment, getUserVariant, type IExperiment, type IExperimentVariant, type ExperimentType, type ExperimentStatus } from './Experiment';
+export { Instance, isHostDomain, getCurrentInstance, verifyInstanceApiKey, generateInstanceApiKey, generateSecretKey, type IInstance, type InstanceType, type InstanceStatus } from './Instance';

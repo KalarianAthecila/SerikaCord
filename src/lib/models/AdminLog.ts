@@ -14,7 +14,14 @@ export type AdminActionType =
   | 'resolve_report'
   | 'dismiss_report'
   | 'delete_message'
-  | 'impersonate_user';
+  | 'impersonate_user'
+  // Experiment actions
+  | 'create_experiment'
+  | 'update_experiment'
+  | 'delete_experiment'
+  // Instance actions
+  | 'approve_instance'
+  | 'revoke_instance';
 
 export interface IAdminLog extends Document {
   _id: Types.ObjectId;
@@ -51,6 +58,13 @@ const AdminLogSchema = new Schema<IAdminLog>({
       'dismiss_report',
       'delete_message',
       'impersonate_user',
+      // Experiment actions
+      'create_experiment',
+      'update_experiment',
+      'delete_experiment',
+      // Instance actions
+      'approve_instance',
+      'revoke_instance',
     ],
     required: true,
     index: true,

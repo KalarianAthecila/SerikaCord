@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from "react";
 
 export type BadgeId = 
   | 'staff' | 'admin' | 'moderator' 
@@ -34,6 +34,7 @@ interface AuthContextType {
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   updateUser: (updates: Partial<User>) => void;
+  setOnlineStatus: (status: "online" | "idle" | "dnd" | "offline") => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -41,13 +42,49 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const statusUpdatePending = useRef(false);
 
-  const refresh = async () => {
+  const setOnlineStatus = useCallback(async (status: "online" | "idle" | "dnd" | "offline") => {
+    if (statusUpdatePending.current) return;
+    statusUpdatePending.current = true;
+    
+    try {
+      // Use sendBeacon for offline status to ensure it completes even on page close
+      if (status === "offline" && typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        navigator.sendBeacon('/api/users/me', JSON.stringify({ status }));
+      } else {
+        await fetch("/api/users/me", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status }),
+          keepalive: true, // Ensures request completes even on page close
+        });
+      }
+      
+      setUser(prev => prev ? { ...prev, status } : null);
+    } catch (error) {
+      console.error("Failed to update status:", error);
+    } finally {
+      statusUpdatePending.current = false;
+    }
+  }, []);
+
+  const refresh = useCallback(async () => {
     try {
       const response = await fetch("/api/users/@me");
       if (response.ok) {
         const data = await response.json();
         setUser(data);
+        
+        // Set user online when refreshing auth
+        if (data && data.status !== "dnd" && data.status !== "invisible") {
+          await fetch("/api/users/me", {
+            method: "PUT",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "online" }),
+          });
+          setUser(prev => prev ? { ...prev, status: "online" } : null);
+        }
       } else {
         setUser(null);
       }
@@ -56,11 +93,64 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     } finally {
       setIsLoading(false);
     }
-  };
+  }, []);
+
+  // Set up visibility change and beforeunload handlers
+  useEffect(() => {
+    if (!user) return;
+
+    // Handle visibility change (tab switch, minimize)
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'hidden') {
+        // Only set idle, not offline, when tab is hidden
+        if (user.status === "online") {
+          setOnlineStatus("idle");
+        }
+      } else if (document.visibilityState === 'visible') {
+        // Set back to online when user returns
+        if (user.status === "idle") {
+          setOnlineStatus("online");
+        }
+      }
+    };
+
+    // Handle page close/navigation away
+    const handleBeforeUnload = () => {
+      // Use sendBeacon for reliable offline status update on close
+      if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+        const blob = new Blob([JSON.stringify({ status: "offline" })], { type: 'application/json' });
+        navigator.sendBeacon('/api/users/me', blob);
+      }
+    };
+
+    // Handle page hide (mobile background)
+    const handlePageHide = (e: PageTransitionEvent) => {
+      if (e.persisted) {
+        // Page is going into bfcache, set idle
+        setOnlineStatus("idle");
+      } else {
+        // Page is being unloaded, set offline
+        if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
+          const blob = new Blob([JSON.stringify({ status: "offline" })], { type: 'application/json' });
+          navigator.sendBeacon('/api/users/me', blob);
+        }
+      }
+    };
+
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    window.addEventListener('beforeunload', handleBeforeUnload);
+    window.addEventListener('pagehide', handlePageHide);
+
+    return () => {
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+      window.removeEventListener('beforeunload', handleBeforeUnload);
+      window.removeEventListener('pagehide', handlePageHide);
+    };
+  }, [user, setOnlineStatus]);
 
   useEffect(() => {
     refresh();
-  }, []);
+  }, [refresh]);
 
   const login = async (email: string, password: string) => {
     const response = await fetch("/api/auth/login", {
@@ -78,6 +168,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   const logout = async () => {
+    // Set offline before logging out
+    await setOnlineStatus("offline");
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
   };
@@ -87,7 +179,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, refresh, updateUser }}>
+    <AuthContext.Provider value={{ user, isLoading, login, logout, refresh, updateUser, setOnlineStatus }}>
       {children}
     </AuthContext.Provider>
   );

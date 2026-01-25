@@ -1,7 +1,7 @@
 import { Capacitor } from '@capacitor/core';
 import { App } from '@capacitor/app';
 import { Browser } from '@capacitor/browser';
-import { Haptics, ImpactStyle } from '@capacitor/haptics';
+import { Haptics, ImpactStyle, NotificationType } from '@capacitor/haptics';
 import { Keyboard } from '@capacitor/keyboard';
 import { StatusBar, Style } from '@capacitor/status-bar';
 import { SplashScreen } from '@capacitor/splash-screen';
@@ -9,6 +9,20 @@ import { Toast } from '@capacitor/toast';
 import { Share } from '@capacitor/share';
 import { LocalNotifications } from '@capacitor/local-notifications';
 import { PushNotifications } from '@capacitor/push-notifications';
+
+// Helper to set user status
+const setUserStatus = async (status: 'online' | 'idle' | 'offline') => {
+  try {
+    await fetch('/api/users/me', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ status }),
+      credentials: 'include',
+    });
+  } catch (error) {
+    console.error('Failed to update status:', error);
+  }
+};
 
 // Initialize the app
 const initApp = async () => {
@@ -20,6 +34,9 @@ const initApp = async () => {
     await StatusBar.setStyle({ style: Style.Dark });
     await StatusBar.setBackgroundColor({ color: '#0a0a0a' });
   }
+  
+  // Set user online when app starts
+  await setUserStatus('online');
   
   // Request push notification permissions
   if (Capacitor.isNativePlatform()) {
@@ -68,6 +85,27 @@ const initApp = async () => {
     } else {
       App.exitApp();
     }
+  });
+  
+  // Handle app state changes (foreground/background)
+  App.addListener('appStateChange', async ({ isActive }) => {
+    if (isActive) {
+      // App came to foreground - set online
+      await setUserStatus('online');
+    } else {
+      // App went to background - set offline
+      await setUserStatus('offline');
+    }
+  });
+  
+  // Handle app pause (going to background)
+  App.addListener('pause', async () => {
+    await setUserStatus('offline');
+  });
+  
+  // Handle app resume (coming back from background)
+  App.addListener('resume', async () => {
+    await setUserStatus('online');
   });
   
   // Handle keyboard events

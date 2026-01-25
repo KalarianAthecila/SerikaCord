@@ -51,6 +51,12 @@ interface Message {
   createdAt: string;
   updatedAt?: string;
   attachments?: string[];
+  customEmojis?: Array<{
+    id: string;
+    name: string;
+    animated?: boolean;
+    url: string;
+  }>;
 }
 
 const statusColors = {
@@ -297,16 +303,16 @@ export default function DMConversationPage() {
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="h-12 min-h-12 px-4 flex items-center justify-between border-b border-[#1a1a1a] bg-[#0a0a0a]">
-          <div className="flex items-center gap-3">
+        <div className="h-14 sm:h-12 min-h-[56px] sm:min-h-12 px-3 sm:px-4 flex items-center justify-between border-b border-[#1a1a1a] bg-[#0a0a0a] safe-area-top">
+          <div className="flex items-center gap-2 sm:gap-3 min-w-0">
             <Link
-              href="/channels/me"
-              className="p-1.5 hover:bg-[#111111] rounded-md transition-colors"
+              href="/channels/messages"
+              className="p-2 hover:bg-[#111111] rounded-lg transition-colors active:scale-95"
             >
               <ArrowLeft className="w-5 h-5 text-[#888888]" />
             </Link>
             
-            <div className="relative">
+            <div className="relative flex-shrink-0">
               <Avatar className="w-8 h-8">
                 <AvatarImage src={recipient?.avatar} />
                 <AvatarFallback className="bg-[#8B5CF6] text-white text-sm">
@@ -319,43 +325,43 @@ export default function DMConversationPage() {
               />
             </div>
             
-            <div className="flex items-center gap-2">
-              <span className="font-semibold text-white">
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="font-semibold text-white truncate">
                 {recipient?.displayName || recipient?.username || "Loading..."}
               </span>
               {recipient?.isPremium && (
-                <Crown className="w-4 h-4 text-[#8B5CF6]" />
+                <Crown className="w-4 h-4 text-[#8B5CF6] flex-shrink-0" />
               )}
             </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+          <div className="flex items-center gap-1 sm:gap-2">
+            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block">
               <Phone className="w-5 h-5" />
             </button>
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block">
               <Video className="w-5 h-5" />
             </button>
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block">
               <Pin className="w-5 h-5" />
             </button>
             <button
               onClick={() => setShowUserProfile(!showUserProfile)}
               className={cn(
-                "p-2 transition-colors rounded-md hover:bg-[#111111]",
+                "p-2 transition-colors rounded-md hover:bg-[#111111] hidden lg:block",
                 showUserProfile ? "text-white" : "text-[#888888] hover:text-white"
               )}
             >
               <Users className="w-5 h-5" />
             </button>
-            <div className="relative">
+            <div className="relative hidden sm:block">
               <Input
                 placeholder="Search"
                 className="h-7 w-32 bg-[#111111] border-none text-white placeholder:text-[#555555] text-sm rounded focus-visible:ring-0"
               />
               <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[#555555]" />
             </div>
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block">
               <Inbox className="w-5 h-5" />
             </button>
           </div>
@@ -415,7 +421,7 @@ export default function DMConversationPage() {
                           </div>
                           {group.messages.map((message, msgIndex) => (
                             <div key={`${groupIndex}-${msgIndex}-${message.id}`}>
-                              <Twemoji className="text-[#dcddde] break-words">
+                              <Twemoji className="text-[#dcddde] break-words" customEmojis={message.customEmojis}>
                                 {message.content}
                               </Twemoji>
                               <LinkEmbed content={message.content} />
@@ -433,10 +439,10 @@ export default function DMConversationPage() {
         </ScrollArea>
 
         {/* Message input */}
-        <div className="p-4 pt-0">
-          <div className="relative bg-[#111111] rounded-lg">
-            <div className="flex items-center px-4 py-2">
-              <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+        <div className="p-3 sm:p-4 pt-0 safe-area-bottom">
+          <div className="relative bg-[#111111] rounded-xl sm:rounded-lg">
+            <div className="flex items-center px-2 sm:px-4 py-2">
+              <button className="p-2 sm:p-1.5 text-[#888888] hover:text-white transition-colors rounded-lg hover:bg-[#1a1a1a] active:scale-95">
                 <Plus className="w-5 h-5" />
               </button>
               
@@ -445,19 +451,19 @@ export default function DMConversationPage() {
                 onChange={(e) => setNewMessage(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder={`Message @${recipient?.displayName || recipient?.username || "..."}`}
-                className="flex-1 bg-transparent text-white placeholder:text-[#666666] px-3 py-1 focus:outline-none"
+                className="flex-1 bg-transparent text-white placeholder:text-[#666666] px-2 sm:px-3 py-2 sm:py-1 focus:outline-none text-base"
               />
 
-              <div className="flex items-center gap-1">
-                <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+              <div className="flex items-center gap-0.5 sm:gap-1">
+                <button className="p-2 sm:p-1.5 text-[#888888] hover:text-white transition-colors rounded-lg hover:bg-[#1a1a1a] active:scale-95 hidden sm:block">
                   <Gift className="w-5 h-5" />
                 </button>
-                <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+                <button className="p-2 sm:p-1.5 text-[#888888] hover:text-white transition-colors rounded-lg hover:bg-[#1a1a1a] active:scale-95">
                   <ImageIcon className="w-5 h-5" />
                 </button>
                 <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
                   <PopoverTrigger asChild>
-                    <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+                    <button className="p-2 sm:p-1.5 text-[#888888] hover:text-white transition-colors rounded-lg hover:bg-[#1a1a1a] active:scale-95">
                       <Smile className="w-5 h-5" />
                     </button>
                   </PopoverTrigger>
@@ -469,9 +475,9 @@ export default function DMConversationPage() {
                   onClick={sendMessage}
                   disabled={!newMessage.trim() || isSending}
                   className={cn(
-                    "p-1.5 rounded transition-colors",
+                    "p-2 sm:p-1.5 rounded-lg transition-all active:scale-95",
                     newMessage.trim() && !isSending
-                      ? "text-[#8B5CF6] hover:text-white hover:bg-[#8B5CF6]"
+                      ? "text-white bg-[#8B5CF6] hover:bg-[#7C3AED]"
                       : "text-[#555555] cursor-not-allowed"
                   )}
                 >

@@ -1,22 +1,22 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { 
   Hash, 
   Volume2, 
   ChevronDown, 
-  ChevronRight, 
   Search, 
   UserPlus,
-  MoreHorizontal,
-  Lock,
   Settings,
   Bell,
   Megaphone,
+  Users,
+  ChevronLeft,
+  RefreshCw,
+  MoreHorizontal,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -40,6 +40,12 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
   const router = useRouter();
   const { currentServer, channels, setCurrentChannel } = useServer();
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
+  const pullStartY = useRef(0);
+  const [pullDistance, setPullDistance] = useState(0);
 
   // Group channels by parent (category)
   const groupedChannels = useMemo(() => {
@@ -79,6 +85,50 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
     return categories;
   }, [channels]);
 
+  // Filter channels by search query
+  const filteredCategories = useMemo(() => {
+    if (!searchQuery.trim()) return groupedChannels;
+    
+    const query = searchQuery.toLowerCase();
+    return groupedChannels.map(category => ({
+      ...category,
+      channels: category.channels.filter(c => 
+        c.name.toLowerCase().includes(query)
+      ),
+    })).filter(category => category.channels.length > 0);
+  }, [groupedChannels, searchQuery]);
+
+  const handleRefresh = useCallback(async () => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    // Refresh will happen via context
+    setTimeout(() => setIsRefreshing(false), 1000);
+  }, [isRefreshing]);
+
+  // Pull to refresh handlers
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (scrollContainerRef.current?.scrollTop === 0) {
+      pullStartY.current = e.touches[0].clientY;
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (scrollContainerRef.current?.scrollTop !== 0) return;
+    const currentY = e.touches[0].clientY;
+    const diff = currentY - pullStartY.current;
+    
+    if (diff > 0 && diff < 150) {
+      setPullDistance(diff);
+    }
+  };
+
+  const handleTouchEnd = () => {
+    if (pullDistance > 80) {
+      handleRefresh();
+    }
+    setPullDistance(0);
+  };
+
   if (!currentServer) return null;
 
   // Cast to extended type for optional properties
@@ -99,11 +149,11 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
   const getChannelIcon = (type: string) => {
     switch (type) {
       case "voice":
-        return <Volume2 className="w-5 h-5 text-[#666666]" />;
+        return <Volume2 className="w-5 h-5 text-neutral-500" />;
       case "announcement":
-        return <Megaphone className="w-5 h-5 text-[#666666]" />;
+        return <Megaphone className="w-5 h-5 text-neutral-500" />;
       default:
-        return <Hash className="w-5 h-5 text-[#666666]" />;
+        return <Hash className="w-5 h-5 text-neutral-500" />;
     }
   };
 
@@ -113,102 +163,184 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a]">
+    <div className="flex flex-col h-full bg-[#000000]">
+      {/* Pull to refresh indicator */}
+      <div 
+        className={cn(
+          "absolute left-0 right-0 top-0 flex items-center justify-center transition-all duration-200 z-20",
+          pullDistance > 0 ? "opacity-100" : "opacity-0"
+        )}
+        style={{ height: pullDistance, paddingTop: Math.max(0, pullDistance - 40) }}
+      >
+        <RefreshCw 
+          className={cn(
+            "w-6 h-6 text-[#8B5CF6] transition-transform",
+            isRefreshing && "animate-spin",
+            pullDistance > 80 && "scale-110"
+          )}
+          style={{ transform: `rotate(${pullDistance * 2}deg)` }}
+        />
+      </div>
+
       {/* Server Header */}
       <div className="relative flex-shrink-0">
         {server.banner ? (
           <div 
-            className="h-28 bg-cover bg-center"
+            className="h-32 bg-cover bg-center"
             style={{ backgroundImage: `url(${server.banner})` }}
           />
         ) : (
-          <div className="h-28 bg-gradient-to-br from-[#8B5CF6] to-[#6366F1]" />
+          <div className="h-32 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#6366F1]" />
         )}
         
+        {/* Gradient overlay */}
+        <div className="absolute inset-0 bg-gradient-to-t from-[#000000] via-black/60 to-transparent" />
+        
+        {/* Back button (for navigation) */}
+        <button
+          onClick={onBack}
+          className="absolute top-4 left-4 p-2 rounded-full bg-black/40 backdrop-blur-sm text-white active:scale-95 transition-transform"
+        >
+          <ChevronLeft className="w-5 h-5" />
+        </button>
+        
         {/* Server Info Overlay */}
-        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/90 to-transparent pt-10 pb-3 px-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2 flex-1 min-w-0">
-              <h1 className="text-xl font-bold text-white truncate">{currentServer.name}</h1>
+        <div className="absolute bottom-0 left-0 right-0 px-5 pb-4">
+          <div className="flex items-end justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <h1 className="text-2xl font-bold text-white truncate drop-shadow-lg">
+                {currentServer.name}
+              </h1>
+              <div className="flex items-center gap-3 mt-1">
+                <span className="flex items-center gap-1.5 text-sm text-neutral-300">
+                  <Users className="w-4 h-4" />
+                  {server.memberCount || 0} members
+                </span>
+              </div>
             </div>
             <div className="flex items-center gap-2">
-              <button className="p-2 rounded-full bg-[#1a1a1a]/80 hover:bg-[#252525] transition-colors">
+              <button className="p-2.5 rounded-xl bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors active:scale-95">
                 <Bell className="w-5 h-5 text-white" />
               </button>
-              <button className="p-2 rounded-full bg-[#1a1a1a]/80 hover:bg-[#252525] transition-colors">
+              <button className="p-2.5 rounded-xl bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors active:scale-95">
                 <Settings className="w-5 h-5 text-white" />
               </button>
             </div>
           </div>
-          <p className="text-sm text-[#888888] mt-1">
-            {server.memberCount || 0} members
-          </p>
         </div>
       </div>
 
-      {/* Search */}
-      <div className="flex items-center gap-2 px-4 py-3 flex-shrink-0 border-b border-[#1a1a1a]">
-        <button className="flex-1 flex items-center gap-2 h-10 px-4 rounded-xl bg-[#111111] text-[#666666] hover:bg-[#1a1a1a] transition-colors">
-          <Search className="w-4 h-4" />
-          <span className="text-sm">Search channels</span>
-        </button>
-        <button className="w-10 h-10 flex items-center justify-center rounded-xl bg-[#111111] hover:bg-[#1a1a1a] transition-colors">
-          <UserPlus className="w-5 h-5 text-[#666666]" />
-        </button>
+      {/* Search & Actions Bar */}
+      <div className="flex items-center gap-2 px-4 py-3 flex-shrink-0 border-b border-white/5">
+        {showSearch ? (
+          <div className="flex-1 flex items-center gap-2">
+            <input
+              type="text"
+              placeholder="Search channels..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              autoFocus
+              className="flex-1 h-10 px-4 rounded-xl bg-[#1a1a1a] text-white placeholder:text-neutral-500 text-sm focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/50"
+            />
+            <button 
+              onClick={() => {
+                setShowSearch(false);
+                setSearchQuery("");
+              }}
+              className="p-2.5 rounded-xl bg-[#1a1a1a] hover:bg-[#252525] transition-colors active:scale-95"
+            >
+              <ChevronLeft className="w-5 h-5 text-neutral-400" />
+            </button>
+          </div>
+        ) : (
+          <>
+            <button 
+              onClick={() => setShowSearch(true)}
+              className="flex-1 flex items-center gap-2 h-10 px-4 rounded-xl bg-[#1a1a1a] text-neutral-500 hover:bg-[#252525] transition-colors"
+            >
+              <Search className="w-4 h-4" />
+              <span className="text-sm">Search channels</span>
+            </button>
+            <button className="p-2.5 rounded-xl bg-[#1a1a1a] hover:bg-[#252525] transition-colors active:scale-95">
+              <UserPlus className="w-5 h-5 text-neutral-400" />
+            </button>
+          </>
+        )}
       </div>
 
       {/* Channel List */}
-      <ScrollArea className="flex-1">
-        <div className="px-2 py-2 pb-24">
-          {groupedChannels.map((category) => (
-            <div key={category.id || 'uncategorized'} className="mb-2">
-              {/* Category Header */}
-              <button
-                onClick={() => toggleCategory(category.id || 'uncategorized')}
-                className="w-full flex items-center gap-1 px-2 py-2 text-xs font-semibold uppercase text-[#666666] hover:text-[#888888] transition-colors"
-              >
-                <ChevronDown 
-                  className={cn(
-                    "w-3 h-3 transition-transform",
-                    collapsedCategories.has(category.id || 'uncategorized') && "-rotate-90"
-                  )} 
-                />
-                {category.name}
-                <span className="ml-auto text-[10px] text-[#555555]">
-                  {category.channels.length}
-                </span>
-              </button>
-
-              {/* Channels */}
-              {!collapsedCategories.has(category.id || 'uncategorized') && (
-                <div className="space-y-0.5">
-                  {category.channels.map((channel) => {
-                    const extChannel = channel as typeof channel & ExtendedChannel;
-                    return (
-                      <button
-                        key={channel.id}
-                        onClick={() => handleChannelClick(channel)}
-                        className={cn(
-                          "w-full flex items-center gap-3 px-3 py-2.5 rounded-xl transition-all active:scale-[0.98]",
-                          "hover:bg-[#1a1a1a] text-[#888888] hover:text-white"
-                        )}
-                      >
-                        {getChannelIcon(channel.type)}
-                        <span className="flex-1 text-left truncate font-medium">{channel.name}</span>
-                        {extChannel.unreadCount && extChannel.unreadCount > 0 && (
-                          <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center bg-[#ED4245] text-white text-xs font-bold rounded-full">
-                            {extChannel.unreadCount > 99 ? "99+" : extChannel.unreadCount}
-                          </span>
-                        )}
-                      </button>
-                    );
-                  })}
-                </div>
-              )}
+      <div 
+        ref={scrollContainerRef}
+        className="flex-1 overflow-y-auto overscroll-contain"
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+      >
+        <div className="px-2 py-2 pb-28">
+          {filteredCategories.length === 0 && searchQuery ? (
+            <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+              <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] flex items-center justify-center mb-4">
+                <Search className="w-8 h-8 text-neutral-500" />
+              </div>
+              <h3 className="text-lg font-semibold text-white mb-1">No channels found</h3>
+              <p className="text-neutral-500 text-sm">
+                Try a different search term
+              </p>
             </div>
-          ))}
+          ) : (
+            filteredCategories.map((category) => (
+              <div key={category.id || 'uncategorized'} className="mb-3">
+                {/* Category Header */}
+                <button
+                  onClick={() => toggleCategory(category.id || 'uncategorized')}
+                  className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase text-neutral-500 hover:text-neutral-300 transition-colors active:scale-[0.98]"
+                >
+                  <ChevronDown 
+                    className={cn(
+                      "w-3 h-3 transition-transform duration-200",
+                      collapsedCategories.has(category.id || 'uncategorized') && "-rotate-90"
+                    )} 
+                  />
+                  <span className="tracking-wider">{category.name}</span>
+                  <span className="ml-auto text-[10px] text-neutral-600 font-medium">
+                    {category.channels.length}
+                  </span>
+                </button>
+
+                {/* Channels */}
+                {!collapsedCategories.has(category.id || 'uncategorized') && (
+                  <div className="space-y-0.5 mt-1">
+                    {category.channels.map((channel) => {
+                      const extChannel = channel as typeof channel & ExtendedChannel;
+                      return (
+                        <button
+                          key={channel.id}
+                          onClick={() => handleChannelClick(channel)}
+                          className={cn(
+                            "w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-150",
+                            "hover:bg-[#1a1a1a]/80 active:bg-[#1a1a1a] active:scale-[0.98]",
+                            "text-neutral-400 hover:text-white"
+                          )}
+                        >
+                          {getChannelIcon(channel.type)}
+                          <span className="flex-1 text-left truncate font-medium text-[15px]">
+                            {channel.name}
+                          </span>
+                          {extChannel.unreadCount && extChannel.unreadCount > 0 && (
+                            <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center bg-[#ED4245] text-white text-xs font-bold rounded-full shadow-lg">
+                              {extChannel.unreadCount > 99 ? "99+" : extChannel.unreadCount}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+              </div>
+            ))
+          )}
         </div>
-      </ScrollArea>
+      </div>
     </div>
   );
 }

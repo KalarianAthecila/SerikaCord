@@ -133,6 +133,17 @@
   margin: 0 0.05em;
 }
 
+/* Custom emoji styling */
+.twemoji img.custom-emoji,
+.twemoji-large img.custom-emoji {
+  display: inline-block;
+  width: 1.5em;
+  height: 1.5em;
+  vertical-align: -0.3em;
+  margin: 0 0.05em;
+  object-fit: contain;
+}
+
 /* Large emoji when message is only emojis */
 .twemoji-large img.emoji {
   display: inline-block;
@@ -140,4 +151,112 @@
   height: 2.5em;
   vertical-align: -0.4em;
   margin: 0 0.1em;
+}
+
+.twemoji-large img.custom-emoji {
+  width: 3em;
+  height: 3em;
+  vertical-align: -0.5em;
+}
+
+/* Mobile safe area utilities */
+.pt-safe {
+  padding-top: env(safe-area-inset-top, 0px);
+}
+
+.pb-safe {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+.pl-safe {
+  padding-left: env(safe-area-inset-left, 0px);
+}
+
+.pr-safe {
+  padding-right: env(safe-area-inset-right, 0px);
+}
+
+/* Mobile touch optimization */
+@media (max-width: 768px) {
+  * {
+    -webkit-tap-highlight-color: transparent;
+    -webkit-touch-callout: none;
+  }
+  
+  input, textarea, button, a {
+    touch-action: manipulation;
+  }
+  
+  /* Prevent text selection on interactive elements */
+  button, [role="button"] {
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  
+  /* Smoother scrolling */
+  .scrollbar-hide {
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+  
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+  }
+  
+  /* Prevent overscroll bounce on iOS */
+  .overscroll-contain {
+    overscroll-behavior: contain;
+  }
+  
+  /* Better active states for mobile */
+  .active\:scale-95:active {
+    transform: scale(0.95);
+    transition: transform 100ms ease-out;
+  }
+  
+  .active\:scale-90:active {
+    transform: scale(0.90);
+    transition: transform 100ms ease-out;
+  }
+  
+  .active\:scale-\[0\.98\]:active {
+    transform: scale(0.98);
+    transition: transform 100ms ease-out;
+  }
+}
+
+/* Keyboard handling */
+.keyboard-open {
+  height: calc(100vh - var(--keyboard-height, 0px)) !important;
+  height: calc(100dvh - var(--keyboard-height, 0px)) !important;
+}
+
+/* Input styling for mobile */
+@media (max-width: 768px) {
+  input[type="text"],
+  input[type="email"],
+  input[type="password"],
+  textarea {
+    font-size: 16px !important; /* Prevent zoom on iOS */
+  }
+}
+
+/* Smooth transitions for touch */
+.touch-manipulation {
+  touch-action: manipulation;
+}
+
+/* Status bar colors */
+:root {
+  --status-bar-height: env(safe-area-inset-top, 0px);
+}
+
+/* Mobile header safe area */
+.safe-area-top {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+.safe-area-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
 }

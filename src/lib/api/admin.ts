@@ -707,6 +707,437 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     };
   })
 
+  // ==================== EXPERIMENTS & A/B TESTING ====================
+
+  // List all experiments
+  .get('/experiments', async ({ headers, cookie, query, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const { status, page = '1', limit = '20' } = query as { status?: string; page?: string; limit?: string };
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const filter: Record<string, unknown> = {};
+    if (status) {
+      filter.status = status;
+    }
+
+    const [experiments, total] = await Promise.all([
+      Experiment.find(filter)
+        .populate('createdBy', 'username displayName')
+        .skip(skip)
+        .limit(limitNum)
+        .sort({ createdAt: -1 }),
+      Experiment.countDocuments(filter)
+    ]);
+
+    return {
+      experiments,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum),
+      }
+    };
+  })
+
+  // Get experiment by ID
+  .get('/experiments/:experimentId', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const experiment = await Experiment.findById(params.experimentId)
+      .populate('createdBy', 'username displayName');
+    
+    if (!experiment) {
+      set.status = 404;
+      return { error: 'Experiment not found' };
+    }
+
+    return experiment;
+  }, {
+    params: t.Object({
+      experimentId: t.String(),
+    }),
+  })
+
+  // Create experiment
+  .post('/experiments', async ({ headers, cookie, body, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const { Types } = await import('mongoose');
+
+    const {
+      name,
+      key,
+      description,
+      type,
+      variants,
+      rolloutPercentage,
+      filters,
+      excludedUserIds,
+    } = body as {
+      name: string;
+      key: string;
+      description?: string;
+      type: string;
+      variants: Array<{ id: string; name: string; weight: number; config?: Record<string, unknown> }>;
+      rolloutPercentage?: number;
+      filters?: Array<{ type: string; operator: string; value: unknown }>;
+      excludedUserIds?: string[];
+    };
+
+    // Check if key already exists
+    const existing = await Experiment.findOne({ key });
+    if (existing) {
+      set.status = 400;
+      return { error: 'Experiment key already exists' };
+    }
+
+    const experiment = new Experiment({
+      name,
+      key,
+      description,
+      type,
+      variants,
+      rolloutPercentage: rolloutPercentage ?? 100,
+      filters: filters ?? [],
+      excludedUsers: excludedUserIds?.map(id => new Types.ObjectId(id)) ?? [],
+      createdBy: user._id,
+      status: 'draft',
+    });
+
+    await experiment.save();
+
+    await logAdminAction(
+      user._id.toString(),
+      'create_experiment',
+      'platform',
+      experiment._id.toString(),
+      { name, key, type }
+    );
+
+    return experiment;
+  }, {
+    body: t.Object({
+      name: t.String(),
+      key: t.String(),
+      description: t.Optional(t.String()),
+      type: t.String(),
+      variants: t.Array(t.Object({
+        id: t.String(),
+        name: t.String(),
+        weight: t.Number(),
+        config: t.Optional(t.Record(t.String(), t.Unknown())),
+      })),
+      rolloutPercentage: t.Optional(t.Number()),
+      filters: t.Optional(t.Array(t.Object({
+        type: t.String(),
+        operator: t.String(),
+        value: t.Unknown(),
+      }))),
+      excludedUserIds: t.Optional(t.Array(t.String())),
+    }),
+  })
+
+  // Update experiment
+  .patch('/experiments/:experimentId', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const experiment = await Experiment.findById(params.experimentId);
+    
+    if (!experiment) {
+      set.status = 404;
+      return { error: 'Experiment not found' };
+    }
+
+    const {
+      name,
+      description,
+      variants,
+      rolloutPercentage,
+      filters,
+      status,
+    } = body as {
+      name?: string;
+      description?: string;
+      variants?: Array<{ id: string; name: string; weight: number; config?: Record<string, unknown> }>;
+      rolloutPercentage?: number;
+      filters?: Array<{ type: string; operator: string; value: unknown }>;
+      status?: string;
+    };
+
+    if (name) experiment.name = name;
+    if (description !== undefined) experiment.description = description;
+    if (variants) experiment.variants = variants as any;
+    if (rolloutPercentage !== undefined) experiment.rolloutPercentage = rolloutPercentage;
+    if (filters) experiment.filters = filters as any;
+    
+    // Handle status changes
+    if (status && status !== experiment.status) {
+      experiment.status = status as typeof experiment.status;
+      if (status === 'running' && !experiment.startedAt) {
+        experiment.startedAt = new Date();
+      }
+      if (status === 'completed' && !experiment.endedAt) {
+        experiment.endedAt = new Date();
+      }
+    }
+
+    await experiment.save();
+
+    await logAdminAction(
+      user._id.toString(),
+      'update_experiment',
+      'platform',
+      experiment._id.toString(),
+      { changes: body }
+    );
+
+    return experiment;
+  }, {
+    params: t.Object({
+      experimentId: t.String(),
+    }),
+    body: t.Object({
+      name: t.Optional(t.String()),
+      description: t.Optional(t.String()),
+      variants: t.Optional(t.Array(t.Object({
+        id: t.String(),
+        name: t.String(),
+        weight: t.Number(),
+        config: t.Optional(t.Record(t.String(), t.Unknown())),
+      }))),
+      rolloutPercentage: t.Optional(t.Number()),
+      filters: t.Optional(t.Array(t.Object({
+        type: t.String(),
+        operator: t.String(),
+        value: t.Unknown(),
+      }))),
+      status: t.Optional(t.String()),
+    }),
+  })
+
+  // Delete experiment
+  .delete('/experiments/:experimentId', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const experiment = await Experiment.findById(params.experimentId);
+    
+    if (!experiment) {
+      set.status = 404;
+      return { error: 'Experiment not found' };
+    }
+
+    await experiment.deleteOne();
+
+    await logAdminAction(
+      user._id.toString(),
+      'delete_experiment',
+      'platform',
+      params.experimentId,
+      { name: experiment.name, key: experiment.key }
+    );
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      experimentId: t.String(),
+    }),
+  })
+
+  // Get user's experiment variant
+  .get('/experiments/:experimentId/variant/:userId', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment, getUserVariant } = await import('@/lib/models/Experiment');
+    const experiment = await Experiment.findById(params.experimentId);
+    
+    if (!experiment) {
+      set.status = 404;
+      return { error: 'Experiment not found' };
+    }
+
+    const targetUser = await User.findById(params.userId);
+    if (!targetUser) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    const variant = await getUserVariant(experiment.key, params.userId);
+
+    return {
+      experimentKey: experiment.key,
+      experimentName: experiment.name,
+      user: {
+        id: targetUser._id,
+        username: targetUser.username,
+      },
+      variant,
+    };
+  }, {
+    params: t.Object({
+      experimentId: t.String(),
+      userId: t.String(),
+    }),
+  })
+
+  // ==================== INSTANCES ====================
+
+  // List connected instances
+  .get('/instances', async ({ headers, cookie, query, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Instance } = await import('@/lib/models/Instance');
+    const { status, page = '1', limit = '20' } = query as { status?: string; page?: string; limit?: string };
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
+    const skip = (pageNum - 1) * limitNum;
+
+    const filter: Record<string, unknown> = {};
+    if (status) {
+      filter.status = status;
+    }
+
+    const [instances, total] = await Promise.all([
+      Instance.find(filter)
+        .skip(skip)
+        .limit(limitNum)
+        .sort({ createdAt: -1 }),
+      Instance.countDocuments(filter)
+    ]);
+
+    return {
+      instances: instances.map(i => ({
+        id: i._id,
+        name: i.name,
+        domain: i.domain,
+        type: i.type,
+        status: i.status,
+        version: i.version,
+        features: i.features,
+        lastPing: i.lastPing,
+        userCount: i.userCount,
+        serverCount: i.serverCount,
+        createdAt: i.createdAt,
+      })),
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum),
+      }
+    };
+  })
+
+  // Approve instance
+  .post('/instances/:instanceId/approve', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Instance } = await import('@/lib/models/Instance');
+    const instance = await Instance.findById(params.instanceId);
+    
+    if (!instance) {
+      set.status = 404;
+      return { error: 'Instance not found' };
+    }
+
+    instance.status = 'active';
+    await instance.save();
+
+    await logAdminAction(
+      user._id.toString(),
+      'approve_instance',
+      'platform',
+      instance._id.toString(),
+      { name: instance.name, domain: instance.domain }
+    );
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      instanceId: t.String(),
+    }),
+  })
+
+  // Revoke instance
+  .post('/instances/:instanceId/revoke', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { reason } = body as { reason?: string };
+
+    const { Instance } = await import('@/lib/models/Instance');
+    const instance = await Instance.findById(params.instanceId);
+    
+    if (!instance) {
+      set.status = 404;
+      return { error: 'Instance not found' };
+    }
+
+    instance.status = 'revoked';
+    await instance.save();
+
+    await logAdminAction(
+      user._id.toString(),
+      'revoke_instance',
+      'platform',
+      instance._id.toString(),
+      { name: instance.name, domain: instance.domain },
+      reason
+    );
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      instanceId: t.String(),
+    }),
+    body: t.Object({
+      reason: t.Optional(t.String()),
+    }),
+  })
+
   // ==================== STATS ====================
   
   // Get platform stats

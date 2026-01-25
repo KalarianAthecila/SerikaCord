@@ -23,3 +23,17 @@ export {
   // OAuth
   handleDiscordOAuth,
 } from './auth';
+export {
+  // Emoji utilities
+  parseCustomEmojis,
+  formatEmoji,
+  normalizeEmojiFormat,
+  extractEmojiIds,
+  isCustomEmoji,
+  getReactionEmoji,
+  validateEmojisInContent,
+  replaceInvalidEmojis,
+  clearEmojiCache,
+  type ParsedEmoji,
+  type EmojiParseResult,
+} from './emoji';

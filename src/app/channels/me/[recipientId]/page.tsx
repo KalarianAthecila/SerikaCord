@@ -6,6 +6,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { Twemoji } from "@/components/ui/twemoji";
 import {
   Phone,
   Video,
@@ -46,6 +47,12 @@ interface Message {
   createdAt: string;
   updatedAt?: string;
   attachments?: string[];
+  customEmojis?: Array<{
+    id: string;
+    name: string;
+    animated?: boolean;
+    url: string;
+  }>;
 }
 
 const statusColors = {
@@ -378,9 +385,9 @@ export default function DMConversationPage() {
                             </span>
                           </div>
                           {group.messages.map((message) => (
-                            <div key={message.id} className="text-[#dcddde] break-words">
+                            <Twemoji key={message.id} className="text-[#dcddde] break-words" customEmojis={message.customEmojis}>
                               {message.content}
-                            </div>
+                            </Twemoji>
                           ))}
                         </div>
                       </div>

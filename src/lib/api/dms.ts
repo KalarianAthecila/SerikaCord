@@ -1,6 +1,7 @@
 import { Elysia, t } from 'elysia';
-import { Channel, Message, User } from '@/lib/models';
+import { Channel, Message, User, ServerMember } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
+import { parseCustomEmojis, normalizeEmojiFormat } from '@/lib/services/emoji';
 import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage } from '@/lib/security';
 import { cache, getPublisher } from '@/lib/db';
 import { Types } from 'mongoose';
@@ -223,12 +224,30 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
 
     // Validate content
     const { content } = body;
-    const sanitizedContent = sanitizeInput(content);
+    let sanitizedContent = sanitizeInput(content);
     const validation = validateMessageContent(sanitizedContent);
     if (!validation.valid) {
       set.status = 400;
       return { error: validation.error };
     }
+
+    // Normalize emoji format
+    sanitizedContent = normalizeEmojiFormat(sanitizedContent);
+
+    // Get user's servers for emoji validation
+    const userServerMemberships = await ServerMember.find({ userId: user._id }).select('serverId');
+    const userServerIds = userServerMemberships.map(m => m.serverId);
+
+    // Parse and validate custom emojis
+    const emojiResult = await parseCustomEmojis(sanitizedContent, undefined, userServerIds);
+    
+    // Store parsed emoji data for the message response
+    const customEmojis = emojiResult.emojis.map(e => ({
+      id: e.id,
+      name: e.name,
+      animated: e.animated,
+      url: e.url,
+    }));
 
     // Get or create DM channel
     const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
@@ -265,6 +284,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       },
       channelId: channel._id,
       createdAt: message.createdAt,
+      customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
     };
 
     // Publish to Redis for real-time

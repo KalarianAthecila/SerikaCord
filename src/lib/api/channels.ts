@@ -1,6 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { Channel, Message, Server, ServerMember } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
+import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
 import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage } from '@/lib/security';
 import { cache, getPublisher } from '@/lib/db';
 import { config } from '@/lib/config';
@@ -376,8 +377,26 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
-    // Sanitize content
-    const sanitizedContent = content ? sanitizeInput(content) : '';
+    // Sanitize content and normalize emoji format
+    let sanitizedContent = content ? sanitizeInput(content) : '';
+    if (sanitizedContent) {
+      sanitizedContent = normalizeEmojiFormat(sanitizedContent);
+    }
+
+    // Get user's servers for emoji validation
+    const userServerMemberships = await ServerMember.find({ userId: user._id }).select('serverId');
+    const userServerIds = userServerMemberships.map(m => m.serverId);
+
+    // Parse and validate custom emojis
+    const emojiResult = await parseCustomEmojis(sanitizedContent, channel.serverId, userServerIds);
+    
+    // Store parsed emoji data for the message response
+    const customEmojis = emojiResult.emojis.map(e => ({
+      id: e.id,
+      name: e.name,
+      animated: e.animated,
+      url: e.url,
+    }));
 
     // Parse mentions
     const mentionedUserIds: string[] = [];
@@ -463,6 +482,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       edited: message.edited,
       pinned: message.pinned,
       reactions: message.reactions || [],
+      customEmojis: customEmojis.length > 0 ? customEmojis : undefined, // Include parsed emoji data
     };
 
     // Publish message event
@@ -684,9 +704,21 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Decode the emoji (handles URL encoding like %F0%9F%91%8D for 👍)
     const decodedEmoji = decodeURIComponent(params.emoji);
     
-    // Find or create reaction
+    // Parse emoji - handles both custom emojis and unicode
+    const emojiData = await getReactionEmoji(decodedEmoji);
+    if (!emojiData) {
+      set.status = 400;
+      return { error: 'Invalid emoji' };
+    }
+    
+    // For custom emojis, use ID as identifier; for unicode, use the name
+    const emojiIdentifier = emojiData.id || emojiData.name;
+    
+    // Find or create reaction - match by ID for custom emojis, name for unicode
     const existingReaction = message.reactions.find(
-      (r: { emoji: { name: string; id?: string } }) => r.emoji.name === decodedEmoji || r.emoji.id === decodedEmoji
+      (r: { emoji: { name: string; id?: string } }) => 
+        (emojiData.id && r.emoji.id === emojiData.id) || 
+        (!emojiData.id && r.emoji.name === emojiData.name)
     );
 
     if (existingReaction) {
@@ -696,9 +728,14 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         existingReaction.count++;
       }
     } else {
-      // Add new reaction
+      // Add new reaction with full emoji data
       message.reactions.push({
-        emoji: { name: decodedEmoji },
+        emoji: {
+          name: emojiData.name,
+          id: emojiData.id,
+          animated: emojiData.animated,
+          url: emojiData.url,
+        },
         count: 1,
         userIds: [user._id],
       });
@@ -758,9 +795,14 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const decodedEmoji = decodeURIComponent(params.emoji);
+    
+    // Parse emoji to get ID for custom emojis
+    const emojiData = await getReactionEmoji(decodedEmoji);
+    
     const reactions = message.reactions as Array<{ emoji: { name: string; id?: string }; count: number; userIds: Types.ObjectId[] }>;
-    const reactionIndex = reactions.findIndex(
-      r => r.emoji.name === decodedEmoji || r.emoji.id === decodedEmoji
+    const reactionIndex = reactions.findIndex(r => 
+      (emojiData?.id && r.emoji.id === emojiData.id) || 
+      (!emojiData?.id && r.emoji.name === (emojiData?.name || decodedEmoji))
     );
 
     if (reactionIndex !== -1) {
@@ -779,7 +821,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     publishToChannel(params.channelId, {
       type: 'reaction_remove',
       messageId: params.messageId,
-      emoji: decodedEmoji,
+      emoji: emojiData?.id || decodedEmoji,
       userId: user._id,
     });
 
