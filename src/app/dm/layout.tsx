@@ -6,11 +6,17 @@ import { ChannelSidebar } from "@/components/layout/ChannelSidebar";
 import { CreateServerDialog } from "@/components/dialogs/CreateServerDialog";
 import { UserSettingsDialog } from "@/components/dialogs/UserSettingsDialog";
 import { AuthProvider } from "@/contexts/AuthContext";
-import { ServerProvider } from "@/contexts/ServerContext";
+import { ServerProvider, useServer } from "@/contexts/ServerContext";
 
 function DMContent({ children }: { children: React.ReactNode }) {
   const [showCreateServer, setShowCreateServer] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
+  const { clearContext } = useServer();
+
+  // Clear server context when entering DM layout
+  useEffect(() => {
+    clearContext();
+  }, [clearContext]);
 
   useEffect(() => {
     const handleOpenSettings = () => setShowUserSettings(true);
@@ -19,10 +25,10 @@ function DMContent({ children }: { children: React.ReactNode }) {
   }, []);
 
   return (
-    <div className="h-screen flex">
+    <div className="h-screen flex animate-fade-in">
       <ServerSidebar onCreateServer={() => setShowCreateServer(true)} />
       <ChannelSidebar />
-      {children}
+      <main className="flex-1 flex min-w-0">{children}</main>
       <CreateServerDialog
         open={showCreateServer}
         onOpenChange={setShowCreateServer}

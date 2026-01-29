@@ -60,6 +60,7 @@ import { GifPicker } from "@/components/chat/GifPicker";
 import { MessageContent } from "@/components/chat/MessageContent";
 import { LinkEmbed } from "@/components/chat/LinkEmbed";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
+import { Skeleton, MessageSkeleton, ChatAreaSkeleton } from "@/components/ui/skeleton";
 
 interface Message {
   id: string;
@@ -664,7 +665,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
   if (!currentChannel) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] text-[#666666]">
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] text-[#666666] animate-fade-in">
         <div className="w-40 h-40 mb-4 rounded-full bg-[#111111] flex items-center justify-center">
           <Hash className="w-20 h-20 text-[#8B5CF6]" />
         </div>
@@ -681,14 +682,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   }
 
   return (
-    <div className="flex-1 flex flex-col bg-[#0a0a0a] min-w-0 min-h-0 overflow-hidden">
+    <div className="flex-1 flex flex-col bg-[#0a0a0a] min-w-0 min-h-0 overflow-hidden animate-fade-in">
       {/* Channel Header */}
       <div className="h-12 px-2 sm:px-4 flex items-center justify-between border-b border-[#1a1a1a] flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           {isMobile && (
             <button
               onClick={() => router.push(`/channels/${currentServer?.id}`)}
-              className="p-2 -ml-1 rounded-lg hover:bg-[#1a1a1a] transition-colors"
+              className="p-2 -ml-1 rounded-lg hover:bg-[#1a1a1a] transition-all duration-150"
             >
               <ChevronLeft className="w-5 h-5 text-[#888888]" />
             </button>
@@ -697,15 +698,15 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           <span className="font-semibold text-white truncate text-sm sm:text-base">{currentChannel.name}</span>
         </div>
         <div className="flex items-center gap-2 sm:gap-4 text-[#888888]">
-          <button className="hover:text-white transition-colors hidden sm:block" onClick={() => toast.info("Notifications coming soon")}>
+          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Notifications coming soon")}>
             <Bell className="w-5 h-5" />
           </button>
-          <button className="hover:text-white transition-colors hidden sm:block" onClick={() => toast.info("Pinned messages coming soon")}>
+          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Pinned messages coming soon")}>
             <Pin className="w-5 h-5" />
           </button>
           <button
             onClick={onToggleMembers}
-            className={cn("hover:text-white transition-colors", showMembers && "text-white")}
+            className={cn("hover:text-white transition-all duration-150", showMembers && "text-white")}
           >
             <Users className="w-5 h-5" />
           </button>
@@ -714,25 +715,25 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             <input
               type="text"
               placeholder="Search"
-              className="w-32 h-6 px-2 rounded bg-[#111111] text-sm text-white placeholder:text-[#666666] focus:outline-none focus:w-48 transition-all"
+              className="w-32 h-6 px-2 rounded bg-[#111111] text-sm text-white placeholder:text-[#666666] focus:outline-none focus:w-48 transition-all duration-200"
               onFocus={() => toast.info("Search coming soon")}
             />
             <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666666]" />
           </div>
-          <button className="hover:text-white transition-colors hidden sm:block" onClick={() => toast.info("Inbox coming soon")}>
+          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Inbox coming soon")}>
             <Inbox className="w-5 h-5" />
           </button>
-          <button className="hover:text-white transition-colors hidden sm:block" onClick={() => toast.info("Help coming soon")}>
+          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Help coming soon")}>
             <HelpCircle className="w-5 h-5" />
           </button>
         </div>
       </div>
 
       {/* Messages Area */}
-      <ScrollArea className="flex-1 min-h-0" ref={scrollRef}>
+      <ScrollArea className="flex-1 min-h-0 scrollbar-thin" ref={scrollRef}>
         <div className="flex flex-col py-4">
           {/* Channel Welcome */}
-          <div className="px-4 pb-4 mb-4 border-b border-[#1a1a1a]">
+          <div className="px-4 pb-4 mb-4 border-b border-[#1a1a1a] animate-fade-in-up">
             <div className="w-16 h-16 mb-2 rounded-full bg-[#111111] flex items-center justify-center">
               <Hash className="w-10 h-10 text-white" />
             </div>
@@ -742,11 +743,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
           {/* Messages */}
           {isLoading ? (
-            <div className="flex items-center justify-center py-8">
-              <div className="w-8 h-8 border-2 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
-            </div>
+            <MessageSkeleton count={5} />
           ) : groupedMessages.length === 0 ? (
-            <div className="text-center text-[#666666] py-8">No messages yet. Be the first to say something!</div>
+            <div className="text-center text-[#666666] py-8 animate-fade-in">No messages yet. Be the first to say something!</div>
           ) : (
             groupedMessages.map((group, groupIndex) => (
               <div key={groupIndex} className="group px-4 py-0.5 hover:bg-[#111111] message-hover">
