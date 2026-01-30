@@ -1,11 +1,11 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
@@ -108,7 +108,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const scrollRef = useRef<HTMLDivElement>(null);
+  const virtuosoRef = useRef<VirtuosoHandle>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
@@ -243,11 +243,11 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
               data.message.author ||
               (data.message.authorId && typeof data.message.authorId === "object"
                 ? {
-                    id: data.message.authorId._id || data.message.authorId.id,
-                    username: data.message.authorId.username,
-                    displayName: data.message.authorId.displayName || data.message.authorId.username,
-                    avatar: data.message.authorId.avatar,
-                  }
+                  id: data.message.authorId._id || data.message.authorId.id,
+                  username: data.message.authorId.username,
+                  displayName: data.message.authorId.displayName || data.message.authorId.username,
+                  avatar: data.message.authorId.avatar,
+                }
                 : null);
 
             const newMsg: Message = {
@@ -327,12 +327,19 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     };
   }, [connectSSE]);
 
-  // Auto-scroll to bottom
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
-    if (scrollRef.current) {
-      scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+    if (virtuosoRef.current && messages.length > 0) {
+      // Use setTimeout to ensure the DOM is updated before scrolling
+      setTimeout(() => {
+        virtuosoRef.current?.scrollToIndex({
+          index: messages.length - 1,
+          behavior: "smooth",
+          align: "end",
+        });
+      }, 50);
     }
-  }, [messages]);
+  }, [messages.length]);
 
   // File upload handling
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -526,7 +533,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
   const handleAddReaction = async (messageId: string, emoji: string) => {
     if (!currentChannel) return;
-    
+
     try {
       const encodedEmoji = encodeURIComponent(emoji);
       const response = await fetch(
@@ -539,10 +546,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== messageId) return msg;
-            
+
             const reactions = msg.reactions || [];
             const existingReaction = reactions.find((r) => r.emoji.name === emoji);
-            
+
             if (existingReaction) {
               // Check if user already reacted
               if (!existingReaction.userIds.includes(user?.id || "")) {
@@ -573,7 +580,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
   const handleRemoveReaction = async (messageId: string, emoji: string) => {
     if (!currentChannel) return;
-    
+
     try {
       const encodedEmoji = encodeURIComponent(emoji);
       const response = await fetch(
@@ -586,7 +593,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== messageId) return msg;
-            
+
             const reactions = msg.reactions || [];
             return {
               ...msg,
@@ -594,10 +601,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                 .map((r) =>
                   r.emoji.name === emoji
                     ? {
-                        ...r,
-                        count: r.count - 1,
-                        userIds: r.userIds.filter((id) => id !== user?.id),
-                      }
+                      ...r,
+                      count: r.count - 1,
+                      userIds: r.userIds.filter((id) => id !== user?.id),
+                    }
                     : r
                 )
                 .filter((r) => r.count > 0),
@@ -646,22 +653,24 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   };
 
-  // Group messages by author and time proximity
-  const groupedMessages = messages.reduce((groups, message, index) => {
-    const prevMessage = messages[index - 1];
-    const isGrouped =
-      prevMessage &&
-      prevMessage.authorId === message.authorId &&
-      new Date(message.createdAt).getTime() - new Date(prevMessage.createdAt).getTime() < 5 * 60 * 1000;
+  // Group messages by author and time proximity - memoized for performance
+  const groupedMessages = useMemo(() => {
+    return messages.reduce((groups, message, index) => {
+      const prevMessage = messages[index - 1];
+      const isGrouped =
+        prevMessage &&
+        prevMessage.authorId === message.authorId &&
+        new Date(message.createdAt).getTime() - new Date(prevMessage.createdAt).getTime() < 5 * 60 * 1000;
 
-    if (isGrouped) {
-      groups[groups.length - 1].messages.push(message);
-    } else {
-      groups.push({ author: message.author, messages: [message] });
-    }
+      if (isGrouped) {
+        groups[groups.length - 1].messages.push(message);
+      } else {
+        groups.push({ author: message.author, messages: [message] });
+      }
 
-    return groups;
-  }, [] as Array<{ author: Message["author"]; messages: Message[] }>);
+      return groups;
+    }, [] as Array<{ author: Message["author"]; messages: Message[] }>);
+  }, [messages]);
 
   if (!currentChannel) {
     return (
@@ -729,26 +738,38 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         </div>
       </div>
 
-      {/* Messages Area */}
-      <ScrollArea className="flex-1 min-h-0 scrollbar-thin" ref={scrollRef}>
-        <div className="flex flex-col py-4">
-          {/* Channel Welcome */}
-          <div className="px-4 pb-4 mb-4 border-b border-[#1a1a1a] animate-fade-in-up">
-            <div className="w-16 h-16 mb-2 rounded-full bg-[#111111] flex items-center justify-center">
-              <Hash className="w-10 h-10 text-white" />
-            </div>
-            <h1 className="text-3xl font-bold text-white mb-2">Welcome to #{currentChannel.name}!</h1>
-            <p className="text-[#666666]">This is the start of the #{currentChannel.name} channel.</p>
-          </div>
-
-          {/* Messages */}
-          {isLoading ? (
+      {/* Messages Area - Virtualized for performance */}
+      <div className="flex-1 min-h-0 overflow-hidden">
+        {isLoading ? (
+          <div className="flex flex-col py-4 px-4">
             <MessageSkeleton count={5} />
-          ) : groupedMessages.length === 0 ? (
-            <div className="text-center text-[#666666] py-8 animate-fade-in">No messages yet. Be the first to say something!</div>
-          ) : (
-            groupedMessages.map((group, groupIndex) => (
-              <div key={groupIndex} className="group px-4 py-0.5 hover:bg-[#111111] message-hover">
+          </div>
+        ) : (
+          <Virtuoso
+            ref={virtuosoRef}
+            className="h-full scrollbar-thin"
+            data={groupedMessages}
+            followOutput="smooth"
+            initialTopMostItemIndex={groupedMessages.length > 0 ? groupedMessages.length - 1 : 0}
+            components={{
+              Header: () => (
+                <>
+                  {/* Channel Welcome */}
+                  <div className="px-4 pb-4 mb-4 border-b border-[#1a1a1a] animate-fade-in-up">
+                    <div className="w-16 h-16 mb-2 rounded-full bg-[#111111] flex items-center justify-center">
+                      <Hash className="w-10 h-10 text-white" />
+                    </div>
+                    <h1 className="text-3xl font-bold text-white mb-2">Welcome to #{currentChannel.name}!</h1>
+                    <p className="text-[#666666]">This is the start of the #{currentChannel.name} channel.</p>
+                  </div>
+                  {groupedMessages.length === 0 && (
+                    <div className="text-center text-[#666666] py-8 animate-fade-in">No messages yet. Be the first to say something!</div>
+                  )}
+                </>
+              ),
+            }}
+            itemContent={(index, group) => (
+              <div key={index} className="group px-4 py-0.5 hover:bg-[#111111] message-hover">
                 <div className="flex gap-4">
                   <div className="w-10 flex-shrink-0">
                     <Avatar className="w-10 h-10 mt-0.5">
@@ -819,6 +840,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                                     alt={attachment.filename}
                                     className="max-w-md max-h-80 rounded-md cursor-pointer hover:opacity-90 transition-opacity"
                                     onClick={() => setLightboxImage({ src: attachment.url, alt: attachment.filename })}
+                                    loading="lazy"
                                   />
                                 ) : attachment.contentType.startsWith("video/") ? (
                                   <video
@@ -876,7 +898,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                             {/* Message Actions */}
                             <div className="absolute -top-3 right-0 opacity-0 group-hover/message:opacity-100 transition-opacity z-10">
                               <div className="flex items-center bg-[#1a1a1a] border border-[#2a2a2a] rounded-md shadow-lg">
-                                <Popover 
+                                <Popover
                                   open={reactionPickerMessage === message.id}
                                   onOpenChange={(open) => setReactionPickerMessage(open ? message.id : null)}
                                 >
@@ -952,10 +974,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                   </div>
                 </div>
               </div>
-            ))
-          )}
-        </div>
-      </ScrollArea>
+            )}
+          />
+        )}
+      </div>
 
       {/* Typing Indicator */}
       {typingUsers.length > 0 && (
@@ -1034,7 +1056,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                   onGifSelect={async (gif: { url: string }) => {
                     setShowGifPicker(false);
                     if (!currentChannel) return;
-                    
+
                     // Instantly send the GIF as a message
                     try {
                       await fetch(`/api/channels/${currentChannel.id}/messages`, {
