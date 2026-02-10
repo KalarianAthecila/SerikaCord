@@ -76,33 +76,12 @@ export function MemberSidebar() {
             </div>
           ) : (
             <>
-              {/* Online Members */}
-              {onlineMembers.length > 0 && (
-                <div className="mb-4">
-                  <div className="px-4 mb-2">
-                    <span className="text-xs font-semibold uppercase text-[var(--app-muted-2)]">
-                      Online — {onlineMembers.length}
-                    </span>
-                  </div>
-                  {onlineMembers.map((member, index) => (
-                    <MemberItem key={member.id || `online-${index}`} member={member} serverId={currentServer.id} />
-                  ))}
-                </div>
-              )}
-
-              {/* Offline Members */}
-              {offlineMembers.length > 0 && (
-                <div>
-                  <div className="px-4 mb-2">
-                    <span className="text-xs font-semibold uppercase text-[var(--app-muted-2)]">
-                      Offline — {offlineMembers.length}
-                    </span>
-                  </div>
-                  {offlineMembers.map((member, index) => (
-                    <MemberItem key={member.id || `offline-${index}`} member={member} serverId={currentServer.id} />
-                  ))}
-                </div>
-              )}
+              {onlineMembers.map((member, index) => (
+                <MemberItem key={member.id || `online-${index}`} member={member} serverId={currentServer.id} />
+              ))}
+              {offlineMembers.map((member, index) => (
+                <MemberItem key={member.id || `offline-${index}`} member={member} serverId={currentServer.id} />
+              ))}
 
               {members.length === 0 && (
                 <div className="text-center text-[var(--app-muted-2)] text-sm py-8">

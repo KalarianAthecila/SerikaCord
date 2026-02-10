@@ -405,6 +405,83 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       channelId: t.Optional(t.String()),
     }),
   })
+  // Upload sticker
+  .post('/sticker/:serverId', async ({ headers, cookie, params, body, request, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    const membership = await ServerMember.findOne({
+      serverId: server._id,
+      userId: user._id,
+    });
+    if (!membership) {
+      set.status = 403;
+      return { error: 'You are not a member of this server' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'Only the server owner can upload stickers' };
+    }
+
+    const ip = getClientIP(request);
+    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    if (!rateLimit.success) {
+      set.status = 429;
+      return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
+    }
+
+    const { file } = body;
+    if (!file) {
+      set.status = 400;
+      return { error: 'No file provided' };
+    }
+
+    const allowedTypes = ['image/png', 'image/apng', 'image/gif', 'image/webp'];
+    if (!allowedTypes.includes(file.type)) {
+      set.status = 400;
+      return { error: 'Invalid file type. Stickers must be PNG/APNG/GIF/WebP.' };
+    }
+
+    const MAX_STICKER_SIZE = 512 * 1024;
+    if (file.size > MAX_STICKER_SIZE) {
+      set.status = 400;
+      return { error: 'Sticker must be less than 512KB.' };
+    }
+
+    try {
+      const result = await storage.uploadFromFormData(file, 'stickers', {
+        serverId: params.serverId,
+        userId: user._id.toString(),
+      });
+
+      return {
+        success: true,
+        url: result.url,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to upload sticker';
+      console.error('Sticker upload error:', error);
+      set.status = 500;
+      return { error: message };
+    }
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      file: t.File(),
+    }),
+  })
   // Upload emoji
   .post('/emoji', async ({ headers, cookie, body, request, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);

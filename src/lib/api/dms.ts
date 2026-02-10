@@ -26,6 +26,25 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
 
 // Store active SSE connections
 const activeConnections = new Map<string, Set<ReadableStreamDefaultController>>();
+const activeDmListConnections = new Map<string, Set<ReadableStreamDefaultController>>();
+
+function emitDmListUpdate(userIds: string[], payload: Record<string, unknown>) {
+  const data = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+  userIds.forEach((userId) => {
+    const streams = activeDmListConnections.get(userId);
+    if (!streams) return;
+    streams.forEach((controller) => {
+      try {
+        controller.enqueue(data);
+      } catch {
+        streams.delete(controller);
+      }
+    });
+    if (streams.size === 0) {
+      activeDmListConnections.delete(userId);
+    }
+  });
+}
 
 // Helper to get or create DM channel
 async function getOrCreateDMChannel(userId: string, recipientId: string) {
@@ -92,6 +111,57 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     );
 
     return { channels: channelsWithRecipients };
+  })
+  // SSE stream for DM list updates
+  .get('/stream', async ({ headers, cookie }) => {
+    const sseHeaders = {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    };
+
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      const errorStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.close();
+        },
+      });
+      return new Response(errorStream, { headers: sseHeaders });
+    }
+
+    let controllerRef: ReadableStreamDefaultController | null = null;
+    let pingInterval: NodeJS.Timeout | null = null;
+    const userKey = user._id.toString();
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controllerRef = controller;
+        if (!activeDmListConnections.has(userKey)) {
+          activeDmListConnections.set(userKey, new Set());
+        }
+        activeDmListConnections.get(userKey)!.add(controller);
+        controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
+        pingInterval = setInterval(() => {
+          try {
+            controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
+          } catch {
+            if (pingInterval) clearInterval(pingInterval);
+            activeDmListConnections.get(userKey)?.delete(controller);
+          }
+        }, 30000);
+      },
+      cancel() {
+        if (pingInterval) clearInterval(pingInterval);
+        if (controllerRef) {
+          activeDmListConnections.get(userKey)?.delete(controllerRef);
+        }
+      },
+    });
+
+    return new Response(stream, { headers: sseHeaders });
   })
   // Get messages for a DM with specific recipient
   .get('/:recipientId/messages', async ({ headers, cookie, params, query, set }) => {
@@ -287,6 +357,21 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
     };
 
+    emitDmListUpdate(
+      [user._id.toString(), params.recipientId],
+      {
+        type: 'dm:list:update',
+        channelId: channel._id.toString(),
+        recipientId: params.recipientId,
+        message: {
+          id: message._id.toString(),
+          content: sanitizedContent.slice(0, 180),
+          authorId: user._id.toString(),
+          createdAt: message.createdAt,
+        },
+      }
+    );
+
     // Publish to Redis for real-time
     try {
       const publisher = getPublisher();
@@ -450,6 +535,16 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         }
       });
     }
+
+    emitDmListUpdate(
+      [user._id.toString(), params.recipientId],
+      {
+        type: 'typing',
+        channelId: channel._id.toString(),
+        userId: user._id.toString(),
+        username: user.username,
+      }
+    );
 
     return { success: true };
   }, {

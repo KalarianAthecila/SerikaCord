@@ -127,6 +127,26 @@ interface ServerChannel {
   type: string;
 }
 
+interface ServerSticker {
+  _id: string;
+  name: string;
+  description?: string;
+  imageUrl: string;
+  tags?: string[];
+}
+
+interface AuditLogEntry {
+  id: string;
+  action: string;
+  reason?: string;
+  createdAt: string;
+  admin?: {
+    id?: string;
+    username: string;
+    avatar?: string;
+  };
+}
+
 export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialogProps) {
   const { currentServer, fetchChannels, fetchServers, channels } = useServer();
   const { user } = useAuth();
@@ -159,12 +179,34 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [bans, setBans] = useState<BannedUser[]>([]);
   const [members, setMembers] = useState<ServerMember[]>([]);
   const [emojis, setEmojis] = useState<ServerEmoji[]>([]);
+  const [stickers, setStickers] = useState<ServerSticker[]>([]);
+  const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [textChannels, setTextChannels] = useState<ServerChannel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
 
   // Emoji upload refs
   const emojiInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingEmoji, setIsUploadingEmoji] = useState(false);
+  const stickerInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingSticker, setIsUploadingSticker] = useState(false);
+
+  // Advanced server settings
+  const [widgetEnabled, setWidgetEnabled] = useState(true);
+  const [widgetChannelId, setWidgetChannelId] = useState<string>("");
+  const [verificationLevel, setVerificationLevel] = useState<'none' | 'low' | 'medium' | 'high' | 'very_high'>('none');
+  const [explicitContentFilter, setExplicitContentFilter] = useState<'disabled' | 'members_without_roles' | 'all_members'>('disabled');
+  const [require2FA, setRequire2FA] = useState(false);
+  const [raidProtection, setRaidProtection] = useState(false);
+  const [antiSpam, setAntiSpam] = useState(true);
+  const [mentionSpamLimit, setMentionSpamLimit] = useState(5);
+  const [integrationFlags, setIntegrationFlags] = useState({
+    discord: false,
+    twitch: false,
+    youtube: false,
+    webhooks: false,
+  });
+  const [soundboardEnabled, setSoundboardEnabled] = useState(true);
+  const [soundboardVolume, setSoundboardVolume] = useState(100);
 
   // Initialize with server data
   useEffect(() => {
@@ -233,11 +275,51 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             }
             break;
           case "emoji":
-          case "stickers":
             const emojisRes = await fetch(`/api/servers/${currentServer.id}/emojis`);
             if (emojisRes.ok) {
               const data = await emojisRes.json();
               setEmojis(data.emojis || []);
+            }
+            break;
+          case "stickers":
+            const stickersRes = await fetch(`/api/servers/${currentServer.id}/stickers`);
+            if (stickersRes.ok) {
+              const data = await stickersRes.json();
+              setStickers(data.stickers || []);
+            }
+            break;
+          case "audit-log":
+            const auditRes = await fetch(`/api/servers/${currentServer.id}/audit-log`);
+            if (auditRes.ok) {
+              const data = await auditRes.json();
+              setAuditLogs(data.logs || []);
+            }
+            break;
+          case "widget":
+          case "soundboard":
+          case "moderation":
+          case "safety":
+          case "integrations":
+            const settingsRes = await fetch(`/api/servers/${currentServer.id}/settings`);
+            if (settingsRes.ok) {
+              const data = await settingsRes.json();
+              const serverSettings = data.settings || {};
+              setWidgetEnabled(serverSettings.widget?.enabled ?? true);
+              setWidgetChannelId(serverSettings.widget?.channelId || "");
+              setVerificationLevel(serverSettings.moderation?.verificationLevel || "none");
+              setExplicitContentFilter(serverSettings.moderation?.explicitContentFilter || "disabled");
+              setRequire2FA(serverSettings.moderation?.require2FA || false);
+              setRaidProtection(serverSettings.safety?.raidProtection || false);
+              setAntiSpam(serverSettings.safety?.antiSpam ?? true);
+              setMentionSpamLimit(serverSettings.safety?.mentionSpamLimit || 5);
+              setIntegrationFlags({
+                discord: serverSettings.integrations?.discord || false,
+                twitch: serverSettings.integrations?.twitch || false,
+                youtube: serverSettings.integrations?.youtube || false,
+                webhooks: serverSettings.integrations?.webhooks || false,
+              });
+              setSoundboardEnabled(serverSettings.soundboard?.enabled ?? true);
+              setSoundboardVolume(serverSettings.soundboard?.volume ?? 100);
             }
             break;
         }
@@ -522,6 +604,131 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     } catch (error) {
       console.error("Failed to delete emoji:", error);
       toast.error("Failed to delete emoji");
+    }
+  };
+
+  const handleStickerUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentServer) return;
+
+    if (!file.type.startsWith("image/")) {
+      toast.error("Please select an image file");
+      return;
+    }
+
+    if (file.size > 512 * 1024) {
+      toast.error("Sticker must be less than 512KB");
+      return;
+    }
+
+    const stickerName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_ ]/g, "").trim().slice(0, 30) || "sticker";
+    const formData = new FormData();
+    formData.append("file", file);
+    setIsUploadingSticker(true);
+
+    try {
+      const uploadRes = await fetch(`/api/upload/sticker/${currentServer.id}`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!uploadRes.ok) {
+        const data = await uploadRes.json();
+        throw new Error(data.error || "Failed to upload sticker");
+      }
+
+      const uploadData = await uploadRes.json();
+      const createRes = await fetch(`/api/servers/${currentServer.id}/stickers`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: stickerName,
+          imageUrl: uploadData.url,
+          tags: ["reaction"],
+        }),
+      });
+
+      if (createRes.ok) {
+        const data = await createRes.json();
+        setStickers((prev) => [data.sticker, ...prev]);
+        toast.success("Sticker uploaded");
+      } else {
+        const data = await createRes.json();
+        toast.error(data.error || "Failed to save sticker");
+      }
+    } catch (error) {
+      console.error("Failed to upload sticker:", error);
+      toast.error(error instanceof Error ? error.message : "Failed to upload sticker");
+    } finally {
+      setIsUploadingSticker(false);
+      if (stickerInputRef.current) {
+        stickerInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleDeleteSticker = async (stickerId: string) => {
+    if (!currentServer) return;
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/stickers/${stickerId}`, {
+        method: "DELETE",
+      });
+      if (response.ok) {
+        setStickers((prev) => prev.filter((sticker) => sticker._id !== stickerId));
+        toast.success("Sticker deleted");
+      } else {
+        toast.error("Failed to delete sticker");
+      }
+    } catch (error) {
+      console.error("Failed to delete sticker:", error);
+      toast.error("Failed to delete sticker");
+    }
+  };
+
+  const handleSaveAdvancedSettings = async (section: "widget" | "moderation" | "safety" | "integrations" | "soundboard") => {
+    if (!currentServer) return;
+
+    const payload = {
+      widget: {
+        enabled: widgetEnabled,
+        channelId: widgetChannelId || null,
+      },
+      moderation: {
+        verificationLevel,
+        explicitContentFilter,
+        require2FA,
+      },
+      safety: {
+        raidProtection,
+        antiSpam,
+        mentionSpamLimit,
+      },
+      integrations: integrationFlags,
+      soundboard: {
+        enabled: soundboardEnabled,
+        volume: soundboardVolume,
+      },
+    };
+
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/settings`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          settings: {
+            [section]: payload[section],
+          },
+        }),
+      });
+      if (response.ok) {
+        toast.success("Settings saved");
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to save settings");
+      }
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+      toast.error("Failed to save settings");
     }
   };
 
@@ -1144,28 +1351,65 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-white mb-1">Server Stickers</h2>
-          <p className="text-sm text-[#888888]">Upload custom stickers for your server (0/5)</p>
+          <p className="text-sm text-[#888888]">Upload custom stickers for your server ({stickers.length}/15)</p>
         </div>
         <button
-          disabled
-          className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 opacity-50 cursor-not-allowed"
+          onClick={() => stickerInputRef.current?.click()}
+          disabled={isUploadingSticker}
+          className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 disabled:opacity-50"
         >
-          <Plus className="w-4 h-4" />
-          Upload Sticker
+          {isUploadingSticker ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+          {isUploadingSticker ? "Uploading..." : "Upload Sticker"}
         </button>
       </div>
 
-      <div className="text-center py-12 border-2 border-dashed border-[#222222] rounded-lg">
-        <Sticker className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-        <h3 className="text-lg font-semibold text-white mb-2">Stickers Coming Soon</h3>
-        <p className="text-[#888888] text-sm mb-4">
-          Custom stickers are currently in development. Stay tuned!
-        </p>
-        <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#111111] border border-[#222222]">
-          <div className="w-2 h-2 rounded-full bg-[#8B5CF6] animate-pulse" />
-          <span className="text-sm text-[#888888]">In Development</span>
+      <input
+        type="file"
+        ref={stickerInputRef}
+        onChange={handleStickerUpload}
+        accept="image/png,image/apng,image/gif,image/webp"
+        className="hidden"
+      />
+
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
         </div>
-      </div>
+      ) : stickers.length === 0 ? (
+        <div className="text-center py-12 border-2 border-dashed border-[#222222] rounded-lg">
+          <Sticker className="w-12 h-12 text-[#666666] mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-white mb-2">No stickers yet</h3>
+          <p className="text-[#888888] text-sm mb-4">Upload stickers to use in messages</p>
+          <button
+            onClick={() => stickerInputRef.current?.click()}
+            className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
+          >
+            Upload First Sticker
+          </button>
+        </div>
+      ) : (
+        <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
+          {stickers.map((sticker) => (
+            <div
+              key={sticker._id}
+              className="relative group rounded-lg bg-[#111111] border border-[#222222] p-2"
+            >
+              <img
+                src={sticker.imageUrl}
+                alt={sticker.name}
+                className="w-full aspect-square object-contain rounded"
+              />
+              <button
+                onClick={() => handleDeleteSticker(sticker._id)}
+                className="absolute top-1 right-1 p-1 bg-red-500/80 hover:bg-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <X className="w-3 h-3 text-white" />
+              </button>
+              <p className="text-xs text-center text-[#888888] mt-1 truncate">{sticker.name}</p>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -1179,8 +1423,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
         <div className="flex items-center justify-between mb-4">
           <span className="text-white font-medium">Enable Server Widget</span>
-          <button className="w-12 h-6 rounded-full bg-[#222222] relative">
-            <div className="w-5 h-5 rounded-full bg-white absolute left-0.5 top-0.5 transition-transform" />
+          <button
+            onClick={() => setWidgetEnabled((prev) => !prev)}
+            className={cn("w-12 h-6 rounded-full relative transition-colors", widgetEnabled ? "bg-[#8B5CF6]" : "bg-[#222222]")}
+          >
+            <div className={cn(
+              "w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform",
+              widgetEnabled ? "translate-x-6 left-0.5" : "left-0.5"
+            )} />
           </button>
         </div>
         <p className="text-sm text-[#888888]">
@@ -1192,8 +1442,15 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         <label className="block text-sm font-medium text-[#888888] mb-2">
           INVITE CHANNEL
         </label>
-        <select className="w-full h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white">
+        <select
+          value={widgetChannelId}
+          onChange={(e) => setWidgetChannelId(e.target.value)}
+          className="w-full h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white"
+        >
           <option value="">Select a channel</option>
+          {textChannels.map((channel) => (
+            <option key={channel.id} value={channel.id}>#{channel.name}</option>
+          ))}
         </select>
       </div>
 
@@ -1204,9 +1461,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         <div className="p-3 rounded-md bg-[#111111] border border-[#222222] font-mono text-sm text-[#888888]">
           {`<iframe src="https://serika.chat/widget/${currentServer.id}" width="350" height="500" />`}
         </div>
-        <button className="mt-2 text-sm text-[#8B5CF6] hover:underline flex items-center gap-1">
+        <button
+          onClick={() => copyToClipboard(`<iframe src=\"https://serika.chat/widget/${currentServer.id}\" width=\"350\" height=\"500\" />`)}
+          className="mt-2 text-sm text-[#8B5CF6] hover:underline flex items-center gap-1"
+        >
           <Copy className="w-4 h-4" />
           Copy Code
+        </button>
+      </div>
+      <div className="flex justify-end">
+        <button
+          onClick={() => handleSaveAdvancedSettings("widget")}
+          className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
+        >
+          Save Widget Settings
         </button>
       </div>
     </div>
@@ -1234,11 +1502,38 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </select>
       </div>
 
-      <div className="text-center py-12">
-        <FileText className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-        <h3 className="text-lg font-semibold text-white mb-2">No audit log entries</h3>
-        <p className="text-[#888888] text-sm">Actions taken in your server will appear here</p>
-      </div>
+      {isLoading ? (
+        <div className="flex items-center justify-center py-12">
+          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+        </div>
+      ) : auditLogs.length === 0 ? (
+        <div className="text-center py-12">
+          <FileText className="w-12 h-12 text-[#666666] mx-auto mb-4" />
+          <h3 className="text-lg font-semibold text-white mb-2">No audit log entries</h3>
+          <p className="text-[#888888] text-sm">Actions taken in your server will appear here</p>
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {auditLogs.map((log) => (
+            <div key={log.id} className="p-3 rounded-lg bg-[#111111] border border-[#222222]">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-2">
+                  <Avatar className="w-7 h-7">
+                    <AvatarImage src={log.admin?.avatar} />
+                    <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
+                      {(log.admin?.username || "?").charAt(0)}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-sm text-white font-medium">{log.admin?.username || "System"}</span>
+                  <span className="text-xs text-[#888888] uppercase">{log.action.replace(/_/g, " ")}</span>
+                </div>
+                <span className="text-xs text-[#666666]">{new Date(log.createdAt).toLocaleString()}</span>
+              </div>
+              {log.reason && <p className="text-xs text-[#888888] mt-1">Reason: {log.reason}</p>}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 
@@ -1254,12 +1549,16 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <div className="flex items-center justify-between mb-2">
             <span className="text-white font-medium">Verification Level</span>
           </div>
-          <select className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white">
+          <select
+            value={verificationLevel}
+            onChange={(e) => setVerificationLevel(e.target.value as typeof verificationLevel)}
+            className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+          >
             <option value="none">None - Unrestricted</option>
             <option value="low">Low - Must have verified email</option>
             <option value="medium">Medium - Registered for 5+ minutes</option>
             <option value="high">High - Member for 10+ minutes</option>
-            <option value="highest">Highest - Must have verified phone</option>
+            <option value="very_high">Highest - Must have verified phone</option>
           </select>
         </div>
 
@@ -1267,7 +1566,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <div className="flex items-center justify-between mb-2">
             <span className="text-white font-medium">Explicit Media Content Filter</span>
           </div>
-          <select className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white">
+          <select
+            value={explicitContentFilter}
+            onChange={(e) => setExplicitContentFilter(e.target.value as typeof explicitContentFilter)}
+            className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+          >
             <option value="disabled">Don't scan any media content</option>
             <option value="members_without_roles">Scan content from members without roles</option>
             <option value="all_members">Scan content from all members</option>
@@ -1282,11 +1585,171 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 Require moderators to have 2FA enabled
               </p>
             </div>
-            <button className="w-12 h-6 rounded-full bg-[#222222] relative">
-              <div className="w-5 h-5 rounded-full bg-white absolute left-0.5 top-0.5 transition-transform" />
+            <button
+              onClick={() => setRequire2FA((prev) => !prev)}
+              className={cn("w-12 h-6 rounded-full relative transition-colors", require2FA ? "bg-[#8B5CF6]" : "bg-[#222222]")}
+            >
+              <div className={cn(
+                "w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform",
+                require2FA ? "translate-x-6 left-0.5" : "left-0.5"
+              )} />
             </button>
           </div>
         </div>
+
+        <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-white font-medium">Raid Protection</span>
+              <p className="text-sm text-[#888888] mt-1">Auto-enable stricter checks during suspicious joins</p>
+            </div>
+            <button
+              onClick={() => setRaidProtection((prev) => !prev)}
+              className={cn("w-12 h-6 rounded-full relative transition-colors", raidProtection ? "bg-[#8B5CF6]" : "bg-[#222222]")}
+            >
+              <div className={cn(
+                "w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform",
+                raidProtection ? "translate-x-6 left-0.5" : "left-0.5"
+              )} />
+            </button>
+          </div>
+        </div>
+
+        <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-white font-medium">Mention Spam Limit</span>
+            <span className="text-sm text-[#888888]">{mentionSpamLimit}</span>
+          </div>
+          <input
+            type="range"
+            min={2}
+            max={20}
+            value={mentionSpamLimit}
+            onChange={(e) => setMentionSpamLimit(Number(e.target.value))}
+            className="w-full accent-[#8B5CF6]"
+          />
+          <label className="mt-3 flex items-center justify-between cursor-pointer">
+            <span className="text-sm text-[#888888]">Enable anti-spam checks</span>
+            <input
+              type="checkbox"
+              checked={antiSpam}
+              onChange={(e) => setAntiSpam(e.target.checked)}
+              className="w-4 h-4 accent-[#8B5CF6]"
+            />
+          </label>
+        </div>
+
+        <div className="flex justify-end">
+          <button
+            onClick={() => {
+              handleSaveAdvancedSettings("moderation");
+              handleSaveAdvancedSettings("safety");
+            }}
+            className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
+          >
+            Save Moderation Settings
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+
+  const renderSoundboard = () => (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-white mb-1">Soundboard</h2>
+        <p className="text-sm text-[#888888]">Configure soundboard availability and playback volume</p>
+      </div>
+
+      <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
+        <div className="flex items-center justify-between mb-4">
+          <span className="text-white font-medium">Enable Soundboard</span>
+          <button
+            onClick={() => setSoundboardEnabled((prev) => !prev)}
+            className={cn("w-12 h-6 rounded-full relative transition-colors", soundboardEnabled ? "bg-[#8B5CF6]" : "bg-[#222222]")}
+          >
+            <div className={cn(
+              "w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform",
+              soundboardEnabled ? "translate-x-6 left-0.5" : "left-0.5"
+            )} />
+          </button>
+        </div>
+        <div>
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-sm text-[#888888]">Playback Volume</span>
+            <span className="text-sm text-white">{soundboardVolume}%</span>
+          </div>
+          <input
+            type="range"
+            min={0}
+            max={200}
+            value={soundboardVolume}
+            onChange={(e) => setSoundboardVolume(Number(e.target.value))}
+            className="w-full accent-[#8B5CF6]"
+          />
+        </div>
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          onClick={() => handleSaveAdvancedSettings("soundboard")}
+          className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
+        >
+          Save Soundboard
+        </button>
+      </div>
+    </div>
+  );
+
+  const renderIntegrations = () => (
+    <div className="space-y-6">
+      <div>
+        <h2 className="text-xl font-bold text-white mb-1">Integrations</h2>
+        <p className="text-sm text-[#888888]">Enable or disable external integrations for your server</p>
+      </div>
+
+      <div className="space-y-3">
+        {[
+          { key: "discord", label: "Discord Bridge", description: "Sync webhook announcements from Discord channels" },
+          { key: "twitch", label: "Twitch", description: "Announce stream go-live events in your server" },
+          { key: "youtube", label: "YouTube", description: "Post new video notifications to announcement channels" },
+          { key: "webhooks", label: "Custom Webhooks", description: "Allow inbound/outbound webhook automations" },
+        ].map((integration) => (
+          <div key={integration.key} className="p-4 rounded-lg bg-[#111111] border border-[#222222] flex items-center justify-between gap-4">
+            <div>
+              <p className="text-white font-medium">{integration.label}</p>
+              <p className="text-sm text-[#888888]">{integration.description}</p>
+            </div>
+            <button
+              onClick={() =>
+                setIntegrationFlags((prev) => ({
+                  ...prev,
+                  [integration.key]: !prev[integration.key as keyof typeof prev],
+                }))
+              }
+              className={cn(
+                "w-12 h-6 rounded-full relative transition-colors",
+                integrationFlags[integration.key as keyof typeof integrationFlags] ? "bg-[#8B5CF6]" : "bg-[#222222]"
+              )}
+            >
+              <div
+                className={cn(
+                  "w-5 h-5 rounded-full bg-white absolute top-0.5 transition-transform",
+                  integrationFlags[integration.key as keyof typeof integrationFlags] ? "translate-x-6 left-0.5" : "left-0.5"
+                )}
+              />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <div className="flex justify-end">
+        <button
+          onClick={() => handleSaveAdvancedSettings("integrations")}
+          className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
+        >
+          Save Integrations
+        </button>
       </div>
     </div>
   );
@@ -1311,9 +1774,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         return renderWidget();
       case "audit-log":
         return renderAuditLog();
+      case "soundboard":
+        return renderSoundboard();
       case "moderation":
       case "safety":
         return renderModeration();
+      case "integrations":
+        return renderIntegrations();
       default:
         return (
           <div className="text-center py-12">

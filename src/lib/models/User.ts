@@ -80,14 +80,72 @@ export interface IUser extends Document {
   settings: {
     theme: 'dark' | 'light' | 'system';
     locale: string;
+    appearance: {
+      themeStyle: 'dark' | 'midnight' | 'light';
+      accentColor: string;
+      fontSize: number;
+      compactMode: boolean;
+      showRoleColors: boolean;
+      enableAnimations: boolean;
+      saturation: number;
+    };
     notifications: {
       desktop: boolean;
       sounds: boolean;
       mentions: boolean;
+      directMessages: boolean;
+      friendRequests: boolean;
+      muteEveryone: boolean;
     };
     privacy: {
       directMessages: 'everyone' | 'friends' | 'servers';
       friendRequests: 'everyone' | 'friends' | 'none';
+      showActivity: boolean;
+      allowDataCollection: boolean;
+    };
+    accessibility: {
+      reducedMotion: boolean;
+      highContrast: boolean;
+      dyslexicFont: boolean;
+      messageSpacing: 'compact' | 'cozy';
+    };
+    voiceVideo: {
+      inputVolume: number;
+      outputVolume: number;
+      noiseSuppression: boolean;
+      echoCancellation: boolean;
+      autoGainControl: boolean;
+      pushToTalk: boolean;
+      pushToTalkKey: string;
+    };
+    textImages: {
+      inlineMedia: boolean;
+      inlineEmbeds: boolean;
+      gifAutoplay: boolean;
+      emojiPicker: boolean;
+      stickerSuggestions: boolean;
+    };
+    keybinds: {
+      enabled: boolean;
+      preset: 'default' | 'gaming' | 'vim';
+      custom: Record<string, string>;
+    };
+    language: {
+      locale: string;
+      spellcheck: boolean;
+    };
+    friendRequests: {
+      allowEveryone: boolean;
+      allowFriendsOfFriends: boolean;
+      allowServerMembers: boolean;
+    };
+    contentSocial: {
+      explicitFilter: 'disabled' | 'moderate' | 'strict';
+      showSensitiveMedia: boolean;
+    };
+    dataPrivacy: {
+      allowPersonalization: boolean;
+      allowCrashReports: boolean;
     };
   };
   
@@ -289,6 +347,9 @@ const UserSchema = new Schema<IUser>({
       desktop: { type: Boolean, default: true },
       sounds: { type: Boolean, default: true },
       mentions: { type: Boolean, default: true },
+      directMessages: { type: Boolean, default: true },
+      friendRequests: { type: Boolean, default: true },
+      muteEveryone: { type: Boolean, default: false },
     },
     privacy: {
       directMessages: {
@@ -301,6 +362,104 @@ const UserSchema = new Schema<IUser>({
         enum: ['everyone', 'friends', 'none'],
         default: 'everyone',
       },
+      showActivity: {
+        type: Boolean,
+        default: true,
+      },
+      allowDataCollection: {
+        type: Boolean,
+        default: true,
+      },
+    },
+    appearance: {
+      themeStyle: {
+        type: String,
+        enum: ['dark', 'midnight', 'light'],
+        default: 'dark',
+      },
+      accentColor: {
+        type: String,
+        default: '#8B5CF6',
+      },
+      fontSize: {
+        type: Number,
+        default: 14,
+      },
+      compactMode: {
+        type: Boolean,
+        default: false,
+      },
+      showRoleColors: {
+        type: Boolean,
+        default: true,
+      },
+      enableAnimations: {
+        type: Boolean,
+        default: true,
+      },
+      saturation: {
+        type: Number,
+        default: 100,
+      },
+    },
+    accessibility: {
+      reducedMotion: { type: Boolean, default: false },
+      highContrast: { type: Boolean, default: false },
+      dyslexicFont: { type: Boolean, default: false },
+      messageSpacing: {
+        type: String,
+        enum: ['compact', 'cozy'],
+        default: 'cozy',
+      },
+    },
+    voiceVideo: {
+      inputVolume: { type: Number, default: 100 },
+      outputVolume: { type: Number, default: 100 },
+      noiseSuppression: { type: Boolean, default: true },
+      echoCancellation: { type: Boolean, default: true },
+      autoGainControl: { type: Boolean, default: true },
+      pushToTalk: { type: Boolean, default: false },
+      pushToTalkKey: { type: String, default: 'V' },
+    },
+    textImages: {
+      inlineMedia: { type: Boolean, default: true },
+      inlineEmbeds: { type: Boolean, default: true },
+      gifAutoplay: { type: Boolean, default: true },
+      emojiPicker: { type: Boolean, default: true },
+      stickerSuggestions: { type: Boolean, default: true },
+    },
+    keybinds: {
+      enabled: { type: Boolean, default: true },
+      preset: {
+        type: String,
+        enum: ['default', 'gaming', 'vim'],
+        default: 'default',
+      },
+      custom: {
+        type: Schema.Types.Mixed,
+        default: {},
+      },
+    },
+    language: {
+      locale: { type: String, default: 'en-US' },
+      spellcheck: { type: Boolean, default: true },
+    },
+    friendRequests: {
+      allowEveryone: { type: Boolean, default: true },
+      allowFriendsOfFriends: { type: Boolean, default: true },
+      allowServerMembers: { type: Boolean, default: true },
+    },
+    contentSocial: {
+      explicitFilter: {
+        type: String,
+        enum: ['disabled', 'moderate', 'strict'],
+        default: 'moderate',
+      },
+      showSensitiveMedia: { type: Boolean, default: false },
+    },
+    dataPrivacy: {
+      allowPersonalization: { type: Boolean, default: true },
+      allowCrashReports: { type: Boolean, default: true },
     },
   },
 }, {

@@ -36,6 +36,9 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const pullStartY = useRef(0);
   const [pullDistance, setPullDistance] = useState(0);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   const formatTimestamp = useCallback((date: string | Date) => {
     if (!date) return "";
@@ -101,9 +104,48 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
 
   useEffect(() => {
     fetchMessages();
-    // Auto refresh every 30 seconds
-    const interval = setInterval(fetchMessages, 30000);
-    return () => clearInterval(interval);
+  }, [fetchMessages]);
+
+  useEffect(() => {
+    const connectSSE = () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+
+      const source = new EventSource("/api/dms/stream");
+      eventSourceRef.current = source;
+
+      source.onopen = () => {
+        reconnectAttemptsRef.current = 0;
+      };
+
+      source.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "connected" || data.type === "ping") return;
+          if (data.type === "dm:list:update") {
+            fetchMessages();
+          }
+        } catch {
+          // ignore malformed events
+        }
+      };
+
+      source.onerror = () => {
+        source.close();
+        const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+        reconnectAttemptsRef.current += 1;
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = setTimeout(connectSSE, backoffMs);
+      };
+    };
+
+    connectSSE();
+
+    return () => {
+      if (eventSourceRef.current) eventSourceRef.current.close();
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    };
   }, [fetchMessages]);
 
   const handleRefresh = useCallback(async () => {
@@ -300,8 +342,16 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
       >
         <div className="px-3 pb-28 pt-2">
           {isLoading ? (
-            <div className="flex items-center justify-center py-20">
-              <div className="w-8 h-8 border-3 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
+            <div className="space-y-3 p-2">
+              {Array.from({ length: 8 }).map((_, i) => (
+                <div key={i} className="flex items-center gap-3 p-2">
+                  <div className="w-12 h-12 rounded-full bg-[#1a1a1a] animate-pulse" />
+                  <div className="flex-1 space-y-2">
+                    <div className="h-4 w-28 rounded bg-[#1a1a1a] animate-pulse" />
+                    <div className="h-3 w-48 rounded bg-[#1a1a1a] animate-pulse" />
+                  </div>
+                </div>
+              ))}
             </div>
           ) : filteredMessages.length === 0 && searchQuery ? (
             <div className="flex flex-col items-center justify-center py-20 px-6 text-center">

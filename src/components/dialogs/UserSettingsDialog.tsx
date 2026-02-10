@@ -29,7 +29,6 @@ import {
   Smartphone,
   MessageSquare,
   Lock,
-  Eye,
   Volume2,
   Image,
   Plug,
@@ -87,6 +86,12 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
+  const [userSettings, setUserSettings] = useState<Record<string, any> | null>(null);
+  const [isLoadingSettings, setIsLoadingSettings] = useState(false);
+  const [isSavingSettings, setIsSavingSettings] = useState<string | null>(null);
+  const [authorizedApps, setAuthorizedApps] = useState<any[]>([]);
+  const [deviceSessions, setDeviceSessions] = useState<any[]>([]);
+  const [userConnections, setUserConnections] = useState<any[]>([]);
 
   // Avatar/Banner upload state
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -170,6 +175,68 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       setStatus(user.status || "online");
     }
   }, [user]);
+
+  const fetchUserSettings = async () => {
+    setIsLoadingSettings(true);
+    try {
+      const [settingsRes, appsRes, devicesRes, connectionsRes] = await Promise.all([
+        fetch("/api/users/me/settings"),
+        fetch("/api/users/me/authorized-apps"),
+        fetch("/api/users/me/devices"),
+        fetch("/api/users/me/connections"),
+      ]);
+
+      if (settingsRes.ok) {
+        const data = await settingsRes.json();
+        setUserSettings(data.settings || {});
+      }
+      if (appsRes.ok) {
+        const data = await appsRes.json();
+        setAuthorizedApps(data.apps || []);
+      }
+      if (devicesRes.ok) {
+        const data = await devicesRes.json();
+        setDeviceSessions(data.devices || []);
+      }
+      if (connectionsRes.ok) {
+        const data = await connectionsRes.json();
+        setUserConnections(data.connections || []);
+      }
+    } catch (error) {
+      console.error("Failed to fetch user settings:", error);
+    } finally {
+      setIsLoadingSettings(false);
+    }
+  };
+
+  const saveSettingsPatch = async (patch: Record<string, any>, sectionLabel: string) => {
+    setIsSavingSettings(sectionLabel);
+    try {
+      const response = await fetch("/api/users/me/settings", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ settings: patch }),
+      });
+
+      if (response.ok) {
+        setUserSettings((prev) => ({ ...(prev || {}), ...patch }));
+        toast.success("Settings saved");
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to save settings");
+      }
+    } catch (error) {
+      console.error("Failed to save settings:", error);
+      toast.error("Failed to save settings");
+    } finally {
+      setIsSavingSettings(null);
+    }
+  };
+
+  useEffect(() => {
+    if (!open) return;
+    fetchUserSettings();
+  }, [open]);
 
   // Track changes
   useEffect(() => {
@@ -998,6 +1065,32 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               {activeTab === "appearance" && (
                 <div className="space-y-6">
                   <h2 className="text-xl font-bold text-white">Appearance</h2>
+
+                  {userSettings && (
+                    <div className="bg-[#0a0a0a] rounded-lg p-5 space-y-4 border border-[#1a1a1a]">
+                      <div>
+                        <label className="block text-sm text-[#888888] mb-2">Theme style</label>
+                        <select
+                          value={userSettings.appearance?.themeStyle || "dark"}
+                          onChange={(e) => saveSettingsPatch({ appearance: { ...(userSettings.appearance || {}), themeStyle: e.target.value } }, "appearance")}
+                          className="w-full bg-[#111111] border border-[#222222] rounded-md px-3 py-2 text-white"
+                        >
+                          <option value="dark">Dark</option>
+                          <option value="midnight">Midnight</option>
+                          <option value="light">Light</option>
+                        </select>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-white">Compact mode</span>
+                        <input
+                          type="checkbox"
+                          checked={Boolean(userSettings.appearance?.compactMode)}
+                          onChange={(e) => saveSettingsPatch({ appearance: { ...(userSettings.appearance || {}), compactMode: e.target.checked } }, "appearance")}
+                          className="w-4 h-4 accent-[#8B5CF6]"
+                        />
+                      </div>
+                    </div>
+                  )}
                   
                   {/* Theme Selection */}
                   <div className="bg-[#0a0a0a] rounded-lg p-5">
@@ -1174,9 +1267,39 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         <p className="text-sm text-[#b5bac1]">Configure microphone and audio output</p>
                       </div>
                     </div>
-                    <p className="text-[#666666] text-sm">
-                      Voice and video settings will be available once voice chat is implemented.
-                    </p>
+                    {isLoadingSettings || !userSettings ? (
+                      <div className="text-[#666666] text-sm">Loading settings...</div>
+                    ) : (
+                      <div className="space-y-3">
+                        <label className="flex items-center justify-between">
+                          <span className="text-white">Noise suppression</span>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(userSettings.voiceVideo?.noiseSuppression)}
+                            onChange={(e) => saveSettingsPatch({ voiceVideo: { ...(userSettings.voiceVideo || {}), noiseSuppression: e.target.checked } }, "voice-video")}
+                            className="w-4 h-4 accent-[#8B5CF6]"
+                          />
+                        </label>
+                        <label className="flex items-center justify-between">
+                          <span className="text-white">Echo cancellation</span>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(userSettings.voiceVideo?.echoCancellation)}
+                            onChange={(e) => saveSettingsPatch({ voiceVideo: { ...(userSettings.voiceVideo || {}), echoCancellation: e.target.checked } }, "voice-video")}
+                            className="w-4 h-4 accent-[#8B5CF6]"
+                          />
+                        </label>
+                        <label className="flex items-center justify-between">
+                          <span className="text-white">Push to talk</span>
+                          <input
+                            type="checkbox"
+                            checked={Boolean(userSettings.voiceVideo?.pushToTalk)}
+                            onChange={(e) => saveSettingsPatch({ voiceVideo: { ...(userSettings.voiceVideo || {}), pushToTalk: e.target.checked } }, "voice-video")}
+                            className="w-4 h-4 accent-[#8B5CF6]"
+                          />
+                        </label>
+                      </div>
+                    )}
                   </div>
                 </div>
               )}
@@ -1192,21 +1315,36 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                           <p className="text-white font-medium">Enable Desktop Notifications</p>
                           <p className="text-sm text-[#b5bac1]">Receive notifications on your desktop</p>
                         </div>
-                        <input type="checkbox" className="w-5 h-5 accent-[#8B5CF6]" defaultChecked />
+                        <input
+                          type="checkbox"
+                          className="w-5 h-5 accent-[#8B5CF6]"
+                          checked={Boolean(userSettings?.notifications?.desktop)}
+                          onChange={(e) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), desktop: e.target.checked } }, "notifications")}
+                        />
                       </label>
                       <label className="flex items-center justify-between cursor-pointer">
                         <div>
                           <p className="text-white font-medium">Message Sounds</p>
                           <p className="text-sm text-[#b5bac1]">Play a sound for new messages</p>
                         </div>
-                        <input type="checkbox" className="w-5 h-5 accent-[#8B5CF6]" defaultChecked />
+                        <input
+                          type="checkbox"
+                          className="w-5 h-5 accent-[#8B5CF6]"
+                          checked={Boolean(userSettings?.notifications?.sounds)}
+                          onChange={(e) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), sounds: e.target.checked } }, "notifications")}
+                        />
                       </label>
                       <label className="flex items-center justify-between cursor-pointer">
                         <div>
                           <p className="text-white font-medium">Mute @everyone and @here</p>
                           <p className="text-sm text-[#b5bac1]">Suppress notifications from @everyone and @here</p>
                         </div>
-                        <input type="checkbox" className="w-5 h-5 accent-[#8B5CF6]" />
+                        <input
+                          type="checkbox"
+                          className="w-5 h-5 accent-[#8B5CF6]"
+                          checked={Boolean(userSettings?.notifications?.muteEveryone)}
+                          onChange={(e) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), muteEveryone: e.target.checked } }, "notifications")}
+                        />
                       </label>
                     </div>
                   </div>
@@ -1219,13 +1357,208 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                   <h2 className="text-xl font-bold text-white mb-5 capitalize">
                     {activeTab.replace(/-/g, " ")}
                   </h2>
-                  <div className="bg-[#0a0a0a] rounded-lg p-8 text-center">
-                    <Eye className="w-12 h-12 text-[#555555] mx-auto mb-3" />
-                    <h3 className="text-lg font-bold text-white mb-2">Coming Soon</h3>
-                    <p className="text-[#b5bac1] text-sm max-w-md mx-auto">
-                      This settings page is under development.
-                    </p>
-                  </div>
+                  {isLoadingSettings || !userSettings ? (
+                    <div className="bg-[#0a0a0a] rounded-lg p-8 text-center">
+                      <Loader2 className="w-6 h-6 animate-spin text-[#8B5CF6] mx-auto" />
+                    </div>
+                  ) : activeTab === "authorized-apps" ? (
+                    <div className="space-y-2">
+                      {authorizedApps.length === 0 ? (
+                        <div className="bg-[#0a0a0a] rounded-lg p-6 text-center text-[#888888] text-sm">
+                          No authorized apps connected.
+                        </div>
+                      ) : authorizedApps.map((app) => (
+                        <div key={app._id} className="bg-[#0a0a0a] rounded-lg p-4 flex items-center justify-between">
+                          <div>
+                            <p className="text-white font-medium">{app.name}</p>
+                            <p className="text-xs text-[#888888]">{app.description || "No description"}</p>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              const response = await fetch(`/api/users/me/authorized-apps/${app._id}`, { method: "DELETE" });
+                              if (response.ok) {
+                                setAuthorizedApps((prev) => prev.filter((item) => item._id !== app._id));
+                                toast.success("App access revoked");
+                              } else {
+                                toast.error("Failed to revoke app");
+                              }
+                            }}
+                            className="px-3 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                          >
+                            Revoke
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : activeTab === "devices" ? (
+                    <div className="space-y-2">
+                      {deviceSessions.map((device) => (
+                        <div key={device._id} className="bg-[#0a0a0a] rounded-lg p-4 flex items-center justify-between">
+                          <div>
+                            <p className="text-white text-sm">{device.deviceName}</p>
+                            <p className="text-xs text-[#888888]">{device.platform} • {new Date(device.lastActiveAt).toLocaleString()}</p>
+                          </div>
+                          {!device.current && (
+                            <button
+                              onClick={async () => {
+                                const response = await fetch(`/api/users/me/devices/${device._id}`, { method: "DELETE" });
+                                if (response.ok) {
+                                  setDeviceSessions((prev) => prev.filter((item) => item._id !== device._id));
+                                  toast.success("Device revoked");
+                                } else {
+                                  toast.error("Failed to revoke device");
+                                }
+                              }}
+                              className="px-3 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  ) : activeTab === "connections" ? (
+                    <div className="space-y-2">
+                      {userConnections.length === 0 ? (
+                        <div className="bg-[#0a0a0a] rounded-lg p-6 text-center text-[#888888] text-sm">
+                          No social connections added.
+                        </div>
+                      ) : userConnections.map((connection) => (
+                        <div key={connection._id} className="bg-[#0a0a0a] rounded-lg p-4 flex items-center justify-between">
+                          <div>
+                            <p className="text-white capitalize">{connection.provider}</p>
+                            <p className="text-xs text-[#888888]">{connection.displayName || connection.username || connection.accountId}</p>
+                          </div>
+                          <button
+                            onClick={async () => {
+                              const response = await fetch(`/api/users/me/connections/${connection._id}`, { method: "DELETE" });
+                              if (response.ok) {
+                                setUserConnections((prev) => prev.filter((item) => item._id !== connection._id));
+                                toast.success("Connection removed");
+                              } else {
+                                toast.error("Failed to remove connection");
+                              }
+                            }}
+                            className="px-3 py-1.5 rounded bg-red-500/10 text-red-400 hover:bg-red-500/20"
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-4 bg-[#0a0a0a] rounded-lg p-5">
+                      {(activeTab === "content-social" || activeTab === "data-privacy") && (
+                        <>
+                          <label className="block text-sm text-[#888888]">Sensitive Content Filter</label>
+                          <select
+                            value={userSettings.contentSocial?.explicitFilter || "moderate"}
+                            onChange={(e) => saveSettingsPatch({ contentSocial: { ...(userSettings.contentSocial || {}), explicitFilter: e.target.value } }, "content-social")}
+                            className="w-full bg-[#111111] border border-[#222222] rounded-md px-3 py-2 text-white"
+                          >
+                            <option value="disabled">Disabled</option>
+                            <option value="moderate">Moderate</option>
+                            <option value="strict">Strict</option>
+                          </select>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Show sensitive media</span>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(userSettings.contentSocial?.showSensitiveMedia)}
+                              onChange={(e) => saveSettingsPatch({ contentSocial: { ...(userSettings.contentSocial || {}), showSensitiveMedia: e.target.checked } }, "content-social")}
+                              className="w-4 h-4 accent-[#8B5CF6]"
+                            />
+                          </label>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Allow data personalization</span>
+                            <input
+                              type="checkbox"
+                              checked={Boolean(userSettings.dataPrivacy?.allowPersonalization)}
+                              onChange={(e) => saveSettingsPatch({ dataPrivacy: { ...(userSettings.dataPrivacy || {}), allowPersonalization: e.target.checked } }, "data-privacy")}
+                              className="w-4 h-4 accent-[#8B5CF6]"
+                            />
+                          </label>
+                        </>
+                      )}
+
+                      {activeTab === "friend-requests" && (
+                        <>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Allow everyone</span>
+                            <input type="checkbox" checked={Boolean(userSettings.friendRequests?.allowEveryone)} onChange={(e) => saveSettingsPatch({ friendRequests: { ...(userSettings.friendRequests || {}), allowEveryone: e.target.checked } }, "friend-requests")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Allow friends of friends</span>
+                            <input type="checkbox" checked={Boolean(userSettings.friendRequests?.allowFriendsOfFriends)} onChange={(e) => saveSettingsPatch({ friendRequests: { ...(userSettings.friendRequests || {}), allowFriendsOfFriends: e.target.checked } }, "friend-requests")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Allow server members</span>
+                            <input type="checkbox" checked={Boolean(userSettings.friendRequests?.allowServerMembers)} onChange={(e) => saveSettingsPatch({ friendRequests: { ...(userSettings.friendRequests || {}), allowServerMembers: e.target.checked } }, "friend-requests")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                        </>
+                      )}
+
+                      {activeTab === "accessibility" && (
+                        <>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Reduced motion</span>
+                            <input type="checkbox" checked={Boolean(userSettings.accessibility?.reducedMotion)} onChange={(e) => saveSettingsPatch({ accessibility: { ...(userSettings.accessibility || {}), reducedMotion: e.target.checked } }, "accessibility")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">High contrast</span>
+                            <input type="checkbox" checked={Boolean(userSettings.accessibility?.highContrast)} onChange={(e) => saveSettingsPatch({ accessibility: { ...(userSettings.accessibility || {}), highContrast: e.target.checked } }, "accessibility")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                        </>
+                      )}
+
+                      {activeTab === "text-images" && (
+                        <>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Inline media</span>
+                            <input type="checkbox" checked={Boolean(userSettings.textImages?.inlineMedia)} onChange={(e) => saveSettingsPatch({ textImages: { ...(userSettings.textImages || {}), inlineMedia: e.target.checked } }, "text-images")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Inline embeds</span>
+                            <input type="checkbox" checked={Boolean(userSettings.textImages?.inlineEmbeds)} onChange={(e) => saveSettingsPatch({ textImages: { ...(userSettings.textImages || {}), inlineEmbeds: e.target.checked } }, "text-images")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">GIF autoplay</span>
+                            <input type="checkbox" checked={Boolean(userSettings.textImages?.gifAutoplay)} onChange={(e) => saveSettingsPatch({ textImages: { ...(userSettings.textImages || {}), gifAutoplay: e.target.checked } }, "text-images")} className="w-4 h-4 accent-[#8B5CF6]" />
+                          </label>
+                        </>
+                      )}
+
+                      {activeTab === "keybinds" && (
+                        <>
+                          <label className="block text-sm text-[#888888]">Preset</label>
+                          <select
+                            value={userSettings.keybinds?.preset || "default"}
+                            onChange={(e) => saveSettingsPatch({ keybinds: { ...(userSettings.keybinds || {}), preset: e.target.value } }, "keybinds")}
+                            className="w-full bg-[#111111] border border-[#222222] rounded-md px-3 py-2 text-white"
+                          >
+                            <option value="default">Default</option>
+                            <option value="gaming">Gaming</option>
+                            <option value="vim">Vim-style</option>
+                          </select>
+                        </>
+                      )}
+
+                      {activeTab === "language" && (
+                        <>
+                          <label className="block text-sm text-[#888888]">Locale</label>
+                          <input
+                            defaultValue={userSettings.language?.locale || "en-US"}
+                            onBlur={(e) => saveSettingsPatch({ language: { ...(userSettings.language || {}), locale: e.target.value } }, "language")}
+                            className="w-full bg-[#111111] border border-[#222222] rounded-md px-3 py-2 text-white"
+                          />
+                        </>
+                      )}
+
+                      <div className="text-xs text-[#666666]">
+                        {isSavingSettings ? `Saving ${isSavingSettings}...` : "Changes are saved instantly."}
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 

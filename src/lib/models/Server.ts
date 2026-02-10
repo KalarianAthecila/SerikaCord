@@ -15,6 +15,32 @@ export interface IServer extends Document {
   publicUpdatesChannelId?: Types.ObjectId;
   afkChannelId?: Types.ObjectId;
   afkTimeout: number; // in seconds
+  settings: {
+    widget: {
+      enabled: boolean;
+      channelId?: Types.ObjectId;
+    };
+    moderation: {
+      verificationLevel: 'none' | 'low' | 'medium' | 'high' | 'very_high';
+      explicitContentFilter: 'disabled' | 'members_without_roles' | 'all_members';
+      require2FA: boolean;
+    };
+    safety: {
+      raidProtection: boolean;
+      antiSpam: boolean;
+      mentionSpamLimit: number;
+    };
+    integrations: {
+      discord: boolean;
+      twitch: boolean;
+      youtube: boolean;
+      webhooks: boolean;
+    };
+    soundboard: {
+      enabled: boolean;
+      volume: number;
+    };
+  };
   
   // Features
   features: string[];
@@ -116,6 +142,43 @@ const ServerSchema = new Schema<IServer>({
     type: Number,
     default: 300, // 5 minutes
     enum: [60, 300, 900, 1800, 3600], // 1, 5, 15, 30, 60 minutes
+  },
+  settings: {
+    widget: {
+      enabled: { type: Boolean, default: true },
+      channelId: { type: Schema.Types.ObjectId, ref: 'Channel', default: null },
+    },
+    moderation: {
+      verificationLevel: {
+        type: String,
+        enum: ['none', 'low', 'medium', 'high', 'very_high'],
+        default: 'none',
+      },
+      explicitContentFilter: {
+        type: String,
+        enum: ['disabled', 'members_without_roles', 'all_members'],
+        default: 'disabled',
+      },
+      require2FA: {
+        type: Boolean,
+        default: false,
+      },
+    },
+    safety: {
+      raidProtection: { type: Boolean, default: false },
+      antiSpam: { type: Boolean, default: true },
+      mentionSpamLimit: { type: Number, default: 5 },
+    },
+    integrations: {
+      discord: { type: Boolean, default: false },
+      twitch: { type: Boolean, default: false },
+      youtube: { type: Boolean, default: false },
+      webhooks: { type: Boolean, default: false },
+    },
+    soundboard: {
+      enabled: { type: Boolean, default: true },
+      volume: { type: Number, default: 100 },
+    },
   },
   features: [{
     type: String,

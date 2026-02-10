@@ -8,6 +8,8 @@ interface CustomEmoji {
   id: string;
   name: string;
   url: string;
+  imageUrl?: string;
+  _id?: string;
   serverId?: string;
   animated?: boolean;
 }
@@ -65,7 +67,7 @@ export function MessageContent({ content, serverEmojis = [], className, edited, 
       return { parts: [], customEmojiCount: 0 };
     }
 
-    const customEmojiRegex = /:([a-zA-Z0-9_]+):/g;
+    const customEmojiRegex = /<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>|:([a-zA-Z0-9_]+):/gi;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const parts: Array<{ type: "text" | "custom-emoji" | "image" | "link"; content: string; emoji?: CustomEmoji; url?: string }> = [];
     
@@ -107,8 +109,13 @@ export function MessageContent({ content, serverEmojis = [], className, edited, 
             parts.push({ type: "text", content: textContent.slice(textLastIndex, emojiMatch.index) });
           }
 
-          const emojiName = emojiMatch[1];
-          const foundEmoji = serverEmojis.find(e => e.name.toLowerCase() === emojiName.toLowerCase());
+          const emojiName = (emojiMatch[2] || emojiMatch[4] || "").toLowerCase();
+          const emojiId = emojiMatch[3];
+          const foundEmoji = serverEmojis.find((e) => {
+            const normalizedName = e.name?.toLowerCase?.() || "";
+            const normalizedId = e.id || (e as any)._id;
+            return normalizedName === emojiName || (emojiId && normalizedId === emojiId);
+          });
 
           if (foundEmoji) {
             parts.push({ type: "custom-emoji", content: emojiMatch[0], emoji: foundEmoji });
@@ -180,7 +187,7 @@ export function MessageContent({ content, serverEmojis = [], className, edited, 
           return (
             <img
               key={`emoji-${index}-${part.emoji.id}`}
-              src={part.emoji.url}
+              src={part.emoji.url || part.emoji.imageUrl}
               alt={`:${part.emoji.name}:`}
               title={`:${part.emoji.name}:`}
               className={cn(

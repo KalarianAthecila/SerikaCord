@@ -77,6 +77,13 @@ export const config = {
   MAX_CHANNELS_PER_SERVER: parseInt(process.env.MAX_CHANNELS_PER_SERVER || '500'),
   MAX_ROLES_PER_SERVER: parseInt(process.env.MAX_ROLES_PER_SERVER || '250'),
   MAX_MEMBERS_PER_SERVER: parseInt(process.env.MAX_MEMBERS_PER_SERVER || '250000'),
+
+  // Feature flags
+  FEATURE_FLAGS: {
+    realtime_ws_enabled: (process.env.FEATURE_REALTIME_WS_ENABLED || 'true') === 'true',
+    settings_v2_enabled: (process.env.FEATURE_SETTINGS_V2_ENABLED || 'true') === 'true',
+    voice_video_enabled: (process.env.FEATURE_VOICE_VIDEO_ENABLED || 'false') === 'true',
+  },
 } as const;
 
 export type Config = typeof config;

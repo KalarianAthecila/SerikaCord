@@ -5,7 +5,7 @@ import { config } from '@/lib/config';
 import { connectDB } from '@/lib/db';
 import { authenticateRequest, invalidateUserCache } from '@/lib/services/auth';
 import { checkRateLimit, getClientIP } from '@/lib/security';
-import { User, type IUser } from '@/lib/models';
+import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection } from '@/lib/models';
 import { authRoutes } from './auth';
 import { serverRoutes, inviteRoutes } from './servers';
 import { channelRoutes } from './channels';
@@ -14,6 +14,7 @@ import { dmRoutes } from './dms';
 import { adminRoutes } from './admin';
 import { oembedRoutes } from './oembed';
 import { experimentRoutes, instanceRoutes } from './experiments';
+import { voiceRoutes } from './voice';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
 import { Types } from 'mongoose';
 
@@ -33,6 +34,112 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
     cookies.auth_token = authToken;
   }
   return authenticateRequest(authHeader, cookies);
+}
+
+function getDefaultUserSettings() {
+  return {
+    theme: 'dark',
+    locale: 'en-US',
+    appearance: {
+      themeStyle: 'dark',
+      accentColor: '#8B5CF6',
+      fontSize: 14,
+      compactMode: false,
+      showRoleColors: true,
+      enableAnimations: true,
+      saturation: 100,
+    },
+    notifications: {
+      desktop: true,
+      sounds: true,
+      mentions: true,
+      directMessages: true,
+      friendRequests: true,
+      muteEveryone: false,
+    },
+    privacy: {
+      directMessages: 'everyone',
+      friendRequests: 'everyone',
+      showActivity: true,
+      allowDataCollection: true,
+    },
+    accessibility: {
+      reducedMotion: false,
+      highContrast: false,
+      dyslexicFont: false,
+      messageSpacing: 'cozy',
+    },
+    voiceVideo: {
+      inputVolume: 100,
+      outputVolume: 100,
+      noiseSuppression: true,
+      echoCancellation: true,
+      autoGainControl: true,
+      pushToTalk: false,
+      pushToTalkKey: 'V',
+    },
+    textImages: {
+      inlineMedia: true,
+      inlineEmbeds: true,
+      gifAutoplay: true,
+      emojiPicker: true,
+      stickerSuggestions: true,
+    },
+    keybinds: {
+      enabled: true,
+      preset: 'default',
+      custom: {},
+    },
+    language: {
+      locale: 'en-US',
+      spellcheck: true,
+    },
+    friendRequests: {
+      allowEveryone: true,
+      allowFriendsOfFriends: true,
+      allowServerMembers: true,
+    },
+    contentSocial: {
+      explicitFilter: 'moderate',
+      showSensitiveMedia: false,
+    },
+    dataPrivacy: {
+      allowPersonalization: true,
+      allowCrashReports: true,
+    },
+  } as Record<string, any>;
+}
+
+function mergeDeep<T extends Record<string, any>>(base: T, patch: Record<string, any>): T {
+  const output = { ...base } as Record<string, any>;
+  for (const [key, value] of Object.entries(patch || {})) {
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      output[key] = mergeDeep((output[key] || {}) as Record<string, any>, value);
+    } else if (value !== undefined) {
+      output[key] = value;
+    }
+  }
+  return output as T;
+}
+
+const activeFriendStreamConnections = new Map<string, Set<ReadableStreamDefaultController>>();
+
+function emitFriendEvent(userIds: string[], payload: Record<string, unknown>) {
+  const encoded = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+  for (const userId of userIds) {
+    const streams = activeFriendStreamConnections.get(userId);
+    if (!streams) continue;
+    streams.forEach((controller) => {
+      try {
+        controller.enqueue(encoded);
+      } catch {
+        streams.delete(controller);
+      }
+    });
+    if (streams.size === 0) {
+      activeFriendStreamConnections.delete(userId);
+    }
+  }
 }
 
 // Rate limiting middleware
@@ -166,7 +273,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
         return { error: 'User not found in local database' };
       }
 
-      const { displayName, bio, pronouns, customStatus, status, settings } = body;
+      const { displayName, bio, pronouns, customStatus, status, settings } = body as Record<string, any>;
+      const prevStatus = user.status;
 
       if (displayName !== undefined) user.displayName = displayName;
       if (bio !== undefined) user.bio = bio;
@@ -174,38 +282,26 @@ const userRoutes = new Elysia({ prefix: '/users' })
       if (customStatus !== undefined) user.customStatus = customStatus;
       if (status !== undefined) user.status = status;
       if (settings !== undefined) {
-        // Deep merge settings preserving existing values
-        const currentSettings = user.settings || {
-          theme: 'dark',
-          locale: 'en-US',
-          notifications: { desktop: true, sounds: true, mentions: true },
-          privacy: { directMessages: 'everyone', friendRequests: 'everyone' },
-        };
-        user.settings = {
-          theme: settings.theme ?? currentSettings.theme,
-          locale: settings.locale ?? currentSettings.locale,
-          notifications: {
-            desktop: settings.notifications?.desktop !== undefined 
-              ? settings.notifications.desktop 
-              : currentSettings.notifications?.desktop ?? true,
-            sounds: settings.notifications?.sounds !== undefined 
-              ? settings.notifications.sounds 
-              : currentSettings.notifications?.sounds ?? true,
-            mentions: settings.notifications?.mentions !== undefined 
-              ? settings.notifications.mentions 
-              : currentSettings.notifications?.mentions ?? true,
-          },
-          privacy: {
-            directMessages: settings.privacy?.directMessages ?? currentSettings.privacy?.directMessages ?? 'everyone',
-            friendRequests: settings.privacy?.friendRequests ?? currentSettings.privacy?.friendRequests ?? 'everyone',
-          },
-        };
+        const currentSettings = mergeDeep(getDefaultUserSettings(), (user.settings || {}) as Record<string, any>);
+        user.settings = mergeDeep(currentSettings, settings) as any;
       }
 
       await user.save();
       
       // Invalidate user cache so fresh data is fetched
       await invalidateUserCache(userId.toString());
+
+      if (status !== undefined && status !== prevStatus) {
+        const friendIds = (user.friends || []).map((f: Types.ObjectId | string) =>
+          f instanceof Types.ObjectId ? f.toString() : f
+        );
+        emitFriendEvent(friendIds, {
+          type: 'presence:update',
+          userId: user._id.toString(),
+          status: user.status,
+          timestamp: Date.now(),
+        });
+      }
 
       return { success: true, user };
     } catch (error) {
@@ -223,33 +319,216 @@ const userRoutes = new Elysia({ prefix: '/users' })
         t.Literal('online'),
         t.Literal('idle'),
         t.Literal('dnd'),
+        t.Literal('offline'),
         t.Literal('invisible'),
       ])),
-      settings: t.Optional(t.Object({
-        theme: t.Optional(t.Union([
-          t.Literal('dark'),
-          t.Literal('light'),
-          t.Literal('system'),
-        ])),
-        locale: t.Optional(t.String()),
-        notifications: t.Optional(t.Object({
-          desktop: t.Optional(t.Boolean()),
-          sounds: t.Optional(t.Boolean()),
-          mentions: t.Optional(t.Boolean()),
-        })),
-        privacy: t.Optional(t.Object({
-          directMessages: t.Optional(t.Union([
-            t.Literal('everyone'),
-            t.Literal('friends'),
-            t.Literal('servers'),
-          ])),
-          friendRequests: t.Optional(t.Union([
-            t.Literal('everyone'),
-            t.Literal('friends'),
-            t.Literal('none'),
-          ])),
-        })),
-      })),
+      settings: t.Optional(t.Object({}, { additionalProperties: true })),
+    }),
+  })
+  .get('/me/settings', async ({ headers, cookie, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const user = await User.findById(authUser._id || (authUser as unknown as { id: string }).id);
+    if (!user) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    return {
+      settings: mergeDeep(getDefaultUserSettings(), (user.settings || {}) as Record<string, any>),
+    };
+  })
+  .patch('/me/settings', async ({ headers, cookie, body, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const user = await User.findById(authUser._id || (authUser as unknown as { id: string }).id);
+    if (!user) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    const payload = body as Record<string, any>;
+    const currentSettings = mergeDeep(getDefaultUserSettings(), (user.settings || {}) as Record<string, any>);
+
+    let patch: Record<string, any> = payload;
+    if (payload.section && payload.value !== undefined) {
+      patch = { [payload.section]: payload.value };
+    } else if (payload.settings && typeof payload.settings === 'object') {
+      patch = payload.settings;
+    }
+
+    user.settings = mergeDeep(currentSettings, patch) as any;
+    await user.save();
+    await invalidateUserCache(user._id.toString());
+
+    return {
+      success: true,
+      settings: user.settings,
+    };
+  }, {
+    body: t.Object({}, { additionalProperties: true }),
+  })
+  .get('/me/authorized-apps', async ({ headers, cookie, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const apps = await AuthorizedApp.find({ userId: authUser._id }).sort({ updatedAt: -1 });
+    return { apps };
+  })
+  .post('/me/authorized-apps', async ({ headers, cookie, body, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const payload = body as Record<string, any>;
+    const app = await AuthorizedApp.create({
+      userId: authUser._id,
+      name: payload.name,
+      description: payload.description || null,
+      icon: payload.icon || null,
+      scopes: Array.isArray(payload.scopes) ? payload.scopes : [],
+      approvedAt: new Date(),
+      lastUsedAt: new Date(),
+    });
+
+    return { app };
+  }, {
+    body: t.Object({
+      name: t.String({ minLength: 2, maxLength: 120 }),
+      description: t.Optional(t.String({ maxLength: 300 })),
+      icon: t.Optional(t.String()),
+      scopes: t.Optional(t.Array(t.String())),
+    }),
+  })
+  .delete('/me/authorized-apps/:appId', async ({ headers, cookie, params, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    await AuthorizedApp.deleteOne({ _id: params.appId, userId: authUser._id });
+    return { success: true };
+  }, {
+    params: t.Object({
+      appId: t.String(),
+    }),
+  })
+  .get('/me/devices', async ({ headers, cookie, set, request }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const userAgent = request.headers.get('user-agent') || 'Unknown Device';
+    const existingCurrent = await UserDeviceSession.findOne({ userId: authUser._id, current: true });
+    if (!existingCurrent) {
+      await UserDeviceSession.create({
+        userId: authUser._id,
+        deviceName: userAgent.slice(0, 120),
+        platform: userAgent.includes('Mobile') ? 'Mobile' : 'Desktop',
+        browser: userAgent.slice(0, 80),
+        ipAddress: getClientIP(request),
+        current: true,
+        lastActiveAt: new Date(),
+      });
+    } else {
+      existingCurrent.lastActiveAt = new Date();
+      await existingCurrent.save();
+    }
+
+    const devices = await UserDeviceSession.find({ userId: authUser._id }).sort({ lastActiveAt: -1 });
+    return { devices };
+  })
+  .delete('/me/devices/:deviceId', async ({ headers, cookie, params, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    await UserDeviceSession.deleteOne({ _id: params.deviceId, userId: authUser._id, current: false });
+    return { success: true };
+  }, {
+    params: t.Object({
+      deviceId: t.String(),
+    }),
+  })
+  .get('/me/connections', async ({ headers, cookie, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const connections = await UserConnection.find({ userId: authUser._id }).sort({ createdAt: -1 });
+    return { connections };
+  })
+  .post('/me/connections', async ({ headers, cookie, body, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const payload = body as Record<string, any>;
+    const connection = await UserConnection.findOneAndUpdate(
+      { userId: authUser._id, provider: payload.provider, accountId: payload.accountId },
+      {
+        $set: {
+          username: payload.username || null,
+          displayName: payload.displayName || null,
+          avatar: payload.avatar || null,
+          metadata: payload.metadata || null,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    return { connection };
+  }, {
+    body: t.Object({
+      provider: t.Union([
+        t.Literal('discord'),
+        t.Literal('twitch'),
+        t.Literal('youtube'),
+        t.Literal('github'),
+        t.Literal('spotify'),
+        t.Literal('website'),
+      ]),
+      accountId: t.String({ minLength: 1 }),
+      username: t.Optional(t.String()),
+      displayName: t.Optional(t.String()),
+      avatar: t.Optional(t.String()),
+      metadata: t.Optional(t.Object({}, { additionalProperties: true })),
+    }),
+  })
+  .delete('/me/connections/:connectionId', async ({ headers, cookie, params, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    await UserConnection.deleteOne({ _id: params.connectionId, userId: authUser._id });
+    return { success: true };
+  }, {
+    params: t.Object({
+      connectionId: t.String(),
     }),
   })
   .get('/:userId', async ({ params, set }) => {
@@ -336,6 +615,57 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
         avatar: u.avatar,
       })),
     };
+  })
+  .get('/stream', async ({ headers, cookie }) => {
+    const sseHeaders = {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache, no-store, must-revalidate',
+      'Connection': 'keep-alive',
+      'X-Accel-Buffering': 'no',
+    };
+
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      const errorStream = new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.close();
+        },
+      });
+      return new Response(errorStream, { headers: sseHeaders });
+    }
+
+    let controllerRef: ReadableStreamDefaultController | null = null;
+    let pingInterval: NodeJS.Timeout | null = null;
+    const userKey = user._id.toString();
+
+    const stream = new ReadableStream({
+      start(controller) {
+        controllerRef = controller;
+        if (!activeFriendStreamConnections.has(userKey)) {
+          activeFriendStreamConnections.set(userKey, new Set());
+        }
+        activeFriendStreamConnections.get(userKey)!.add(controller);
+        controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
+
+        pingInterval = setInterval(() => {
+          try {
+            controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
+          } catch {
+            if (pingInterval) clearInterval(pingInterval);
+            activeFriendStreamConnections.get(userKey)?.delete(controller);
+          }
+        }, 30000);
+      },
+      cancel() {
+        if (pingInterval) clearInterval(pingInterval);
+        if (controllerRef) {
+          activeFriendStreamConnections.get(userKey)?.delete(controllerRef);
+        }
+      },
+    });
+
+    return new Response(stream, { headers: sseHeaders });
   })
   // Add friend by username
   .post('/add', async ({ headers, cookie, body, request, set }) => {
@@ -425,6 +755,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       targetUser.friends.push(user._id);
 
       await Promise.all([user.save(), targetUser.save()]);
+      emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
       return { 
         success: true, 
@@ -444,6 +775,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     targetUser.pendingFriendRequests.incoming.push(user._id);
 
     await Promise.all([user.save(), targetUser.save()]);
+    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
     return { 
       success: true, 
@@ -493,6 +825,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     targetUser.friends.push(user._id);
 
     await Promise.all([user.save(), targetUser.save()]);
+    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
     return { 
       success: true, 
@@ -533,6 +866,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     );
 
     await Promise.all([user.save(), targetUser.save()]);
+    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'Friend request cancelled' };
   }, {
@@ -570,6 +904,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     );
 
     await Promise.all([user.save(), targetUser.save()]);
+    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'Friend request declined' };
   }, {
@@ -631,6 +966,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     user.blockedUsers.push(targetUser._id);
 
     await Promise.all([user.save(), targetUser.save()]);
+    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'User blocked' };
   }, {
@@ -661,6 +997,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
 
     user.blockedUsers = user.blockedUsers.filter((b: Types.ObjectId | string) => !compareIds(b, targetUser._id));
     await user.save();
+    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'User unblocked' };
   }, {
@@ -700,6 +1037,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     targetUser.friends = targetUser.friends.filter((f: Types.ObjectId | string) => !compareIds(f, user._id));
 
     await Promise.all([user.save(), targetUser.save()]);
+    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'Friend removed' };
   }, {
@@ -754,6 +1092,7 @@ export const api = new Elysia({ prefix: '/api' })
   .use(inviteRoutes)
   .use(channelRoutes)
   .use(dmRoutes)
+  .use(voiceRoutes)
   .use(uploadRoutes)
   .use(adminRoutes)
   .use(oembedRoutes)

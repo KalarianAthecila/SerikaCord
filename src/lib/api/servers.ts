@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia';
-import { Server, Channel, Role, ServerMember, Invite, ServerEmoji } from '@/lib/models';
+import { Server, Channel, Role, ServerMember, Invite, ServerEmoji, ServerSticker, ServerBan, AdminLog } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
 import { checkRateLimit, getClientIP, sanitizeInput, isValidObjectId } from '@/lib/security';
 import { cache } from '@/lib/db';
@@ -181,6 +181,12 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
+    const isBanned = await ServerBan.exists({ serverId: server._id, userId: user._id });
+    if (isBanned) {
+      set.status = 403;
+      return { error: 'You are banned from this server' };
+    }
+
     // Check if owner or has manage channels permission
     if (!server.ownerId.equals(user._id)) {
       set.status = 403;
@@ -277,6 +283,133 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       serverId: t.String(),
     }),
   })
+  // Get server settings
+  .get('/:serverId/settings', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    const membership = await ServerMember.findOne({
+      serverId: server._id,
+      userId: user._id,
+    });
+    if (!membership) {
+      set.status = 403;
+      return { error: 'You are not a member of this server' };
+    }
+
+    return {
+      settings: {
+        widget: server.settings?.widget || { enabled: true, channelId: null },
+        moderation: {
+          verificationLevel: server.settings?.moderation?.verificationLevel || server.verificationLevel,
+          explicitContentFilter: server.settings?.moderation?.explicitContentFilter || server.explicitContentFilter,
+          require2FA: server.settings?.moderation?.require2FA || false,
+        },
+        safety: server.settings?.safety || { raidProtection: false, antiSpam: true, mentionSpamLimit: 5 },
+        integrations: server.settings?.integrations || {
+          discord: false,
+          twitch: false,
+          youtube: false,
+          webhooks: false,
+        },
+        soundboard: server.settings?.soundboard || {
+          enabled: true,
+          volume: 100,
+        },
+      },
+    };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+  })
+  // Update server settings
+  .patch('/:serverId/settings', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'You do not have permission to edit this server' };
+    }
+
+    const payload = body as any;
+    const nextSettings = {
+      ...(server.settings || {}),
+      ...(payload.settings || {}),
+      widget: {
+        ...(server.settings?.widget || {}),
+        ...(payload.settings?.widget || {}),
+      },
+      moderation: {
+        ...(server.settings?.moderation || {}),
+        ...(payload.settings?.moderation || {}),
+      },
+      safety: {
+        ...(server.settings?.safety || {}),
+        ...(payload.settings?.safety || {}),
+      },
+      integrations: {
+        ...(server.settings?.integrations || {}),
+        ...(payload.settings?.integrations || {}),
+      },
+      soundboard: {
+        ...(server.settings?.soundboard || {}),
+        ...(payload.settings?.soundboard || {}),
+      },
+    } as any;
+
+    if (nextSettings.moderation?.verificationLevel) {
+      server.verificationLevel = nextSettings.moderation.verificationLevel;
+    }
+    if (nextSettings.moderation?.explicitContentFilter) {
+      server.explicitContentFilter = nextSettings.moderation.explicitContentFilter;
+    }
+
+    server.settings = nextSettings;
+    await server.save();
+    await cache.del(`server:${server._id}`);
+
+    return {
+      success: true,
+      settings: server.settings,
+    };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      settings: t.Object({}, { additionalProperties: true }),
+    }),
+  })
   // Update server
   .patch('/:serverId', async ({ headers, cookie, params, body, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -309,6 +442,35 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     if (afkTimeout !== undefined) server.afkTimeout = afkTimeout;
     if (verificationLevel !== undefined) server.verificationLevel = verificationLevel;
     if (explicitContentFilter !== undefined) server.explicitContentFilter = explicitContentFilter;
+
+    // Keep extended settings document in sync with legacy fields
+    server.settings = {
+      ...(server.settings || {}),
+      moderation: {
+        ...(server.settings?.moderation || {}),
+        verificationLevel: verificationLevel ?? server.settings?.moderation?.verificationLevel ?? server.verificationLevel,
+        explicitContentFilter: explicitContentFilter ?? server.settings?.moderation?.explicitContentFilter ?? server.explicitContentFilter,
+      },
+      widget: {
+        enabled: server.settings?.widget?.enabled ?? true,
+        channelId: server.settings?.widget?.channelId ?? null,
+      },
+      safety: {
+        raidProtection: server.settings?.safety?.raidProtection ?? false,
+        antiSpam: server.settings?.safety?.antiSpam ?? true,
+        mentionSpamLimit: server.settings?.safety?.mentionSpamLimit ?? 5,
+      },
+      integrations: {
+        discord: server.settings?.integrations?.discord ?? false,
+        twitch: server.settings?.integrations?.twitch ?? false,
+        youtube: server.settings?.integrations?.youtube ?? false,
+        webhooks: server.settings?.integrations?.webhooks ?? false,
+      },
+      soundboard: {
+        enabled: server.settings?.soundboard?.enabled ?? true,
+        volume: server.settings?.soundboard?.volume ?? 100,
+      },
+    } as any;
 
     await server.save();
 
@@ -780,8 +942,10 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    // Check if widget is enabled (for now, always enabled)
-    // You could add a server.widgetEnabled field later
+    if (server.settings?.widget?.enabled === false) {
+      set.status = 403;
+      return { error: 'Server widget is disabled' };
+    }
     
     // Get online members
     const members = await ServerMember.find({ serverId: params.serverId })
@@ -792,6 +956,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const channels = await Channel.find({ serverId: params.serverId, type: { $in: ['text', 'voice'] } })
       .select('name type')
       .limit(10);
+
+    const widgetChannelId = server.settings?.widget?.channelId?.toString();
     
     // Get an active invite
     const invite = await Invite.findOne({ 
@@ -826,6 +992,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
         id: c._id.toString(),
         name: c.name,
         type: c.type,
+        isWidgetChannel: widgetChannelId ? c._id.toString() === widgetChannelId : false,
       })),
       members: transformedMembers,
     };
@@ -957,6 +1124,121 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       emojiId: t.String(),
     }),
   })
+  // Get server stickers
+  .get('/:serverId/stickers', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const membership = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: user._id,
+    });
+
+    if (!membership) {
+      set.status = 403;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const stickers = await ServerSticker.find({ serverId: params.serverId, available: true }).sort({ createdAt: -1 });
+    return { stickers };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+  })
+  // Create server sticker
+  .post('/:serverId/stickers', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'Only the server owner can upload stickers' };
+    }
+
+    const stickerCount = await ServerSticker.countDocuments({ serverId: params.serverId });
+    const maxStickers = server.premiumTier >= 1 ? 30 : 15;
+    if (stickerCount >= maxStickers) {
+      set.status = 400;
+      return { error: `Sticker limit reached (${maxStickers})` };
+    }
+
+    const sticker = new ServerSticker({
+      serverId: params.serverId,
+      name: sanitizeInput(body.name),
+      description: body.description ? sanitizeInput(body.description) : undefined,
+      imageUrl: body.imageUrl,
+      tags: body.tags || [],
+      uploadedBy: user._id,
+    });
+    await sticker.save();
+
+    return { sticker };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      name: t.String({ minLength: 2, maxLength: 30 }),
+      imageUrl: t.String(),
+      description: t.Optional(t.String({ maxLength: 200 })),
+      tags: t.Optional(t.Array(t.String({ maxLength: 30 }))),
+    }),
+  })
+  // Delete server sticker
+  .delete('/:serverId/stickers/:stickerId', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId) || !isValidObjectId(params.stickerId)) {
+      set.status = 400;
+      return { error: 'Invalid ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'Only the server owner can delete stickers' };
+    }
+
+    await ServerSticker.deleteOne({ _id: params.stickerId, serverId: params.serverId });
+    return { success: true };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+      stickerId: t.String(),
+    }),
+  })
   // Get server invites
   .get('/:serverId/invites', async ({ headers, cookie, params, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -1066,11 +1348,98 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You do not have permission to view bans' };
     }
 
-    // TODO: Implement ban model, for now return empty
-    return { bans: [] };
+    const bans = await ServerBan.find({ serverId: params.serverId })
+      .populate('userId', 'username displayName avatar')
+      .populate('bannedBy', 'username displayName')
+      .sort({ createdAt: -1 });
+
+    return {
+      bans: bans.map((ban: any) => ({
+        id: ban.userId?._id?.toString() || ban.userId?.toString(),
+        username: ban.userId?.displayName || ban.userId?.username || 'Unknown',
+        avatar: ban.userId?.avatar,
+        reason: ban.reason,
+        bannedAt: ban.createdAt,
+        bannedBy: {
+          id: ban.bannedBy?._id?.toString() || ban.bannedBy?.toString(),
+          username: ban.bannedBy?.displayName || ban.bannedBy?.username || 'Unknown',
+        },
+      })),
+    };
   }, {
     params: t.Object({
       serverId: t.String(),
+    }),
+  })
+  // Ban user
+  .post('/:serverId/bans/:userId', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId) || !isValidObjectId(params.userId)) {
+      set.status = 400;
+      return { error: 'Invalid ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'You do not have permission to ban users' };
+    }
+
+    if (server.ownerId.toString() === params.userId) {
+      set.status = 400;
+      return { error: 'You cannot ban the server owner' };
+    }
+
+    const targetUser = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: params.userId,
+    });
+    if (!targetUser) {
+      set.status = 404;
+      return { error: 'User is not a server member' };
+    }
+
+    await ServerBan.findOneAndUpdate(
+      { serverId: params.serverId, userId: params.userId },
+      {
+        $set: {
+          bannedBy: user._id,
+          reason: body.reason || null,
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    await ServerMember.deleteOne({ serverId: params.serverId, userId: params.userId });
+    await Server.updateOne({ _id: params.serverId }, { $inc: { memberCount: -1 } });
+
+    await AdminLog.create({
+      adminId: user._id,
+      action: 'ban_user',
+      targetType: 'server',
+      targetId: params.serverId,
+      reason: body.reason || null,
+      details: { userId: params.userId },
+    });
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+      userId: t.String(),
+    }),
+    body: t.Object({
+      reason: t.Optional(t.String({ maxLength: 512 })),
     }),
   })
   // Unban user
@@ -1093,12 +1462,69 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You do not have permission to unban users' };
     }
 
-    // TODO: Implement ban removal
+    await ServerBan.deleteOne({ serverId: params.serverId, userId: params.userId });
+
+    await AdminLog.create({
+      adminId: user._id,
+      action: 'unban_user',
+      targetType: 'server',
+      targetId: params.serverId,
+      details: { userId: params.userId },
+    });
+
     return { success: true };
   }, {
     params: t.Object({
       serverId: t.String(),
       userId: t.String(),
+    }),
+  })
+  // Get server audit log
+  .get('/:serverId/audit-log', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'You do not have permission to view audit log' };
+    }
+
+    const logs = await AdminLog.find({ targetType: 'server', targetId: params.serverId })
+      .populate('adminId', 'username displayName avatar')
+      .sort({ createdAt: -1 })
+      .limit(100);
+
+    return {
+      logs: logs.map((log: any) => ({
+        id: log._id.toString(),
+        action: log.action,
+        reason: log.reason,
+        details: log.details,
+        createdAt: log.createdAt,
+        admin: {
+          id: log.adminId?._id?.toString(),
+          username: log.adminId?.displayName || log.adminId?.username || 'Unknown',
+          avatar: log.adminId?.avatar,
+        },
+      })),
+    };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
     }),
   })
   // Join server by ID (for explore page)
@@ -1212,6 +1638,12 @@ export const inviteRoutes = new Elysia({ prefix: '/invites' })
     if (!invite) {
       set.status = 404;
       return { error: 'Invite not found or expired' };
+    }
+
+    const isBanned = await ServerBan.exists({ serverId: invite.serverId, userId: user._id });
+    if (isBanned) {
+      set.status = 403;
+      return { error: 'You are banned from this server' };
     }
 
     // Check if already a member

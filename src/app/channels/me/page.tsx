@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { 
   Users, 
   Sparkles, 
@@ -87,6 +87,9 @@ export default function DirectMessagesPage() {
   }>({ type: null, message: "" });
   const [isAddingFriend, setIsAddingFriend] = useState(false);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
 
   // Fetch friends data
   const fetchFriends = useCallback(async () => {
@@ -105,9 +108,48 @@ export default function DirectMessagesPage() {
 
   useEffect(() => {
     fetchFriends();
-    // Poll for updates every 30 seconds
-    const interval = setInterval(fetchFriends, 30000);
-    return () => clearInterval(interval);
+  }, [fetchFriends]);
+
+  useEffect(() => {
+    const connectSSE = () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+
+      const source = new EventSource("/api/friends/stream");
+      eventSourceRef.current = source;
+
+      source.onopen = () => {
+        reconnectAttemptsRef.current = 0;
+      };
+
+      source.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "connected" || data.type === "ping") return;
+          if (data.type === "friends:update" || data.type === "presence:update") {
+            fetchFriends();
+          }
+        } catch {
+          // ignore malformed messages
+        }
+      };
+
+      source.onerror = () => {
+        source.close();
+        const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+        reconnectAttemptsRef.current += 1;
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        reconnectTimeoutRef.current = setTimeout(connectSSE, backoffMs);
+      };
+    };
+
+    connectSSE();
+
+    return () => {
+      if (eventSourceRef.current) eventSourceRef.current.close();
+      if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    };
   }, [fetchFriends]);
 
   // Add friend handler

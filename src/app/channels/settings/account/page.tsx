@@ -52,7 +52,7 @@ export default function AccountSettingsPage() {
                             <label className="text-xs font-bold text-neutral-500 uppercase">Display Name</label>
                             <div className="p-4 rounded-xl bg-[#111111] border border-white/5 text-white flex items-center justify-between">
                                 <span>{user?.displayName || user?.username}</span>
-                                <button className="text-sm font-medium text-[#8B5CF6]">Edit</button>
+                                <button onClick={() => router.push("/channels/settings/appearance")} className="text-sm font-medium text-[#8B5CF6]">Edit</button>
                             </div>
                         </div>
 
@@ -60,7 +60,7 @@ export default function AccountSettingsPage() {
                             <label className="text-xs font-bold text-neutral-500 uppercase">Username</label>
                             <div className="p-4 rounded-xl bg-[#111111] border border-white/5 text-white flex items-center justify-between">
                                 <span>{user?.username}</span>
-                                <button className="text-sm font-medium text-[#8B5CF6]">Edit</button>
+                                <button onClick={() => router.push("/channels/settings/account")} className="text-sm font-medium text-[#8B5CF6]">Edit</button>
                             </div>
                         </div>
 
@@ -68,7 +68,7 @@ export default function AccountSettingsPage() {
                             <label className="text-xs font-bold text-neutral-500 uppercase">Email</label>
                             <div className="p-4 rounded-xl bg-[#111111] border border-white/5 text-white flex items-center justify-between">
                                 <span>{user?.email || "No email linked"}</span>
-                                <button className="text-sm font-medium text-[#8B5CF6]">Edit</button>
+                                <button onClick={() => router.push("/channels/settings/account")} className="text-sm font-medium text-[#8B5CF6]">Edit</button>
                             </div>
                         </div>
 

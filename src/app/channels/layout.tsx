@@ -2,26 +2,60 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
+import dynamic from "next/dynamic";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ServerProvider, useServer } from "@/contexts/ServerContext";
 import { ServerSidebar } from "@/components/layout/ServerSidebar";
 import { ChannelSidebar } from "@/components/layout/ChannelSidebar";
-import { CreateServerDialog } from "@/components/dialogs/CreateServerDialog";
-import { CreateChannelDialog } from "@/components/dialogs/CreateChannelDialog";
-import { UserSettingsDialog } from "@/components/dialogs/UserSettingsDialog";
-import { InviteDialog } from "@/components/dialogs/InviteDialog";
-import { ServerSettingsDialog } from "@/components/dialogs/ServerSettingsDialog";
-import { 
-  BottomNavigation, 
-  MobileServerList, 
-  MobileServerView,
-  MobileMessagesView,
-  MobileNotificationsView,
-  MobileProfileView,
-} from "@/components/mobile";
+import { BottomNavigation } from "@/components/mobile";
 import { Loader2, MessageSquare } from "lucide-react";
 import Link from "next/link";
 import { AnimatePresence, motion } from "framer-motion";
+
+const dialogFallback = () => <div className="hidden" />;
+const mobileFallback = () => <div className="flex-1 bg-[#0a0a0a]" />;
+
+const CreateServerDialog = dynamic(
+  () => import("@/components/dialogs/CreateServerDialog").then((m) => m.CreateServerDialog),
+  { loading: dialogFallback }
+);
+const CreateChannelDialog = dynamic(
+  () => import("@/components/dialogs/CreateChannelDialog").then((m) => m.CreateChannelDialog),
+  { loading: dialogFallback }
+);
+const UserSettingsDialog = dynamic(
+  () => import("@/components/dialogs/UserSettingsDialog").then((m) => m.UserSettingsDialog),
+  { loading: dialogFallback }
+);
+const InviteDialog = dynamic(
+  () => import("@/components/dialogs/InviteDialog").then((m) => m.InviteDialog),
+  { loading: dialogFallback }
+);
+const ServerSettingsDialog = dynamic(
+  () => import("@/components/dialogs/ServerSettingsDialog").then((m) => m.ServerSettingsDialog),
+  { loading: dialogFallback }
+);
+
+const MobileServerList = dynamic(
+  () => import("@/components/mobile/MobileServerList").then((m) => m.MobileServerList),
+  { loading: mobileFallback }
+);
+const MobileServerView = dynamic(
+  () => import("@/components/mobile/MobileServerView").then((m) => m.MobileServerView),
+  { loading: mobileFallback }
+);
+const MobileMessagesView = dynamic(
+  () => import("@/components/mobile/MobileMessagesView").then((m) => m.MobileMessagesView),
+  { loading: mobileFallback }
+);
+const MobileNotificationsView = dynamic(
+  () => import("@/components/mobile/MobileNotificationsView").then((m) => m.MobileNotificationsView),
+  { loading: mobileFallback }
+);
+const MobileProfileView = dynamic(
+  () => import("@/components/mobile/MobileProfileView").then((m) => m.MobileProfileView),
+  { loading: mobileFallback }
+);
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -126,6 +160,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
 
   // Check if we're in a specific channel
   const isInChannel = pathname?.match(/\/channels\/[^/]+\/[^/]+$/);
+  const isSettingsRoute = pathname?.startsWith("/channels/settings");
   const contentKey = pathname || "channels";
 
   // Mobile Layout
@@ -133,7 +168,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
     return (
       <div className="flex h-screen bg-[#0a0a0a] overflow-hidden">
         {/* Mobile Server List - Only show in servers view when not in a channel */}
-        {mobileView === "servers" && !isInChannel && (
+        {mobileView === "servers" && !isInChannel && !isSettingsRoute && (
           <MobileServerList 
             onCreateServer={() => setShowCreateServer(true)}
           />
@@ -141,7 +176,20 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
 
         {/* Mobile Content Area */}
         <div className="flex-1 flex flex-col min-w-0">
-          {isInChannel ? (
+          {isSettingsRoute ? (
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.main
+                key={contentKey}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+                className="flex-1 flex flex-col min-w-0 pb-16"
+              >
+                {children}
+              </motion.main>
+            </AnimatePresence>
+          ) : isInChannel ? (
             // When in a specific channel, render the chat
             <AnimatePresence mode="wait" initial={false}>
               <motion.main

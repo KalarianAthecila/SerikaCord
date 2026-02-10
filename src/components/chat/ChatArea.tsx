@@ -170,7 +170,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         const response = await fetch(`/api/servers/${currentServer.id}/emojis`);
         if (response.ok) {
           const data = await response.json();
-          setServerEmojis(data.emojis || []);
+          const mapped = (data.emojis || []).map((emoji: any) => ({
+            id: emoji.id || emoji._id,
+            name: emoji.name,
+            url: emoji.url || emoji.imageUrl,
+            serverId: emoji.serverId,
+            animated: emoji.animated,
+          }));
+          setServerEmojis(mapped);
         }
       } catch (error) {
         console.error("Failed to fetch server emojis:", error);

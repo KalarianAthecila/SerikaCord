@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { ExternalLink, Play, X } from "lucide-react";
 
 interface LinkEmbedProps {
@@ -89,7 +89,13 @@ function YouTubeEmbed({ videoId, url }: { videoId: string; url: string }) {
   );
 }
 
-function GenericEmbed({ url }: { url: string }) {
+function GenericEmbed({
+  url,
+  preview,
+}: {
+  url: string;
+  preview?: { title?: string; description?: string; thumbnail?: string; siteName?: string };
+}) {
   let hostname = "link";
   let pathname = "";
 
@@ -108,12 +114,27 @@ function GenericEmbed({ url }: { url: string }) {
       rel="noopener noreferrer"
       className="mt-2 block max-w-[400px] border-l-4 border-[#8B5CF6] bg-[#1a1a1a] rounded-r-lg overflow-hidden hover:bg-[#222222] transition-colors"
     >
+      {preview?.thumbnail && (
+        <img
+          src={preview.thumbnail}
+          alt={preview.title || "Link preview"}
+          className="w-full max-h-52 object-cover"
+          loading="lazy"
+        />
+      )}
       <div className="p-3">
         <div className="flex items-center gap-2 text-xs text-[#8B5CF6] font-medium mb-1">
-          <span>{hostname}</span>
+          <span>{preview?.siteName || hostname}</span>
           <ExternalLink className="w-3 h-3 opacity-70" />
         </div>
-        {pathname && <div className="text-[#888888] text-xs line-clamp-2 break-all">{pathname}</div>}
+        {preview?.title ? (
+          <div className="text-white text-sm font-medium line-clamp-2">{preview.title}</div>
+        ) : (
+          pathname && <div className="text-[#888888] text-xs line-clamp-2 break-all">{pathname}</div>
+        )}
+        {preview?.description && (
+          <div className="text-[#888888] text-xs mt-1 line-clamp-3">{preview.description}</div>
+        )}
       </div>
     </a>
   );
@@ -121,10 +142,39 @@ function GenericEmbed({ url }: { url: string }) {
 
 export function LinkEmbed({ content }: LinkEmbedProps) {
   const urls = extractUrls(content);
+  const url = urls[0] || "";
+  const [preview, setPreview] = useState<{ title?: string; description?: string; thumbnail?: string; siteName?: string } | null>(null);
 
-  if (urls.length === 0) return null;
+  useEffect(() => {
+    if (!url) return;
 
-  const url = urls[0];
+    let active = true;
+    setPreview(null);
+
+    fetch(`/api/oembed?url=${encodeURIComponent(url)}`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then((data) => {
+        if (!active || !data) return;
+        setPreview({
+          title: data.title,
+          description: data.description,
+          thumbnail: data.thumbnail,
+          siteName: data.siteName,
+        });
+      })
+      .catch(() => {
+        // best-effort preview only
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [url]);
+
+  if (!url) return null;
 
   // MessageContent already handles direct image/GIF URLs.
   if (isImageUrl(url)) {
@@ -140,5 +190,5 @@ export function LinkEmbed({ content }: LinkEmbedProps) {
     }
   }
 
-  return <GenericEmbed url={url} />;
+  return <GenericEmbed url={url} preview={preview || undefined} />;
 }
