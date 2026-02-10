@@ -288,19 +288,7 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
             ))}
           </div>
         </div>
-
-        {/* Search Bar */}
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500" />
-          <input
-            type="text"
-            placeholder="Search messages"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            className="w-full h-10 pl-10 pr-4 rounded-xl bg-[#1a1a1a] text-white text-sm placeholder:text-neutral-500 border border-white/[0.06] focus:border-[#8B5CF6]/50 focus:outline-none transition-colors"
-          />
-        </div>
-      </header>
+      )}
 
       {/* Messages List */}
       <div 

@@ -32,6 +32,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { LinkEmbed } from "@/components/chat/LinkEmbed";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { Skeleton, ChatAreaSkeleton, UserProfileSkeleton, MessageSkeleton } from "@/components/ui/skeleton";
+import { Twemoji } from "@/components/ui/twemoji";
 
 interface User {
   id: string;
