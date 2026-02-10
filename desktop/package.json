@@ -19,11 +19,14 @@
     "build:all": "electron-builder -mwl --publish never"
   },
   "dependencies": {
-    "electron-updater": "^6.1.7"
+    "electron-updater": "^6.7.3"
   },
   "devDependencies": {
-    "electron": "^28.1.0",
-    "electron-builder": "^24.9.1"
+    "electron": "^40.2.1",
+    "electron-builder": "^26.7.0"
+  },
+  "overrides": {
+    "tar": "^7.5.4"
   },
   "build": {
     "appId": "dev.serika.serikacord",

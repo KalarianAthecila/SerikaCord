@@ -33,15 +33,20 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Install dependencies
         working-directory: desktop
-        run: npm install
+        run: bun install
 
       - name: Build Electron app
         working-directory: desktop
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npm run build:${{ matrix.platform }}
+        run: bun run build:${{ matrix.platform }}
 
       - name: Upload Linux artifacts
         if: matrix.platform == 'linux'
@@ -76,6 +81,11 @@ jobs:
         with:
           node-version: '20'
 
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -87,11 +97,11 @@ jobs:
 
       - name: Install mobile dependencies
         working-directory: mobile
-        run: npm ci || npm install
+        run: bun install
 
       - name: Sync Capacitor
         working-directory: mobile
-        run: npx cap sync android
+        run: bunx cap sync android
 
       - name: Generate debug keystore
         working-directory: mobile/android/app
