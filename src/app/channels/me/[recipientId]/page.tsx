@@ -22,6 +22,8 @@ import {
   Crown,
   Loader2,
   ArrowLeft,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -72,8 +74,15 @@ export default function DMConversationPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
   const [showUserProfile, setShowUserProfile] = useState(true);
+  const [typingUsers, setTypingUsers] = useState<string[]>([]);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
+  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const reconnectAttemptsRef = useRef(0);
+  const typingTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const lastTypingSentAtRef = useRef(0);
 
   // Scroll to bottom of messages
   const scrollToBottom = () => {
@@ -121,41 +130,116 @@ export default function DMConversationPage() {
     }
   }, [recipientId, fetchMessages]);
 
+  const addTypingUser = useCallback(
+    (username: string) => {
+      if (!username || username === user?.username) return;
+      setTypingUsers((prev) => (prev.includes(username) ? prev : [...prev, username]));
+
+      if (typingTimeoutsRef.current[username]) {
+        clearTimeout(typingTimeoutsRef.current[username]);
+      }
+
+      typingTimeoutsRef.current[username] = setTimeout(() => {
+        setTypingUsers((prev) => prev.filter((u) => u !== username));
+        delete typingTimeoutsRef.current[username];
+      }, 3500);
+    },
+    [user?.username]
+  );
+
+  const sendTypingStatus = useCallback(
+    async (content?: string) => {
+      const draft = content ?? newMessage;
+      if (!draft.trim()) return;
+
+      const now = Date.now();
+      if (now - lastTypingSentAtRef.current < 2000) return;
+      lastTypingSentAtRef.current = now;
+
+      try {
+        await fetch(`/api/dms/${recipientId}/typing`, {
+          method: "POST",
+          keepalive: true,
+        });
+      } catch {
+        // Best-effort only.
+      }
+    },
+    [newMessage, recipientId]
+  );
+
   // Set up real-time updates using SSE
   useEffect(() => {
     if (!recipientId) return;
 
-    // Connect to SSE endpoint for real-time messages
-    const eventSource = new EventSource(`/api/dms/${recipientId}/stream`);
-    eventSourceRef.current = eventSource;
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "message") {
-          setMessages((prev) => {
-            // Avoid duplicates
-            if (prev.some((m) => m.id === data.message.id)) {
-              return prev;
-            }
-            return [...prev, data.message];
-          });
-          scrollToBottom();
-        }
-      } catch (error) {
-        console.error("SSE parse error:", error);
+    const connectSSE = () => {
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
       }
+
+      const eventSource = new EventSource(`/api/dms/${recipientId}/stream`);
+      eventSourceRef.current = eventSource;
+
+      eventSource.onopen = () => {
+        reconnectAttemptsRef.current = 0;
+        setIsConnected(true);
+        setIsReconnecting(false);
+      };
+
+      eventSource.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "connected" || data.type === "ping") {
+            setIsConnected(true);
+            return;
+          }
+          if (data.type === "message") {
+            setMessages((prev) => {
+              if (prev.some((m) => m.id === data.message.id)) {
+                return prev;
+              }
+              return [...prev, data.message];
+            });
+            scrollToBottom();
+            return;
+          }
+          if (data.type === "typing") {
+            addTypingUser(data.username);
+          }
+        } catch (error) {
+          console.error("SSE parse error:", error);
+        }
+      };
+
+      eventSource.onerror = () => {
+        setIsConnected(false);
+        setIsReconnecting(true);
+        eventSource.close();
+
+        const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttemptsRef.current), 30000);
+        reconnectAttemptsRef.current += 1;
+        if (reconnectTimeoutRef.current) {
+          clearTimeout(reconnectTimeoutRef.current);
+        }
+        reconnectTimeoutRef.current = setTimeout(() => {
+          connectSSE();
+        }, backoffMs);
+      };
     };
 
-    eventSource.onerror = () => {
-      console.error("SSE connection error");
-      eventSource.close();
-    };
+    connectSSE();
 
     return () => {
-      eventSource.close();
+      if (eventSourceRef.current) {
+        eventSourceRef.current.close();
+      }
+      if (reconnectTimeoutRef.current) {
+        clearTimeout(reconnectTimeoutRef.current);
+      }
+      Object.values(typingTimeoutsRef.current).forEach((timeout) => clearTimeout(timeout));
+      typingTimeoutsRef.current = {};
     };
-  }, [recipientId]);
+  }, [addTypingUser, recipientId]);
 
   // Send message
   const sendMessage = async () => {
@@ -164,6 +248,7 @@ export default function DMConversationPage() {
     setIsSending(true);
     const messageContent = newMessage.trim();
     setNewMessage("");
+    lastTypingSentAtRef.current = 0;
 
     // Optimistic update
     const tempId = `temp-${Date.now()}`;
@@ -220,6 +305,13 @@ export default function DMConversationPage() {
     }
   };
 
+  const handleMessageInputChange = (value: string) => {
+    setNewMessage(value);
+    if (value.trim()) {
+      void sendTypingStatus(value);
+    }
+  };
+
   // Format timestamp
   const formatTime = (dateString: string) => {
     const date = new Date(dateString);
@@ -262,19 +354,27 @@ export default function DMConversationPage() {
   };
 
   const messageGroups = groupMessages(messages);
+  const typingStatusText =
+    typingUsers.length === 0
+      ? ""
+      : typingUsers.length === 1
+        ? `${typingUsers[0]} is typing...`
+        : typingUsers.length === 2
+          ? `${typingUsers[0]} and ${typingUsers[1]} are typing...`
+          : `${typingUsers[0]}, ${typingUsers[1]} and ${typingUsers.length - 2} others are typing...`;
 
   return (
     <div className="flex-1 flex bg-[#0a0a0a]">
       {/* Main chat area */}
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <div className="h-12 min-h-12 px-4 flex items-center justify-between border-b border-[#1a1a1a] bg-[#0a0a0a]">
+        <div className="h-12 min-h-12 px-4 flex items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface)]">
           <div className="flex items-center gap-3">
             <Link
-              href="/channels/@me"
-              className="p-1.5 hover:bg-[#111111] rounded-md transition-colors lg:hidden"
+              href="/channels/me"
+              className="p-1.5 hover:bg-[var(--app-surface-alt)] rounded-md transition-colors lg:hidden"
             >
-              <ArrowLeft className="w-5 h-5 text-[#888888]" />
+              <ArrowLeft className="w-5 h-5 text-[var(--app-muted)]" />
             </Link>
             
             <div className="relative">
@@ -297,24 +397,35 @@ export default function DMConversationPage() {
               {recipient?.isPremium && (
                 <Crown className="w-4 h-4 text-[#8B5CF6]" />
               )}
+              <span
+                className={cn(
+                  "ml-1 hidden md:inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+                  isConnected
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+                )}
+              >
+                {isConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+                {isReconnecting ? "Reconnecting..." : isConnected ? "Live" : "Offline"}
+              </span>
             </div>
           </div>
 
           <div className="flex items-center gap-2">
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+            <button className="p-2 text-[var(--app-muted)] hover:text-white transition-colors rounded-md hover:bg-[var(--app-surface-alt)]">
               <Phone className="w-5 h-5" />
             </button>
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+            <button className="p-2 text-[var(--app-muted)] hover:text-white transition-colors rounded-md hover:bg-[var(--app-surface-alt)]">
               <Video className="w-5 h-5" />
             </button>
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+            <button className="p-2 text-[var(--app-muted)] hover:text-white transition-colors rounded-md hover:bg-[var(--app-surface-alt)]">
               <Pin className="w-5 h-5" />
             </button>
             <button
               onClick={() => setShowUserProfile(!showUserProfile)}
               className={cn(
-                "p-2 transition-colors rounded-md hover:bg-[#111111]",
-                showUserProfile ? "text-white" : "text-[#888888] hover:text-white"
+                "p-2 transition-colors rounded-md hover:bg-[var(--app-surface-alt)]",
+                showUserProfile ? "text-white" : "text-[var(--app-muted)] hover:text-white"
               )}
             >
               <Users className="w-5 h-5" />
@@ -322,11 +433,11 @@ export default function DMConversationPage() {
             <div className="relative">
               <Input
                 placeholder="Search"
-                className="h-7 w-32 bg-[#111111] border-none text-white placeholder:text-[#555555] text-sm rounded focus-visible:ring-0"
+                className="h-7 w-32 bg-[var(--app-surface-alt)] border-none text-white placeholder:text-[var(--app-muted-2)] text-sm rounded focus-visible:ring-0"
               />
-              <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[#555555]" />
+              <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--app-muted-2)]" />
             </div>
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111]">
+            <button className="p-2 text-[var(--app-muted)] hover:text-white transition-colors rounded-md hover:bg-[var(--app-surface-alt)]">
               <Inbox className="w-5 h-5" />
             </button>
           </div>
@@ -364,7 +475,7 @@ export default function DMConversationPage() {
               ) : (
                 <div className="space-y-4">
                   {messageGroups.map((group, groupIndex) => (
-                    <div key={groupIndex} className="group/message hover:bg-[#111111]/50 -mx-4 px-4 py-0.5 rounded">
+                    <div key={groupIndex} className="group/message hover:bg-[var(--app-surface-alt)]/70 -mx-4 px-4 py-0.5 rounded transition-colors">
                       <div className="flex gap-4">
                         <Avatar className="w-10 h-10 mt-0.5 flex-shrink-0">
                           <AvatarImage src={group.author.avatar} />
@@ -380,12 +491,12 @@ export default function DMConversationPage() {
                             {group.author.isPremium && (
                               <Crown className="w-3.5 h-3.5 text-[#8B5CF6]" />
                             )}
-                            <span className="text-xs text-[#666666]">
+                            <span className="text-xs text-[var(--app-muted)]">
                               {formatTime(group.timestamp)}
                             </span>
                           </div>
                           {group.messages.map((message) => (
-                            <Twemoji key={message.id} className="text-[#dcddde] break-words" customEmojis={message.customEmojis}>
+                            <Twemoji key={message.id} className="text-[var(--app-text)] break-words" customEmojis={message.customEmojis}>
                               {message.content}
                             </Twemoji>
                           ))}
@@ -400,30 +511,43 @@ export default function DMConversationPage() {
           </div>
         </ScrollArea>
 
+        {typingStatusText && (
+          <div className="px-4 pb-1 text-sm text-[var(--app-muted)]">
+            <span className="inline-flex items-center gap-2">
+              <span className="flex gap-1">
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:0ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:120ms]" />
+                <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:240ms]" />
+              </span>
+              {typingStatusText}
+            </span>
+          </div>
+        )}
+
         {/* Message input */}
         <div className="p-4 pt-0">
-          <div className="relative bg-[#111111] rounded-lg">
+          <div className="relative bg-[var(--app-surface)] rounded-lg border border-[var(--app-border)] shadow-[var(--app-elev-1)]">
             <div className="flex items-center px-4 py-2">
-              <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+              <button className="p-1.5 text-[var(--app-muted)] hover:text-white transition-colors rounded hover:bg-[var(--app-surface-alt)]">
                 <Plus className="w-5 h-5" />
               </button>
               
               <input
                 value={newMessage}
-                onChange={(e) => setNewMessage(e.target.value)}
+                onChange={(e) => handleMessageInputChange(e.target.value)}
                 onKeyDown={handleKeyPress}
                 placeholder={`Message @${recipient?.displayName || recipient?.username || "..."}`}
-                className="flex-1 bg-transparent text-white placeholder:text-[#666666] px-3 py-1 focus:outline-none"
+                className="flex-1 bg-transparent text-white placeholder:text-[var(--app-muted)] px-3 py-1 focus:outline-none"
               />
 
               <div className="flex items-center gap-1">
-                <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+                <button className="p-1.5 text-[var(--app-muted)] hover:text-white transition-colors rounded hover:bg-[var(--app-surface-alt)]">
                   <Gift className="w-5 h-5" />
                 </button>
-                <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+                <button className="p-1.5 text-[var(--app-muted)] hover:text-white transition-colors rounded hover:bg-[var(--app-surface-alt)]">
                   <ImageIcon className="w-5 h-5" />
                 </button>
-                <button className="p-1.5 text-[#888888] hover:text-white transition-colors rounded hover:bg-[#1a1a1a]">
+                <button className="p-1.5 text-[var(--app-muted)] hover:text-white transition-colors rounded hover:bg-[var(--app-surface-alt)]">
                   <Smile className="w-5 h-5" />
                 </button>
                 <button

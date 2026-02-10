@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { MemberSidebar } from "@/components/chat/MemberSidebar";
-import { Volume2, Loader2 } from "lucide-react";
+import { Volume2 } from "lucide-react";
 
 function VoiceChannelComingSoon({ channelName }: { channelName: string }) {
   return (
@@ -17,7 +17,7 @@ function VoiceChannelComingSoon({ channelName }: { channelName: string }) {
       <h3 className="text-xl text-[#888888] mb-4">#{channelName}</h3>
       <div className="max-w-md">
         <p className="text-[#888888] mb-6">
-          Voice channels are coming soon! We're working hard to bring you high-quality
+          Voice channels are coming soon! We&apos;re working hard to bring you high-quality
           voice and video communication.
         </p>
         <div className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-[#111111] border border-[#222222]">
@@ -33,7 +33,7 @@ export default function ChannelPage() {
   const params = useParams();
   const router = useRouter();
   const { servers, setCurrentServer, channels, setCurrentChannel, isLoading, fetchChannels, currentServer, currentChannel } = useServer();
-  const [showMembers, setShowMembers] = useState(false);
+  const [showMembers, setShowMembers] = useState(true);
   const [isMobile, setIsMobile] = useState(false);
 
   const serverId = params.serverId as string;
@@ -47,13 +47,6 @@ export default function ChannelPage() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Show members by default on desktop only
-  useEffect(() => {
-    if (!isMobile) {
-      setShowMembers(true);
-    }
-  }, [isMobile]);
-
   // Set current server when servers load
   useEffect(() => {
     if (!isLoading && servers.length > 0) {
@@ -65,7 +58,7 @@ export default function ChannelPage() {
           fetchChannels(serverId);
         }
       } else {
-        router.push("/channels/@me");
+        router.push("/channels/me");
       }
     }
   }, [serverId, servers, isLoading, setCurrentServer, router, fetchChannels, currentServer]);

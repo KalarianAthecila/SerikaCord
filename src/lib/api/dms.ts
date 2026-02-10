@@ -359,8 +359,12 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     const channelKey = channel._id.toString();
 
     // Create SSE stream
+    let controllerRef: ReadableStreamDefaultController | null = null;
+    let pingInterval: NodeJS.Timeout | null = null;
+
     const stream = new ReadableStream({
       start(controller) {
+        controllerRef = controller;
         // Add to active connections
         if (!activeConnections.has(channelKey)) {
           activeConnections.set(channelKey, new Set());
@@ -371,19 +375,24 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
 
         // Keep-alive ping every 30 seconds
-        const pingInterval = setInterval(() => {
+        pingInterval = setInterval(() => {
           try {
             controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
           } catch {
-            clearInterval(pingInterval);
+            if (pingInterval) {
+              clearInterval(pingInterval);
+            }
+            activeConnections.get(channelKey)?.delete(controller);
           }
         }, 30000);
-
-        // Cleanup on close - Note: In practice this might not be called
-        // The connection cleanup happens when the client disconnects
       },
       cancel() {
-        // Connection closed - this is called when client disconnects
+        if (pingInterval) {
+          clearInterval(pingInterval);
+        }
+        if (controllerRef) {
+          activeConnections.get(channelKey)?.delete(controllerRef);
+        }
       },
     });
 
@@ -423,6 +432,23 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       }
     } catch (error) {
       console.error('Failed to publish typing:', error);
+    }
+
+    const channelKey = channel._id.toString();
+    const connections = activeConnections.get(channelKey);
+    if (connections) {
+      const data = `data: ${JSON.stringify({
+        type: 'typing',
+        userId: user._id,
+        username: user.username,
+      })}\n\n`;
+      connections.forEach((controller) => {
+        try {
+          controller.enqueue(new TextEncoder().encode(data));
+        } catch {
+          // Connection closed and cleaned up during next heartbeat/cancel.
+        }
+      });
     }
 
     return { success: true };

@@ -14,6 +14,14 @@ function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string):
   return str1 === str2;
 }
 
+interface PopulatedAuthor {
+  _id: Types.ObjectId;
+  username: string;
+  displayName?: string;
+  avatar?: string;
+  status?: string;
+}
+
 // Store active SSE connections for server channels
 const activeConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
@@ -275,18 +283,20 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Transform for frontend - return array directly and map _id to id
     // Decrypt messages
     const decryptedMessages = await Promise.all(messages.map(async (msg) => {
-      const author = msg.authorId as any;
+      const author = msg.authorId as PopulatedAuthor | Types.ObjectId | string | null;
+      const populatedAuthor =
+        author && typeof author === 'object' && '_id' in author ? author as PopulatedAuthor : null;
       const decryptedContent = await decryptFromStorage(msg.content);
       return {
         id: msg._id.toString(),
         content: decryptedContent,
-        authorId: author?._id?.toString() || msg.authorId,
-        author: author ? {
-          id: author._id.toString(),
-          username: author.username,
-          displayName: author.displayName || author.username,
-          avatar: author.avatar,
-          status: author.status,
+        authorId: populatedAuthor?._id?.toString() || msg.authorId,
+        author: populatedAuthor ? {
+          id: populatedAuthor._id.toString(),
+          username: populatedAuthor.username,
+          displayName: populatedAuthor.displayName || populatedAuthor.username,
+          avatar: populatedAuthor.avatar,
+          status: populatedAuthor.status,
         } : null,
         channelId: msg.channelId.toString(),
         serverId: msg.serverId?.toString(),
@@ -462,17 +472,19 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     await message.populate('authorId', 'username displayName avatar status');
 
     // Transform message for frontend (return original sanitized content, not encrypted)
-    const author = message.authorId as any;
+    const author = message.authorId as PopulatedAuthor | Types.ObjectId | string | null;
+    const populatedAuthor =
+      author && typeof author === 'object' && '_id' in author ? author as PopulatedAuthor : null;
     const messageResponse = {
       id: message._id.toString(),
       content: sanitizedContent, // Return original content, not encrypted
-      authorId: author?._id?.toString() || message.authorId,
-      author: author ? {
-        id: author._id.toString(),
-        username: author.username,
-        displayName: author.displayName || author.username,
-        avatar: author.avatar,
-        status: author.status,
+      authorId: populatedAuthor?._id?.toString() || message.authorId,
+      author: populatedAuthor ? {
+        id: populatedAuthor._id.toString(),
+        username: populatedAuthor.username,
+        displayName: populatedAuthor.displayName || populatedAuthor.username,
+        avatar: populatedAuthor.avatar,
+        status: populatedAuthor.status,
       } : null,
       channelId: message.channelId.toString(),
       serverId: message.serverId?.toString(),
@@ -926,6 +938,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     const channelKey = params.channelId;
     let controllerRef: ReadableStreamDefaultController | null = null;
+    let pingInterval: NodeJS.Timeout | null = null;
 
     // Create SSE stream
     const stream = new ReadableStream({
@@ -941,17 +954,22 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
 
         // Keep-alive ping every 30 seconds
-        const pingInterval = setInterval(() => {
+        pingInterval = setInterval(() => {
           try {
             controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
           } catch {
-            clearInterval(pingInterval);
+            if (pingInterval) {
+              clearInterval(pingInterval);
+            }
             activeConnections.get(channelKey)?.delete(controller);
           }
         }, 30000);
       },
       cancel() {
         // Connection closed - cleanup
+        if (pingInterval) {
+          clearInterval(pingInterval);
+        }
         if (controllerRef) {
           activeConnections.get(channelKey)?.delete(controllerRef);
         }

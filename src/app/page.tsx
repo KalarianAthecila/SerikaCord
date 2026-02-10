@@ -101,7 +101,7 @@ export default function HomePage() {
           
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
             <Link 
-              href="/channels/@me"
+              href="/channels/me"
               className="w-full sm:w-auto px-8 py-4 text-base font-medium bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md transition-colors flex items-center justify-center gap-2"
             >
               Open SerikaCord in your browser
@@ -429,7 +429,7 @@ export default function HomePage() {
             Join millions of users already using SerikaCord. It&apos;s free to use.
           </p>
           <Link 
-            href="/channels/@me"
+            href="/channels/me"
             className="inline-flex items-center gap-2 px-8 py-4 text-base font-medium bg-[#8B5CF6] hover:bg-[#7C3AED] rounded-md transition-colors"
           >
             Open SerikaCord

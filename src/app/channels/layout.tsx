@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useRouter, usePathname } from "next/navigation";
 import { AuthProvider, useAuth } from "@/contexts/AuthContext";
 import { ServerProvider, useServer } from "@/contexts/ServerContext";
@@ -11,18 +11,17 @@ import { CreateChannelDialog } from "@/components/dialogs/CreateChannelDialog";
 import { UserSettingsDialog } from "@/components/dialogs/UserSettingsDialog";
 import { InviteDialog } from "@/components/dialogs/InviteDialog";
 import { ServerSettingsDialog } from "@/components/dialogs/ServerSettingsDialog";
-import {
-  BottomNavigation,
-  MobileServerList,
+import { 
+  BottomNavigation, 
+  MobileServerList, 
   MobileServerView,
   MobileMessagesView,
   MobileNotificationsView,
   MobileProfileView,
-  MobileDrawer,
 } from "@/components/mobile";
-import { Loader2, MessageSquare, Menu, X } from "lucide-react";
+import { Loader2, MessageSquare } from "lucide-react";
 import Link from "next/link";
-import { cn } from "@/lib/utils";
+import { AnimatePresence, motion } from "framer-motion";
 
 function AuthGate({ children }: { children: React.ReactNode }) {
   const { user, isLoading } = useAuth();
@@ -41,7 +40,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           <div className="w-16 h-16 rounded-xl bg-[#8B5CF6] flex items-center justify-center">
             <MessageSquare className="w-8 h-8 text-white" />
           </div>
-
+          
           <div className="flex flex-col items-center gap-2">
             <div className="flex items-center gap-2">
               <Loader2 className="w-5 h-5 text-[#8B5CF6] animate-spin" />
@@ -61,14 +60,14 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           <div className="w-16 h-16 rounded-xl bg-[#8B5CF6] flex items-center justify-center">
             <MessageSquare className="w-8 h-8 text-white" />
           </div>
-
+          
           <div>
             <h1 className="text-2xl font-bold text-white mb-2">Welcome to SerikaCord</h1>
             <p className="text-[#666666] max-w-md">
               Sign in to access your servers, chat with friends, and join communities.
             </p>
           </div>
-
+          
           <div className="flex gap-3">
             <Link
               href="/login"
@@ -97,9 +96,6 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
-  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
-  const [mobileView, setMobileView] = useState<"servers" | "messages" | "notifications" | "profile">("servers");
   const pathname = usePathname();
   const { currentServer } = useServer();
 
@@ -110,16 +106,9 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('openUserSettings', handleOpenSettings);
   }, []);
 
-  // Close mobile menu when navigating
-  useEffect(() => {
-    const handleRouteChange = () => setMobileMenuOpen(false);
-    window.addEventListener('popstate', handleRouteChange);
-    return () => window.removeEventListener('popstate', handleRouteChange);
-  }, []);
-
   // Track if we're on mobile
   const [isMobile, setIsMobile] = useState(false);
-
+  
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
     checkMobile();
@@ -127,21 +116,17 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  // Update mobile view based on pathname
-  useEffect(() => {
-    if (pathname?.includes("/messages")) {
-      setMobileView("messages");
-    } else if (pathname?.includes("/notifications")) {
-      setMobileView("notifications");
-    } else if (pathname?.includes("/profile")) {
-      setMobileView("profile");
-    } else {
-      setMobileView("servers");
-    }
-  }, [pathname]);
+  const mobileView: "servers" | "messages" | "notifications" | "profile" = pathname?.includes("/messages")
+    ? "messages"
+    : pathname?.includes("/notifications")
+      ? "notifications"
+      : pathname?.includes("/profile")
+        ? "profile"
+        : "servers";
 
   // Check if we're in a specific channel
   const isInChannel = pathname?.match(/\/channels\/[^/]+\/[^/]+$/);
+  const contentKey = pathname || "channels";
 
   // Mobile Layout
   if (isMobile) {
@@ -149,16 +134,27 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
       <div className="flex h-screen bg-[#0a0a0a] overflow-hidden">
         {/* Mobile Server List - Only show in servers view when not in a channel */}
         {mobileView === "servers" && !isInChannel && (
-          <MobileServerList
+          <MobileServerList 
             onCreateServer={() => setShowCreateServer(true)}
           />
         )}
 
         {/* Mobile Content Area */}
-        <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
+        <div className="flex-1 flex flex-col min-w-0">
           {isInChannel ? (
-            // When in a specific channel, render the chat - ChatArea handles its own padding
-            <main className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">{children}</main>
+            // When in a specific channel, render the chat
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.main
+                key={contentKey}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+                className="flex-1 flex flex-col min-w-0 pb-16"
+              >
+                {children}
+              </motion.main>
+            </AnimatePresence>
           ) : mobileView === "servers" && currentServer ? (
             <MobileServerView />
           ) : mobileView === "messages" ? (
@@ -169,22 +165,23 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
             <MobileProfileView />
           ) : (
             // Show channel content or DMs when in servers view without a selected server
-            <main className="flex-1 flex min-w-0 min-h-0 overflow-hidden">{children}</main>
+            <AnimatePresence mode="wait" initial={false}>
+              <motion.main
+                key={contentKey}
+                initial={{ opacity: 0, y: 8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                transition={{ duration: 0.18, ease: "easeOut" }}
+                className="flex-1 flex min-w-0 pb-16"
+              >
+                {children}
+              </motion.main>
+            </AnimatePresence>
           )}
         </div>
 
-        {/* Bottom Navigation - Hide when in a specific channel */}
-        {!isInChannel && <BottomNavigation />}
-
-        {/* Mobile Drawer */}
-        <MobileDrawer
-          isOpen={mobileDrawerOpen}
-          onClose={() => setMobileDrawerOpen(false)}
-          onCreateServer={() => {
-            setMobileDrawerOpen(false);
-            setShowCreateServer(true);
-          }}
-        />
+        {/* Bottom Navigation */}
+        <BottomNavigation />
 
         {/* Dialogs */}
         <CreateServerDialog
@@ -209,7 +206,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
       {/* Combined Sidebars */}
       <div className="flex flex-shrink-0">
         <ServerSidebar onCreateServer={() => setShowCreateServer(true)} />
-        <ChannelSidebar
+        <ChannelSidebar 
           onCreateChannel={() => setShowCreateChannel(true)}
           onInvitePeople={() => setShowInvite(true)}
           onServerSettings={() => setShowServerSettings(true)}
@@ -217,7 +214,18 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Main Content */}
-      <main className="flex-1 flex min-w-0 min-h-0 overflow-hidden">{children}</main>
+      <AnimatePresence mode="wait" initial={false}>
+        <motion.main
+          key={contentKey}
+          initial={{ opacity: 0, y: 12, filter: "blur(6px)" }}
+          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+          exit={{ opacity: 0, y: -12, filter: "blur(4px)" }}
+          transition={{ duration: 0.2, ease: "easeOut" }}
+          className="flex-1 flex min-w-0 min-h-0 overflow-hidden"
+        >
+          {children}
+        </motion.main>
+      </AnimatePresence>
 
       {/* Dialogs */}
       <CreateServerDialog

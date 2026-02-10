@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo } from "react";
-import { Virtuoso, VirtuosoHandle } from "react-virtuoso";
 import { useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
 import { useAuth } from "@/contexts/AuthContext";
-import { notifyNewMessage, clearBadge } from "@/lib/services/notificationService";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ScrollArea } from "@/components/ui/scroll-area";
 import { Textarea } from "@/components/ui/textarea";
 import { Button } from "@/components/ui/button";
 import {
@@ -52,16 +51,14 @@ import {
   FileText,
   Loader2,
   Plus,
-  ImageIcon,
+  Wifi,
+  WifiOff,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
-import { GifPicker } from "@/components/chat/GifPicker";
-import { MessageContent } from "@/components/chat/MessageContent";
+import { Twemoji } from "@/components/ui/twemoji";
 import { LinkEmbed } from "@/components/chat/LinkEmbed";
-import { ImageLightbox } from "@/components/ui/image-lightbox";
-import { Skeleton, MessageSkeleton, ChatAreaSkeleton } from "@/components/ui/skeleton";
 
 interface Message {
   id: string;
@@ -116,12 +113,16 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const virtuosoRef = useRef<VirtuosoHandle>(null);
+  const [isConnected, setIsConnected] = useState(false);
+  const [isReconnecting, setIsReconnecting] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const eventSourceRef = useRef<EventSource | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const reconnectAttempts = useRef(0);
+  const typingTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
+  const lastTypingSentAtRef = useRef(0);
 
   // Edit state
   const [editingMessage, setEditingMessage] = useState<Message | null>(null);
@@ -153,12 +154,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   // Typing indicator
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
 
-  // GIF picker
-  const [showGifPicker, setShowGifPicker] = useState(false);
-
-  // Image lightbox
-  const [lightboxImage, setLightboxImage] = useState<{ src: string; alt?: string } | null>(null);
-
   // Detect mobile
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -178,15 +173,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         const response = await fetch(`/api/servers/${currentServer.id}/emojis`);
         if (response.ok) {
           const data = await response.json();
-          // Map imageUrl to url for compatibility with emoji picker
-          const mappedEmojis = (data.emojis || []).map((emoji: { _id?: string; id?: string; name: string; imageUrl: string; serverId: string; animated?: boolean }) => ({
-            id: emoji._id || emoji.id,
-            name: emoji.name,
-            url: emoji.imageUrl,
-            serverId: emoji.serverId,
-            animated: emoji.animated,
-          }));
-          setServerEmojis(mappedEmojis);
+          setServerEmojis(data.emojis || []);
         }
       } catch (error) {
         console.error("Failed to fetch server emojis:", error);
@@ -199,6 +186,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     if (!currentChannel) return;
 
     setIsLoading(true);
+    setTypingUsers([]);
     try {
       const response = await fetch(`/api/channels/${currentChannel.id}/messages`);
       if (response.ok) {
@@ -220,6 +208,91 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     fetchMessages();
   }, [fetchMessages]);
 
+  const addTypingUser = useCallback(
+    (username: string) => {
+      if (!username || username === user?.username) return;
+      setTypingUsers((prev) => (prev.includes(username) ? prev : [...prev, username]));
+
+      if (typingTimeoutsRef.current[username]) {
+        clearTimeout(typingTimeoutsRef.current[username]);
+      }
+
+      typingTimeoutsRef.current[username] = setTimeout(() => {
+        setTypingUsers((prev) => prev.filter((u) => u !== username));
+        delete typingTimeoutsRef.current[username];
+      }, 3500);
+    },
+    [user?.username]
+  );
+
+  const sendTypingStatus = useCallback(async (content?: string) => {
+    const draft = content ?? newMessage;
+    if (!currentChannel || !draft.trim()) return;
+
+    const now = Date.now();
+    if (now - lastTypingSentAtRef.current < 2000) {
+      return;
+    }
+    lastTypingSentAtRef.current = now;
+
+    try {
+      await fetch(`/api/channels/${currentChannel.id}/typing`, {
+        method: "POST",
+        keepalive: true,
+      });
+    } catch {
+      // Best-effort signal only.
+    }
+  }, [currentChannel, newMessage]);
+
+  const applyReactionEvent = useCallback(
+    (messageId: string, emoji: string, userId: string, isAdd: boolean) => {
+      setMessages((prev) =>
+        prev.map((msg) => {
+          if (msg.id !== messageId) return msg;
+
+          const reactions = msg.reactions || [];
+          const reactionIndex = reactions.findIndex(
+            (reaction) => reaction.emoji.id === emoji || reaction.emoji.name === emoji
+          );
+
+          if (reactionIndex === -1) {
+            if (!isAdd) return msg;
+            return {
+              ...msg,
+              reactions: [...reactions, { emoji: { name: emoji }, count: 1, userIds: [userId] }],
+            };
+          }
+
+          const targetReaction = reactions[reactionIndex];
+          const alreadyReacted = targetReaction.userIds.includes(userId);
+          if (isAdd && alreadyReacted) return msg;
+          if (!isAdd && !alreadyReacted) return msg;
+
+          const nextReactions = reactions
+            .map((reaction, index) => {
+              if (index !== reactionIndex) return reaction;
+              const nextUserIds = isAdd
+                ? [...reaction.userIds, userId]
+                : reaction.userIds.filter((id) => id !== userId);
+              return {
+                ...reaction,
+                userIds: nextUserIds,
+                count: nextUserIds.length,
+              };
+            })
+            .filter((reaction) => reaction.count > 0);
+
+          return {
+            ...msg,
+            reactions: nextReactions,
+          };
+        })
+      );
+    },
+    []
+  );
+
   // SSE connection with reconnection logic
   const connectSSE = useCallback(() => {
     if (!currentChannel) return;
@@ -235,11 +308,17 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
     eventSource.onopen = () => {
       reconnectAttempts.current = 0;
+      setIsConnected(true);
+      setIsReconnecting(false);
     };
 
     eventSource.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
+        if (data.type === "connected" || data.type === "ping") {
+          setIsConnected(true);
+          return;
+        }
 
         if (data.type === "message") {
           setMessages((prev) => {
@@ -251,11 +330,11 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
               data.message.author ||
               (data.message.authorId && typeof data.message.authorId === "object"
                 ? {
-                  id: data.message.authorId._id || data.message.authorId.id,
-                  username: data.message.authorId.username,
-                  displayName: data.message.authorId.displayName || data.message.authorId.username,
-                  avatar: data.message.authorId.avatar,
-                }
+                    id: data.message.authorId._id || data.message.authorId.id,
+                    username: data.message.authorId.username,
+                    displayName: data.message.authorId.displayName || data.message.authorId.username,
+                    avatar: data.message.authorId.avatar,
+                  }
                 : null);
 
             const newMsg: Message = {
@@ -265,31 +344,25 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                 typeof data.message.authorId === "object"
                   ? data.message.authorId._id || data.message.authorId.id
                   : data.message.authorId,
-              author: author,
+              author: author || {
+                id: "unknown",
+                username: "unknown",
+                displayName: "Unknown",
+              },
               channelId: data.message.channelId,
               createdAt: data.message.createdAt,
               updatedAt: data.message.updatedAt,
               edited: data.message.edited,
               attachments: data.message.attachments || [],
+              reactions: data.message.reactions || [],
+              customEmojis: data.message.customEmojis || [],
             };
-
-            // Show notification if message is from another user and window not focused
-            if (author && author.id !== user?.id && !document.hasFocus()) {
-              notifyNewMessage(
-                currentChannel.id,
-                currentChannel.name,
-                author.displayName || author.username,
-                data.message.content?.slice(0, 100) || 'Sent an attachment',
-                {
-                  serverId: currentServer?.id,
-                  serverName: currentServer?.name,
-                }
-              );
-            }
-
             return [...prev, newMsg];
           });
-        } else if (data.type === "edit") {
+          return;
+        }
+
+        if (data.type === "edit") {
           setMessages((prev) =>
             prev.map((m) =>
               m.id === data.messageId
@@ -297,19 +370,26 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                 : m
             )
           );
-        } else if (data.type === "delete") {
+          return;
+        }
+
+        if (data.type === "delete") {
           setMessages((prev) => prev.filter((m) => m.id !== data.messageId));
-        } else if (data.type === "typing") {
-          setTypingUsers((prev) => {
-            if (!prev.includes(data.username)) {
-              return [...prev, data.username];
-            }
-            return prev;
-          });
-          // Remove typing indicator after 3 seconds
-          setTimeout(() => {
-            setTypingUsers((prev) => prev.filter((u) => u !== data.username));
-          }, 3000);
+          return;
+        }
+
+        if (data.type === "reaction_add") {
+          applyReactionEvent(data.messageId, data.emoji, data.userId, true);
+          return;
+        }
+
+        if (data.type === "reaction_remove") {
+          applyReactionEvent(data.messageId, data.emoji, data.userId, false);
+          return;
+        }
+
+        if (data.type === "typing") {
+          addTypingUser(data.username);
         }
       } catch (error) {
         console.error("Failed to parse SSE data:", error);
@@ -317,6 +397,8 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     };
 
     eventSource.onerror = () => {
+      setIsConnected(false);
+      setIsReconnecting(true);
       eventSource.close();
 
       // Reconnect with exponential backoff
@@ -335,9 +417,11 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     };
 
     eventSourceRef.current = eventSource;
-  }, [currentChannel]);
+  }, [addTypingUser, applyReactionEvent, currentChannel]);
 
   useEffect(() => {
+    setIsConnected(false);
+    setIsReconnecting(false);
     connectSSE();
 
     return () => {
@@ -347,22 +431,15 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       if (reconnectTimeoutRef.current) {
         clearTimeout(reconnectTimeoutRef.current);
       }
+      Object.values(typingTimeoutsRef.current).forEach((timeout) => clearTimeout(timeout));
+      typingTimeoutsRef.current = {};
     };
   }, [connectSSE]);
 
-  // Auto-scroll to bottom when new messages arrive
+  // Auto-scroll to bottom
   useEffect(() => {
-    if (virtuosoRef.current && messages.length > 0) {
-      // Use setTimeout to ensure the DOM is updated before scrolling
-      setTimeout(() => {
-        virtuosoRef.current?.scrollToIndex({
-          index: messages.length - 1,
-          behavior: "smooth",
-          align: "end",
-        });
-      }, 50);
-    }
-  }, [messages.length]);
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
+  }, [messages]);
 
   // File upload handling
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -420,7 +497,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         } else {
           toast.error(`Failed to upload ${file.name}`);
         }
-      } catch (error) {
+      } catch {
         toast.error(`Failed to upload ${file.name}`);
       }
     }
@@ -433,6 +510,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
     const messageContent = newMessage;
     setNewMessage("");
+    lastTypingSentAtRef.current = 0;
     setIsSending(true);
 
     if (textareaRef.current) {
@@ -463,7 +541,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setNewMessage(messageContent);
         toast.error("Failed to send message");
       }
-    } catch (error) {
+    } catch {
       setNewMessage(messageContent);
       toast.error("Failed to send message");
     } finally {
@@ -491,7 +569,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       } else {
         toast.error("Failed to edit message");
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to edit message");
     }
   };
@@ -512,7 +590,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       } else {
         toast.error("Failed to delete message");
       }
-    } catch (error) {
+    } catch {
       toast.error("Failed to delete message");
     }
   };
@@ -541,22 +619,30 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   };
 
   const handleTextareaChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
-    setNewMessage(e.target.value);
+    const value = e.target.value;
+    setNewMessage(value);
     if (textareaRef.current) {
       textareaRef.current.style.height = "44px";
       textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 300) + "px";
     }
+    if (value.trim()) {
+      void sendTypingStatus(value);
+    }
   };
 
-  const handleEmojiSelect = (emoji: string, isCustom?: boolean) => {
-    setNewMessage((prev) => prev + emoji);
+  const handleEmojiSelect = (emoji: string) => {
+    setNewMessage((prev) => {
+      const next = prev + emoji;
+      void sendTypingStatus(next);
+      return next;
+    });
     setShowEmojiPicker(false);
     textareaRef.current?.focus();
   };
 
   const handleAddReaction = async (messageId: string, emoji: string) => {
     if (!currentChannel) return;
-
+    
     try {
       const encodedEmoji = encodeURIComponent(emoji);
       const response = await fetch(
@@ -569,10 +655,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== messageId) return msg;
-
+            
             const reactions = msg.reactions || [];
             const existingReaction = reactions.find((r) => r.emoji.name === emoji);
-
+            
             if (existingReaction) {
               // Check if user already reacted
               if (!existingReaction.userIds.includes(user?.id || "")) {
@@ -603,7 +689,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
   const handleRemoveReaction = async (messageId: string, emoji: string) => {
     if (!currentChannel) return;
-
+    
     try {
       const encodedEmoji = encodeURIComponent(emoji);
       const response = await fetch(
@@ -616,7 +702,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMessages((prev) =>
           prev.map((msg) => {
             if (msg.id !== messageId) return msg;
-
+            
             const reactions = msg.reactions || [];
             return {
               ...msg,
@@ -624,10 +710,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                 .map((r) =>
                   r.emoji.name === emoji
                     ? {
-                      ...r,
-                      count: r.count - 1,
-                      userIds: r.userIds.filter((id) => id !== user?.id),
-                    }
+                        ...r,
+                        count: r.count - 1,
+                        userIds: r.userIds.filter((id) => id !== user?.id),
+                      }
                     : r
                 )
                 .filter((r) => r.count > 0),
@@ -676,28 +762,37 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     return (bytes / (1024 * 1024)).toFixed(1) + " MB";
   };
 
-  // Group messages by author and time proximity - memoized for performance
-  const groupedMessages = useMemo(() => {
-    return messages.reduce((groups, message, index) => {
-      const prevMessage = messages[index - 1];
-      const isGrouped =
-        prevMessage &&
-        prevMessage.authorId === message.authorId &&
-        new Date(message.createdAt).getTime() - new Date(prevMessage.createdAt).getTime() < 5 * 60 * 1000;
+  // Group messages by author and time proximity
+  const groupedMessages = useMemo(
+    () =>
+      messages.reduce((groups, message, index) => {
+        const prevMessage = messages[index - 1];
+        const isGrouped =
+          prevMessage &&
+          prevMessage.authorId === message.authorId &&
+          new Date(message.createdAt).getTime() - new Date(prevMessage.createdAt).getTime() < 5 * 60 * 1000;
 
-      if (isGrouped) {
-        groups[groups.length - 1].messages.push(message);
-      } else {
-        groups.push({ author: message.author, messages: [message] });
-      }
+        if (isGrouped) {
+          groups[groups.length - 1].messages.push(message);
+        } else {
+          groups.push({ author: message.author, messages: [message] });
+        }
 
-      return groups;
-    }, [] as Array<{ author: Message["author"]; messages: Message[] }>);
-  }, [messages]);
+        return groups;
+      }, [] as Array<{ author: Message["author"]; messages: Message[] }>),
+    [messages]
+  );
+
+  const typingStatusText = useMemo(() => {
+    if (typingUsers.length === 0) return "";
+    if (typingUsers.length === 1) return `${typingUsers[0]} is typing...`;
+    if (typingUsers.length === 2) return `${typingUsers[0]} and ${typingUsers[1]} are typing...`;
+    return `${typingUsers[0]}, ${typingUsers[1]} and ${typingUsers.length - 2} others are typing...`;
+  }, [typingUsers]);
 
   if (!currentChannel) {
     return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] text-[#666666] animate-fade-in">
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#0a0a0a] text-[#666666]">
         <div className="w-40 h-40 mb-4 rounded-full bg-[#111111] flex items-center justify-center">
           <Hash className="w-20 h-20 text-[#8B5CF6]" />
         </div>
@@ -714,88 +809,95 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   }
 
   return (
-    <div className={cn(
-      "flex-1 flex flex-col bg-[#0a0a0a] min-w-0 min-h-0 overflow-hidden animate-fade-in",
-      isMobile && "mobile-content-padded"
-    )}>
+    <div className="flex-1 flex flex-col bg-[var(--app-bg)] min-w-0 min-h-0 overflow-hidden">
       {/* Channel Header */}
-      <div className="h-12 px-2 sm:px-4 flex items-center justify-between border-b border-[#1a1a1a] flex-shrink-0">
+      <div className="h-12 px-2 sm:px-4 flex items-center justify-between border-b border-[var(--app-border)] bg-[var(--app-surface)] flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
           {isMobile && (
             <button
               onClick={() => router.push(`/channels/${currentServer?.id}`)}
-              className="p-2 -ml-1 rounded-lg hover:bg-[#1a1a1a] transition-all duration-150"
+              className="p-2 -ml-1 rounded-lg hover:bg-[var(--app-surface-alt)] transition-colors"
             >
-              <ChevronLeft className="w-5 h-5 text-[#888888]" />
+              <ChevronLeft className="w-5 h-5 text-[var(--app-muted)]" />
             </button>
           )}
-          <Hash className="w-5 sm:w-6 h-5 sm:h-6 text-[#555555] flex-shrink-0" />
+          <Hash className="w-5 sm:w-6 h-5 sm:h-6 text-[var(--app-muted-2)] flex-shrink-0" />
           <span className="font-semibold text-white truncate text-sm sm:text-base">{currentChannel.name}</span>
+          <span
+            className={cn(
+              "ml-1 hidden md:inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors",
+              isConnected
+                ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                : "border-amber-500/30 bg-amber-500/10 text-amber-200"
+            )}
+          >
+            {isConnected ? <Wifi className="h-3 w-3" /> : <WifiOff className="h-3 w-3" />}
+            {isReconnecting ? "Reconnecting..." : isConnected ? "Live" : "Offline"}
+          </span>
         </div>
-        <div className="flex items-center gap-2 sm:gap-4 text-[#888888]">
-          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Notifications coming soon")}>
+        <div className="flex items-center gap-2 sm:gap-4 text-[var(--app-muted)]">
+          <button
+            className="hover:text-white transition-colors hidden sm:block"
+            onClick={() => toast.info("Notifications coming soon")}
+          >
             <Bell className="w-5 h-5" />
           </button>
-          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Pinned messages coming soon")}>
+          <button
+            className="hover:text-white transition-colors hidden sm:block"
+            onClick={() => toast.info("Pinned messages coming soon")}
+          >
             <Pin className="w-5 h-5" />
           </button>
           <button
             onClick={onToggleMembers}
-            className={cn("hover:text-white transition-all duration-150", showMembers && "text-white")}
+            className={cn("hover:text-white transition-colors", showMembers && "text-white")}
           >
             <Users className="w-5 h-5" />
           </button>
-          <div className="h-6 w-px bg-[#222222] hidden md:block" />
+          <div className="h-6 w-px bg-[var(--app-border)] hidden md:block" />
           <div className="relative hidden md:block">
             <input
               type="text"
               placeholder="Search"
-              className="w-32 h-6 px-2 rounded bg-[#111111] text-sm text-white placeholder:text-[#666666] focus:outline-none focus:w-48 transition-all duration-200"
+              className="w-32 h-6 px-2 rounded bg-[var(--app-surface-alt)] text-sm text-white placeholder:text-[var(--app-muted)] focus:outline-none focus:w-48 transition-all"
               onFocus={() => toast.info("Search coming soon")}
             />
-            <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666666]" />
+            <Search className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--app-muted)]" />
           </div>
-          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Inbox coming soon")}>
+          <button className="hover:text-white transition-colors hidden sm:block" onClick={() => toast.info("Inbox coming soon")}>
             <Inbox className="w-5 h-5" />
           </button>
-          <button className="hover:text-white transition-all duration-150 hidden sm:block" onClick={() => toast.info("Help coming soon")}>
+          <button className="hover:text-white transition-colors hidden sm:block" onClick={() => toast.info("Help coming soon")}>
             <HelpCircle className="w-5 h-5" />
           </button>
         </div>
       </div>
 
-      {/* Messages Area - Virtualized for performance */}
-      <div className="flex-1 min-h-0 overflow-hidden">
-        {isLoading ? (
-          <div className="flex flex-col py-4 px-4">
-            <MessageSkeleton count={5} />
+      {/* Messages Area */}
+      <ScrollArea className="flex-1 min-h-0">
+        <div className="flex flex-col py-4">
+          {/* Channel Welcome */}
+          <div className="px-4 pb-4 mb-4 border-b border-[var(--app-border)]">
+            <div className="w-16 h-16 mb-2 rounded-2xl bg-[var(--app-surface-alt)] flex items-center justify-center border border-[var(--app-border)]">
+              <Hash className="w-10 h-10 text-white" />
+            </div>
+            <h1 className="text-3xl font-bold text-white mb-2">Welcome to #{currentChannel.name}!</h1>
+            <p className="text-[var(--app-muted)]">This is the start of the #{currentChannel.name} channel.</p>
           </div>
-        ) : (
-          <Virtuoso
-            ref={virtuosoRef}
-            className="h-full scrollbar-thin"
-            data={groupedMessages}
-            followOutput="smooth"
-            initialTopMostItemIndex={groupedMessages.length > 0 ? groupedMessages.length - 1 : 0}
-            components={{
-              Header: () => (
-                <>
-                  {/* Channel Welcome */}
-                  <div className="px-4 pb-4 mb-4 border-b border-[#1a1a1a] animate-fade-in-up">
-                    <div className="w-16 h-16 mb-2 rounded-full bg-[#111111] flex items-center justify-center">
-                      <Hash className="w-10 h-10 text-white" />
-                    </div>
-                    <h1 className="text-3xl font-bold text-white mb-2">Welcome to #{currentChannel.name}!</h1>
-                    <p className="text-[#666666]">This is the start of the #{currentChannel.name} channel.</p>
-                  </div>
-                  {groupedMessages.length === 0 && (
-                    <div className="text-center text-[#666666] py-8 animate-fade-in">No messages yet. Be the first to say something!</div>
-                  )}
-                </>
-              ),
-            }}
-            itemContent={(index, group) => (
-              <div key={index} className="group px-4 py-0.5 hover:bg-[#111111] message-hover">
+
+          {/* Messages */}
+          {isLoading ? (
+            <div className="flex items-center justify-center py-8">
+              <div className="w-8 h-8 border-2 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
+            </div>
+          ) : groupedMessages.length === 0 ? (
+            <div className="text-center text-[#666666] py-8">No messages yet. Be the first to say something!</div>
+          ) : (
+            groupedMessages.map((group, groupIndex) => (
+              <div
+                key={groupIndex}
+                className="group px-4 py-0.5 hover:bg-[var(--app-surface-alt)]/80 message-hover transition-colors"
+              >
                 <div className="flex gap-4">
                   <div className="w-10 flex-shrink-0">
                     <Avatar className="w-10 h-10 mt-0.5">
@@ -846,9 +948,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                           </div>
                         ) : (
                           <>
-                            <Twemoji className="text-[#888888] leading-relaxed" customEmojis={message.customEmojis}>
+                            <Twemoji className="text-[var(--app-text)] leading-relaxed" customEmojis={message.customEmojis}>
                               {message.content}
-                              {message.edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
+                              {message.edited && <span className="text-xs text-[var(--app-muted-2)] ml-1">(edited)</span>}
                             </Twemoji>
 
                             {/* Link Embeds */}
@@ -861,27 +963,20 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                                   <img
                                     src={attachment.url}
                                     alt={attachment.filename}
-                                    className="max-w-md max-h-80 rounded-md cursor-pointer hover:opacity-90 transition-opacity"
-                                    onClick={() => setLightboxImage({ src: attachment.url, alt: attachment.filename })}
-                                    loading="lazy"
-                                  />
-                                ) : attachment.contentType.startsWith("video/") ? (
-                                  <video
-                                    src={attachment.url}
-                                    controls
-                                    className="max-w-md max-h-80 rounded-md"
+                                    className="max-w-md max-h-80 rounded-md cursor-pointer hover:opacity-90"
+                                    onClick={() => window.open(attachment.url, "_blank")}
                                   />
                                 ) : (
                                   <a
                                     href={attachment.url}
                                     target="_blank"
                                     rel="noopener noreferrer"
-                                    className="flex items-center gap-2 p-3 bg-[#1a1a1a] rounded-md hover:bg-[#222222] max-w-sm"
+                                    className="flex items-center gap-2 p-3 bg-[var(--app-surface-alt)] rounded-md hover:brightness-110 max-w-sm transition"
                                   >
                                     <FileText className="w-8 h-8 text-[#8B5CF6]" />
                                     <div className="min-w-0">
                                       <div className="text-[#8B5CF6] hover:underline truncate">{attachment.filename}</div>
-                                      <div className="text-xs text-[#666666]">{formatFileSize(attachment.size)}</div>
+                                      <div className="text-xs text-[var(--app-muted)]">{formatFileSize(attachment.size)}</div>
                                     </div>
                                   </a>
                                 )}
@@ -895,23 +990,23 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                                   const hasReacted = reaction.userIds.includes(user?.id || "");
                                   return (
                                     <button
-                                      key={reaction.emoji.name}
+                                      key={reaction.emoji.id || reaction.emoji.name}
                                       onClick={() => handleReactionClick(message.id, reaction.emoji.name, hasReacted)}
                                       className={cn(
                                         "flex items-center gap-1 px-2 py-0.5 rounded-full text-sm transition-colors",
                                         hasReacted
                                           ? "bg-[#8B5CF6]/20 border border-[#8B5CF6] text-white"
-                                          : "bg-[#1a1a1a] border border-[#2a2a2a] text-[#888888] hover:bg-[#222222]"
+                                          : "bg-[var(--app-surface-alt)] border border-[var(--app-border)] text-[var(--app-muted)] hover:brightness-110"
                                       )}
                                     >
                                       <span>{reaction.emoji.name}</span>
-                                      <span className={hasReacted ? "text-white" : "text-[#666666]"}>{reaction.count}</span>
+                                      <span className={hasReacted ? "text-white" : "text-[var(--app-muted)]"}>{reaction.count}</span>
                                     </button>
                                   );
                                 })}
                                 <button
                                   onClick={() => setReactionPickerMessage(message.id)}
-                                  className="flex items-center justify-center w-7 h-7 rounded-full bg-[#1a1a1a] border border-[#2a2a2a] text-[#666666] hover:bg-[#222222] hover:text-white transition-colors"
+                                  className="flex items-center justify-center w-7 h-7 rounded-full bg-[var(--app-surface-alt)] border border-[var(--app-border)] text-[var(--app-muted)] hover:brightness-110 hover:text-white transition-colors"
                                 >
                                   <Plus className="w-4 h-4" />
                                 </button>
@@ -920,17 +1015,17 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
                             {/* Message Actions */}
                             <div className="absolute -top-3 right-0 opacity-0 group-hover/message:opacity-100 transition-opacity z-10">
-                              <div className="flex items-center bg-[#1a1a1a] border border-[#2a2a2a] rounded-md shadow-lg">
-                                <Popover
+                              <div className="flex items-center bg-[var(--app-surface-alt)] border border-[var(--app-border)] rounded-md shadow-lg">
+                                <Popover 
                                   open={reactionPickerMessage === message.id}
                                   onOpenChange={(open) => setReactionPickerMessage(open ? message.id : null)}
                                 >
                                   <PopoverTrigger asChild>
                                     <button
-                                      className="p-1.5 hover:bg-[#2a2a2a] rounded-l-md transition-colors"
+                                      className="p-1.5 hover:bg-black/20 rounded-l-md transition-colors"
                                       title="Add Reaction"
                                     >
-                                      <Smile className="w-4 h-4 text-[#888888]" />
+                                      <Smile className="w-4 h-4 text-[var(--app-muted)]" />
                                     </button>
                                   </PopoverTrigger>
                                   <PopoverContent className="w-auto p-0 border-none" side="top" align="end">
@@ -942,15 +1037,15 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                                 </Popover>
                                 <button
                                   onClick={() => toast.info("Reply coming soon")}
-                                  className="p-1.5 hover:bg-[#2a2a2a] transition-colors"
+                                  className="p-1.5 hover:bg-black/20 transition-colors"
                                   title="Reply"
                                 >
-                                  <Reply className="w-4 h-4 text-[#888888]" />
+                                  <Reply className="w-4 h-4 text-[var(--app-muted)]" />
                                 </button>
                                 <DropdownMenu>
                                   <DropdownMenuTrigger asChild>
-                                    <button className="p-1.5 hover:bg-[#2a2a2a] rounded-r-md transition-colors">
-                                      <MoreHorizontal className="w-4 h-4 text-[#888888]" />
+                                    <button className="p-1.5 hover:bg-black/20 rounded-r-md transition-colors">
+                                      <MoreHorizontal className="w-4 h-4 text-[var(--app-muted)]" />
                                     </button>
                                   </DropdownMenuTrigger>
                                   <DropdownMenuContent
@@ -997,31 +1092,38 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                   </div>
                 </div>
               </div>
-            )}
-          />
-        )}
-      </div>
+            ))
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+      </ScrollArea>
 
       {/* Typing Indicator */}
-      {typingUsers.length > 0 && (
-        <div className="px-4 py-1 text-sm text-[#888888]">
-          <span className="font-medium">{typingUsers.join(", ")}</span>
-          {typingUsers.length === 1 ? " is typing..." : " are typing..."}
+      {typingStatusText && (
+        <div className="px-4 py-1.5 text-sm text-[var(--app-muted)]">
+          <span className="inline-flex items-center gap-2">
+            <span className="flex gap-1">
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:0ms]" />
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:120ms]" />
+              <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:240ms]" />
+            </span>
+            {typingStatusText}
+          </span>
         </div>
       )}
 
       {/* Attachment Previews */}
       {attachments.length > 0 && (
         <div className="px-4 pb-2">
-          <div className="flex flex-wrap gap-2 p-2 bg-[#111111] rounded-lg border border-[#1a1a1a]">
+          <div className="flex flex-wrap gap-2 p-2 bg-[var(--app-surface)] rounded-lg border border-[var(--app-border)]">
             {attachments.map((file, index) => (
               <div key={index} className="relative group">
                 {file.type.startsWith("image/") && attachmentPreviews[index] ? (
                   <img src={attachmentPreviews[index]} alt={file.name} className="w-20 h-20 object-cover rounded-md" />
                 ) : (
-                  <div className="w-20 h-20 bg-[#1a1a1a] rounded-md flex flex-col items-center justify-center p-2">
+                  <div className="w-20 h-20 bg-[var(--app-surface-alt)] rounded-md flex flex-col items-center justify-center p-2">
                     <FileText className="w-6 h-6 text-[#8B5CF6] mb-1" />
-                    <span className="text-xs text-[#888888] truncate w-full text-center">{file.name.slice(0, 10)}</span>
+                    <span className="text-xs text-[var(--app-muted)] truncate w-full text-center">{file.name.slice(0, 10)}</span>
                   </div>
                 )}
                 <button
@@ -1037,15 +1139,12 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       )}
 
       {/* Message Input */}
-      <div className={cn(
-        "px-2 sm:px-4 flex-shrink-0",
-        isMobile ? "pb-2 safe-area-bottom" : "pb-4 sm:pb-6"
-      )}>
-        <div className="relative bg-[#111111] rounded-lg border border-[#1a1a1a]">
+      <div className="px-2 sm:px-4 pb-4 sm:pb-6 flex-shrink-0">
+        <div className="relative bg-[var(--app-surface)] rounded-lg border border-[var(--app-border)] shadow-[var(--app-elev-1)]">
           <input type="file" ref={fileInputRef} onChange={handleFileSelect} multiple accept="*/*" className="hidden" />
           <button
             onClick={() => fileInputRef.current?.click()}
-            className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 text-[#888888] hover:text-white transition-colors"
+            className="absolute left-2 sm:left-4 top-1/2 -translate-y-1/2 text-[var(--app-muted)] hover:text-white transition-colors"
             title="Upload file"
           >
             <PlusCircle className="w-5 sm:w-6 h-5 sm:h-6" />
@@ -1056,47 +1155,23 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
             placeholder={`Message #${currentChannel.name}`}
-            className="w-full min-h-[44px] max-h-[300px] py-2.5 pl-10 sm:pl-14 pr-24 sm:pr-36 bg-transparent border-none text-white placeholder:text-[#555555] resize-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm sm:text-base"
+            className="w-full min-h-[44px] max-h-[300px] py-2.5 pl-10 sm:pl-14 pr-24 sm:pr-36 bg-transparent border-none text-white placeholder:text-[var(--app-muted-2)] resize-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm sm:text-base"
             rows={1}
             disabled={isSending}
           />
-          <div className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 sm:gap-4 text-[#888888]">
+          <div className="absolute right-2 sm:right-4 top-1/2 -translate-y-1/2 flex items-center gap-2 sm:gap-4 text-[var(--app-muted)]">
             <button
               onClick={() => toast.info("Gifts coming soon")}
               className="hover:text-white transition-colors hidden sm:block"
             >
               <Gift className="w-6 h-6" />
             </button>
-            <Popover open={showGifPicker} onOpenChange={setShowGifPicker}>
-              <PopoverTrigger asChild>
-                <button className="hover:text-white transition-colors hidden sm:block">
-                  <ImageIcon className="w-6 h-6" />
-                </button>
-              </PopoverTrigger>
-              <PopoverContent
-                side="top"
-                align="end"
-                className="w-auto p-0 border-none bg-transparent shadow-xl"
-              >
-                <GifPicker
-                  onGifSelect={async (gif: { url: string }) => {
-                    setShowGifPicker(false);
-                    if (!currentChannel) return;
-
-                    // Instantly send the GIF as a message
-                    try {
-                      await fetch(`/api/channels/${currentChannel.id}/messages`, {
-                        method: "POST",
-                        headers: { "Content-Type": "application/json" },
-                        body: JSON.stringify({ content: gif.url }),
-                      });
-                    } catch (error) {
-                      toast.error("Failed to send GIF");
-                    }
-                  }}
-                />
-              </PopoverContent>
-            </Popover>
+            <button
+              onClick={() => toast.info("Stickers coming soon")}
+              className="hover:text-white transition-colors hidden sm:block"
+            >
+              <Sticker className="w-6 h-6" />
+            </button>
             <Popover open={showEmojiPicker} onOpenChange={setShowEmojiPicker}>
               <PopoverTrigger asChild>
                 <button className="hover:text-white transition-colors">
@@ -1150,14 +1225,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-
-      {/* Image Lightbox */}
-      <ImageLightbox
-        src={lightboxImage?.src || ""}
-        alt={lightboxImage?.alt}
-        isOpen={!!lightboxImage}
-        onClose={() => setLightboxImage(null)}
-      />
     </div>
   );
 }
