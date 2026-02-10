@@ -8,6 +8,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { EMOJI_CATEGORIES, type EmojiCategory } from "@/lib/constants/emojis";
+import { GifPicker } from "@/components/chat/GifPicker";
 
 interface CustomEmoji {
   id: string;
@@ -133,9 +134,6 @@ export function CustomEmojiPicker({
 }: EmojiPickerProps) {
   const [search, setSearch] = useState("");
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
-  const [gifSearch, setGifSearch] = useState("");
-  const [gifResults, setGifResults] = useState<Array<{ id: string; title: string; url: string; previewUrl: string }>>([]);
-  const [isLoadingGifs, setIsLoadingGifs] = useState(false);
   const [stickers, setStickers] = useState<StickerItem[]>([]);
   const [isLoadingStickers, setIsLoadingStickers] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -239,36 +237,6 @@ export function CustomEmojiPicker({
   }, [handleScroll]);
 
   useEffect(() => {
-    if (activeTab !== "gifs") return;
-    let active = true;
-    const run = async () => {
-      setIsLoadingGifs(true);
-      try {
-        const response = await fetch(`/api/gifs/search?q=${encodeURIComponent(gifSearch)}&limit=24`);
-        if (!response.ok) return;
-        const data = await response.json();
-        if (active) {
-          setGifResults(data.gifs || []);
-        }
-      } catch {
-        if (active) {
-          setGifResults([]);
-        }
-      } finally {
-        if (active) {
-          setIsLoadingGifs(false);
-        }
-      }
-    };
-
-    const timer = setTimeout(run, 200);
-    return () => {
-      active = false;
-      clearTimeout(timer);
-    };
-  }, [activeTab, gifSearch]);
-
-  useEffect(() => {
     if (activeTab !== "stickers" || !serverId) {
       setStickers([]);
       return;
@@ -359,58 +327,11 @@ export function CustomEmojiPicker({
 
       {/* Content based on tab */}
       {activeTab === "gifs" ? (
-        <div className="flex-1 min-h-[400px] flex flex-col">
-          <div className="p-3 border-b border-[#2a2a40]">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#8888aa]" />
-              <Input
-                value={gifSearch}
-                onChange={(e) => setGifSearch(e.target.value)}
-                placeholder="Search GIFs..."
-                className="pl-10 pr-10 bg-[#0f0f1a] border-[#2a2a40] text-white placeholder:text-[#8888aa] h-10 rounded-lg focus-visible:ring-1 focus-visible:ring-[#8B5CF6]"
-              />
-              {gifSearch && (
-                <button
-                  onClick={() => setGifSearch("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8888aa] hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              )}
-            </div>
-          </div>
-          <div className="p-3 h-[340px] overflow-y-auto">
-            {isLoadingGifs ? (
-              <div className="grid grid-cols-3 gap-2">
-                {Array.from({ length: 9 }).map((_, idx) => (
-                  <div key={idx} className="h-24 rounded-md bg-[#2a2a40] animate-pulse" />
-                ))}
-              </div>
-            ) : gifResults.length > 0 ? (
-              <div className="grid grid-cols-3 gap-2">
-                {gifResults.map((gif) => (
-                  <button
-                    key={gif.id}
-                    onClick={() => onGifSelect?.(gif.url)}
-                    className="group relative rounded-md overflow-hidden border border-[#2a2a40] hover:border-[#8B5CF6] transition-colors"
-                    title={gif.title}
-                  >
-                    <img
-                      src={gif.previewUrl || gif.url}
-                      alt={gif.title}
-                      className="w-full h-24 object-cover group-hover:scale-105 transition-transform"
-                      loading="lazy"
-                    />
-                  </button>
-                ))}
-              </div>
-            ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center">
-                <ImageIcon className="w-8 h-8 text-[#8888aa] mb-3" />
-                <p className="text-[#8888aa] text-sm">No GIF results</p>
-              </div>
-            )}
-          </div>
+        <div className="flex-1 min-h-[400px]">
+          <GifPicker
+            onGifSelect={(gif) => onGifSelect?.(gif.url)}
+            className="w-full h-[400px] rounded-none border-none bg-[#1a1a2e]"
+          />
         </div>
       ) : activeTab === "stickers" ? (
         <div className="flex-1 min-h-[400px] flex flex-col">
