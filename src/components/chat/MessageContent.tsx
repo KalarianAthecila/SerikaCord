@@ -25,7 +25,7 @@ interface MessageContentProps {
 // Check if a URL is an image/GIF
 function isImageUrl(url: string): boolean {
   const imageExtensions = /\.(gif|jpg|jpeg|png|webp|svg|bmp)(\?.*)?$/i;
-  const imageHosts = /^https?:\/\/(cdn\.ado\.wtf|i\.imgur\.com|media\.tenor\.com|media\.giphy\.com|cdn\.discordapp\.com)/i;
+  const imageHosts = /^https?:\/\/(gifs\.serika\.dev|cdn\.ado\.wtf|i\.imgur\.com|media\.tenor\.com|media\.giphy\.com|cdn\.discordapp\.com)/i;
   return imageExtensions.test(url) || imageHosts.test(url);
 }
 

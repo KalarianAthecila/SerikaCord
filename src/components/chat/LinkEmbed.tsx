@@ -32,7 +32,7 @@ function getUrlType(url: string): "youtube" | "twitter" | "generic" {
 }
 
 function isImageUrl(url: string): boolean {
-  return /\.(gif|jpg|jpeg|png|webp|svg|bmp)(\?.*)?$/i.test(url);
+  return /\.(gif|jpg|jpeg|png|webp|svg|bmp)(\?.*)?$/i.test(url) || /^https?:\/\/gifs\.serika\.dev/i.test(url);
 }
 
 function YouTubeEmbed({ videoId, url }: { videoId: string; url: string }) {
