@@ -15,9 +15,24 @@ interface CustomEmoji {
   animated?: boolean;
 }
 
+interface MentionUser {
+  id: string;
+  username?: string;
+  displayName?: string;
+}
+
+interface MentionRole {
+  id: string;
+  name: string;
+  color?: string;
+}
+
 interface MessageContentProps {
   content: string;
   serverEmojis?: CustomEmoji[];
+  mentionUsers?: MentionUser[];
+  mentionRoles?: MentionRole[];
+  currentUserId?: string;
   className?: string;
   edited?: boolean;
   onMediaClick?: (media: { src: string; alt?: string }) => void;
@@ -47,12 +62,33 @@ function isOnlyEmoji(text: string, customEmojiCount: number): boolean {
 export function MessageContent({
   content,
   serverEmojis = [],
+  mentionUsers = [],
+  mentionRoles = [],
+  currentUserId,
   className,
   edited,
   onMediaClick,
   onImageClick,
 }: MessageContentProps) {
   const textRef = useRef<HTMLSpanElement>(null);
+  const mentionUserMap = useMemo(() => {
+    const map = new Map<string, MentionUser>();
+    for (const mentionUser of mentionUsers) {
+      if (mentionUser?.id) {
+        map.set(mentionUser.id, mentionUser);
+      }
+    }
+    return map;
+  }, [mentionUsers]);
+  const mentionRoleMap = useMemo(() => {
+    const map = new Map<string, MentionRole>();
+    for (const mentionRole of mentionRoles) {
+      if (mentionRole?.id) {
+        map.set(mentionRole.id, mentionRole);
+      }
+    }
+    return map;
+  }, [mentionRoles]);
   const handleMediaClick = (src: string, alt?: string) => {
     onMediaClick?.({ src, alt });
     onImageClick?.(src, alt);
@@ -73,9 +109,16 @@ export function MessageContent({
       return { parts: [], customEmojiCount: 0 };
     }
 
-    const customEmojiRegex = /<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>|:([a-zA-Z0-9_]+):/gi;
+    const tokenRegex = /<@!?([a-f0-9]{24})>|<@&([a-f0-9]{24})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>|:([a-zA-Z0-9_]+):/gi;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
-    const parts: Array<{ type: "text" | "custom-emoji" | "image" | "link"; content: string; emoji?: CustomEmoji; url?: string }> = [];
+    const parts: Array<{
+      type: "text" | "custom-emoji" | "image" | "link" | "mention-user" | "mention-role" | "mention-special";
+      content: string;
+      emoji?: CustomEmoji;
+      url?: string;
+      mentionId?: string;
+      mentionKind?: "everyone" | "here";
+    }> = [];
     
     // First, split by URLs
     let lastIndex = 0;
@@ -104,33 +147,67 @@ export function MessageContent({
           parts.push({ type: "link", content: segment.content, url: segment.content });
         }
       } else {
-        // Process text for custom emojis
+        // Process text for custom emojis and mentions
         let textLastIndex = 0;
-        let emojiMatch;
+        let tokenMatch;
         const textContent = segment.content;
-        customEmojiRegex.lastIndex = 0;
+        tokenRegex.lastIndex = 0;
 
-        while ((emojiMatch = customEmojiRegex.exec(textContent)) !== null) {
-          if (emojiMatch.index > textLastIndex) {
-            parts.push({ type: "text", content: textContent.slice(textLastIndex, emojiMatch.index) });
+        while ((tokenMatch = tokenRegex.exec(textContent)) !== null) {
+          if (tokenMatch.index > textLastIndex) {
+            parts.push({ type: "text", content: textContent.slice(textLastIndex, tokenMatch.index) });
           }
 
-          const emojiName = (emojiMatch[2] || emojiMatch[4] || "").toLowerCase();
-          const emojiId = emojiMatch[3];
+          const userMentionId = tokenMatch[1];
+          const roleMentionId = tokenMatch[2];
+          const specialMention = tokenMatch[3] as "everyone" | "here" | undefined;
+          const emojiName = (tokenMatch[5] || tokenMatch[7] || "").toLowerCase();
+          const emojiId = tokenMatch[6];
+
+          if (userMentionId) {
+            parts.push({
+              type: "mention-user",
+              content: tokenMatch[0],
+              mentionId: userMentionId,
+            });
+            textLastIndex = tokenMatch.index + tokenMatch[0].length;
+            continue;
+          }
+
+          if (roleMentionId) {
+            parts.push({
+              type: "mention-role",
+              content: tokenMatch[0],
+              mentionId: roleMentionId,
+            });
+            textLastIndex = tokenMatch.index + tokenMatch[0].length;
+            continue;
+          }
+
+          if (specialMention) {
+            parts.push({
+              type: "mention-special",
+              content: `@${specialMention}`,
+              mentionKind: specialMention,
+            });
+            textLastIndex = tokenMatch.index + tokenMatch[0].length;
+            continue;
+          }
+
           const foundEmoji = serverEmojis.find((e) => {
             const normalizedName = e.name?.toLowerCase?.() || "";
-            const normalizedId = e.id || (e as any)._id;
+            const normalizedId = e.id || e._id;
             return normalizedName === emojiName || (emojiId && normalizedId === emojiId);
           });
 
           if (foundEmoji) {
-            parts.push({ type: "custom-emoji", content: emojiMatch[0], emoji: foundEmoji });
+            parts.push({ type: "custom-emoji", content: tokenMatch[0], emoji: foundEmoji });
             customEmojiCount++;
           } else {
-            parts.push({ type: "text", content: emojiMatch[0] });
+            parts.push({ type: "text", content: tokenMatch[0] });
           }
 
-          textLastIndex = emojiMatch.index + emojiMatch[0].length;
+          textLastIndex = tokenMatch.index + tokenMatch[0].length;
         }
 
         if (textLastIndex < textContent.length) {
@@ -229,6 +306,49 @@ export function MessageContent({
             >
               {part.content}
             </a>
+          );
+        }
+        if (part.type === "mention-user" && part.mentionId) {
+          const mentionUser = mentionUserMap.get(part.mentionId);
+          const mentionLabel = mentionUser?.displayName || mentionUser?.username || "unknown";
+          const isSelfMention = Boolean(currentUserId && currentUserId === part.mentionId);
+          return (
+            <span
+              key={`mention-user-${index}-${part.mentionId}`}
+              className={cn(
+                "inline-block px-1 py-0.5 rounded font-medium",
+                isSelfMention
+                  ? "bg-yellow-500/25 text-yellow-200"
+                  : "bg-[var(--app-accent)]/20 text-[var(--app-accent)]"
+              )}
+            >
+              @{mentionLabel}
+            </span>
+          );
+        }
+        if (part.type === "mention-role" && part.mentionId) {
+          const mentionRole = mentionRoleMap.get(part.mentionId);
+          const mentionLabel = mentionRole?.name || "role";
+          const roleColor = mentionRole?.color || "var(--app-accent)";
+          const roleBackgroundColor = roleColor.startsWith("#") ? `${roleColor}22` : "rgba(124, 58, 237, 0.2)";
+          return (
+            <span
+              key={`mention-role-${index}-${part.mentionId}`}
+              className="inline-block px-1 py-0.5 rounded font-medium"
+              style={{ backgroundColor: roleBackgroundColor, color: roleColor }}
+            >
+              @{mentionLabel}
+            </span>
+          );
+        }
+        if (part.type === "mention-special" && part.mentionKind) {
+          return (
+            <span
+              key={`mention-special-${index}-${part.mentionKind}`}
+              className="inline-block px-1 py-0.5 rounded font-medium bg-yellow-500/20 text-yellow-200"
+            >
+              @{part.mentionKind}
+            </span>
           );
         }
         return (

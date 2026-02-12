@@ -38,14 +38,45 @@ export interface GalleryMessageLike {
   attachments?: AttachmentLike[] | null;
 }
 
-const IMAGE_EXTENSIONS = /\.(gif|jpg|jpeg|png|webp|svg|bmp|avif)(\?.*)?$/i;
+const IMAGE_EXTENSIONS = /\.(gif|jpg|jpeg|png|webp|svg|bmp|avif)(?:$|[?#])/i;
 const IMAGE_HOSTS =
-  /^https?:\/\/(gifs\.serika\.dev|cdn\.ado\.wtf|i\.imgur\.com|media\.tenor\.com|media\.giphy\.com|cdn\.discordapp\.com|images-ext-\d+\.discordapp\.net)/i;
+  /^https?:\/\/(gifs\.serika\.dev|cdn\.ado\.wtf|i\.imgur\.com|media\d*\.tenor\.com|media\.giphy\.com|i\.giphy\.com|cdn\.discordapp\.com|images-ext-\d+\.discordapp\.net|cdn\.discordapp\.net)/i;
 const URL_REGEX = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/gi;
+
+const IMAGE_QUERY_HINTS = ["gif", "jpg", "jpeg", "png", "webp", "svg", "bmp", "avif", "image/"];
+
+function hasImageQueryHint(url: URL): boolean {
+  const paramsToCheck = ["format", "fm", "ext", "type", "mime", "content-type"];
+  for (const key of paramsToCheck) {
+    const value = url.searchParams.get(key);
+    if (!value) continue;
+    const normalized = value.toLowerCase();
+    if (IMAGE_QUERY_HINTS.some((hint) => normalized.includes(hint))) {
+      return true;
+    }
+  }
+  return false;
+}
 
 export function isImageLikeUrl(url: string): boolean {
   if (!url) return false;
-  return IMAGE_EXTENSIONS.test(url) || IMAGE_HOSTS.test(url);
+  if (IMAGE_EXTENSIONS.test(url) || IMAGE_HOSTS.test(url)) {
+    return true;
+  }
+
+  try {
+    const parsed = new URL(url);
+    if (IMAGE_EXTENSIONS.test(parsed.pathname)) {
+      return true;
+    }
+    if (hasImageQueryHint(parsed)) {
+      return true;
+    }
+  } catch {
+    return false;
+  }
+
+  return false;
 }
 
 function toAttachmentObject(attachment: AttachmentLike): AttachmentObject {

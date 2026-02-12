@@ -1,23 +1,54 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { cn } from "@/lib/utils";
 
+interface MemberRole {
+  id: string;
+  name: string;
+  color: string;
+  position: number;
+  permissions: string;
+  hoist: boolean;
+  mentionable: boolean;
+  managed: boolean;
+  isDefault: boolean;
+  memberCount: number;
+}
+
 interface Member {
   id: string;
+  membershipId: string;
   username: string;
   displayName: string;
-  avatar?: string;
+  avatar?: string | null;
   status: "online" | "idle" | "dnd" | "offline";
-  roles?: Array<{
-    id: string;
-    name: string;
-    color?: string;
-  }>;
+  customStatus?: string | null;
+  isPremium?: boolean;
+  joinedAt?: string | null;
+  roles: MemberRole[];
+  highestRole?: MemberRole | null;
+  highestHoistedRole?: MemberRole | null;
+}
+
+interface GroupedRoleMembers {
+  key: string;
+  label: string;
+  color?: string;
+  position: number;
+  members: Member[];
+}
+
+function sortMembersByName(items: Member[]): Member[] {
+  return [...items].sort((a, b) => {
+    const nameA = (a.displayName || a.username || "").toLowerCase();
+    const nameB = (b.displayName || b.username || "").toLowerCase();
+    return nameA.localeCompare(nameB);
+  });
 }
 
 export function MemberSidebar() {
@@ -30,24 +61,13 @@ export function MemberSidebar() {
 
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/servers/${currentServer.id}/members`);
+      const response = await fetch(`/api/servers/${currentServer.id}/members?limit=1000`);
       if (response.ok) {
         const data = await response.json();
-        // Transform the API response - members have userId populated
         const rawMembers = Array.isArray(data) ? data : data?.members || [];
-        const transformedMembers = rawMembers.map((m: { _id?: string; userId?: { _id?: string; username?: string; displayName?: string; avatar?: string; status?: string }; roles?: Array<{ _id?: string; name?: string; color?: string }> }) => ({
-          id: m.userId?._id || m._id || '',
-          username: m.userId?.username || 'Unknown',
-          displayName: m.userId?.displayName || m.userId?.username || 'Unknown',
-          avatar: m.userId?.avatar,
-          status: m.userId?.status || 'offline',
-          roles: m.roles?.map((r: { _id?: string; name?: string; color?: string }) => ({
-            id: r._id || '',
-            name: r.name || '',
-            color: r.color,
-          })) || [],
-        }));
-        setMembers(transformedMembers);
+        setMembers(rawMembers as Member[]);
+      } else {
+        setMembers([]);
       }
     } catch (error) {
       console.error("Failed to fetch members:", error);
@@ -58,30 +78,93 @@ export function MemberSidebar() {
   }, [currentServer]);
 
   useEffect(() => {
-    fetchMembers();
+    void fetchMembers();
   }, [fetchMembers]);
 
-  const onlineMembers = members.filter((m) => m.status !== "offline");
-  const offlineMembers = members.filter((m) => m.status === "offline");
+  useEffect(() => {
+    if (!currentServer) return;
+
+    const poll = window.setInterval(() => {
+      void fetchMembers();
+    }, 30000);
+
+    const handleWindowFocus = () => {
+      void fetchMembers();
+    };
+
+    window.addEventListener("focus", handleWindowFocus);
+    return () => {
+      window.clearInterval(poll);
+      window.removeEventListener("focus", handleWindowFocus);
+    };
+  }, [currentServer, fetchMembers]);
+
+  const groupedOnlineMembers = useMemo(() => {
+    const onlineMembers = sortMembersByName(members.filter((member) => member.status !== "offline"));
+    const groups = new Map<string, GroupedRoleMembers>();
+
+    for (const member of onlineMembers) {
+      const hoistedRole = member.roles.find((role) => role.hoist) || null;
+      const key = hoistedRole ? `role-${hoistedRole.id}` : "no-role";
+
+      if (!groups.has(key)) {
+        groups.set(key, {
+          key,
+          label: hoistedRole?.name || "No Role",
+          color: hoistedRole?.color,
+          position: hoistedRole?.position ?? -1,
+          members: [],
+        });
+      }
+
+      groups.get(key)?.members.push(member);
+    }
+
+    return Array.from(groups.values()).sort((a, b) => {
+      if (a.key === "no-role") return 1;
+      if (b.key === "no-role") return -1;
+      return b.position - a.position;
+    });
+  }, [members]);
+
+  const offlineMembers = useMemo(
+    () => sortMembersByName(members.filter((member) => member.status === "offline")),
+    [members]
+  );
 
   if (!currentServer) return null;
 
   return (
     <div className="w-60 h-full bg-[var(--app-bg)] border-l border-[var(--app-border)] flex-shrink-0">
       <ScrollArea className="h-full">
-        <div className="py-4">
+        <div className="py-4 space-y-4">
           {isLoading ? (
             <div className="flex items-center justify-center py-8">
               <div className="w-6 h-6 border-2 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
             </div>
           ) : (
             <>
-              {onlineMembers.map((member, index) => (
-                <MemberItem key={member.id || `online-${index}`} member={member} serverId={currentServer.id} />
+              {groupedOnlineMembers.map((group) => (
+                <div key={group.key} className="space-y-1">
+                  <p className="px-4 text-[11px] font-semibold uppercase tracking-wide text-[#7d7d7d]">
+                    {group.label} — {group.members.length}
+                  </p>
+                  {group.members.map((member) => (
+                    <MemberItem key={member.id || member.membershipId} member={member} serverId={currentServer.id} />
+                  ))}
+                </div>
               ))}
-              {offlineMembers.map((member, index) => (
-                <MemberItem key={member.id || `offline-${index}`} member={member} serverId={currentServer.id} />
-              ))}
+
+              {offlineMembers.length > 0 && (
+                <div className="space-y-1">
+                  <p className="px-4 text-[11px] font-semibold uppercase tracking-wide text-[#7d7d7d]">
+                    Offline — {offlineMembers.length}
+                  </p>
+                  {offlineMembers.map((member) => (
+                    <MemberItem key={member.id || member.membershipId} member={member} serverId={currentServer.id} />
+                  ))}
+                </div>
+              )}
 
               {members.length === 0 && (
                 <div className="text-center text-[var(--app-muted-2)] text-sm py-8">
@@ -103,14 +186,10 @@ interface MemberItemProps {
 
 function MemberItem({ member, serverId }: MemberItemProps) {
   const isOffline = member.status === "offline";
+  const roleColor = member.highestRole?.color;
 
   return (
-    <MemberProfilePopup 
-      member={member} 
-      serverId={serverId}
-      side="left"
-      align="start"
-    >
+    <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
       <button
         className={cn(
           "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-3 hover:bg-[var(--app-surface)] transition-all group",
@@ -120,7 +199,7 @@ function MemberItem({ member, serverId }: MemberItemProps) {
       >
         <div className="relative flex-shrink-0">
           <Avatar className="w-8 h-8">
-            <AvatarImage src={member.avatar} alt={member.displayName || member.username} />
+            <AvatarImage src={member.avatar || undefined} alt={member.displayName || member.username} />
             <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
               {(member.displayName || member.username || "?").charAt(0).toUpperCase()}
             </AvatarFallback>
@@ -136,15 +215,7 @@ function MemberItem({ member, serverId }: MemberItemProps) {
           />
         </div>
         <div className="flex-1 min-w-0 text-left">
-          <div
-            className={cn(
-              "text-sm font-medium truncate",
-              member.roles?.[0]?.color
-                ? `text-[${member.roles[0].color}]`
-                : "text-white"
-            )}
-            style={member.roles?.[0]?.color ? { color: member.roles[0].color } : undefined}
-          >
+          <div className="text-sm font-medium truncate" style={roleColor ? { color: roleColor } : undefined}>
             {member.displayName || member.username || "Unknown"}
           </div>
         </div>

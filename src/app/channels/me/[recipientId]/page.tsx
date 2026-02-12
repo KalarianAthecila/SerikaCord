@@ -83,7 +83,26 @@ export default function DMConversationPage() {
   const typingTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
   const lastTypingSentAtRef = useRef(0);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [standaloneMedia, setStandaloneMedia] = useState<{ src: string; alt?: string } | null>(null);
   const mediaGallery = useMemo(() => buildGalleryFromMessages(messages), [messages]);
+  const mentionUsers = useMemo(() => {
+    const entries: Array<{ id: string; username: string; displayName: string }> = [];
+    if (user?.id) {
+      entries.push({
+        id: user.id,
+        username: user.username || user.displayName || "you",
+        displayName: user.displayName || user.username || "You",
+      });
+    }
+    if (recipient?.id) {
+      entries.push({
+        id: recipient.id,
+        username: recipient.username,
+        displayName: recipient.displayName || recipient.username,
+      });
+    }
+    return entries;
+  }, [recipient?.displayName, recipient?.id, recipient?.username, user?.displayName, user?.id, user?.username]);
 
   // Scroll to bottom of messages
   const scrollToBottom = () => {
@@ -353,12 +372,12 @@ export default function DMConversationPage() {
     (src: string, alt?: string, messageId?: string) => {
       const mediaIndex = findGalleryIndex(mediaGallery, { src, messageId });
       if (mediaIndex >= 0) {
+        setStandaloneMedia(null);
         setLightboxIndex(mediaIndex);
         return;
       }
-      if (typeof window !== "undefined") {
-        window.open(src, "_blank", "noopener,noreferrer");
-      }
+      setLightboxIndex(null);
+      setStandaloneMedia({ src, alt });
     },
     [mediaGallery]
   );
@@ -506,6 +525,8 @@ export default function DMConversationPage() {
                               key={message.id}
                               content={message.content}
                               serverEmojis={message.customEmojis}
+                              mentionUsers={mentionUsers}
+                              currentUserId={user?.id}
                               className="chat-message-body text-[var(--app-text)]"
                               onMediaClick={({ src, alt }) => openMediaViewer(src, alt, message.id)}
                             />
@@ -676,11 +697,14 @@ export default function DMConversationPage() {
       )}
 
       <ImageLightbox
-        items={mediaGallery}
-        currentIndex={lightboxIndex ?? 0}
-        isOpen={lightboxIndex !== null}
-        onNavigate={setLightboxIndex}
-        onClose={() => setLightboxIndex(null)}
+        items={standaloneMedia ? [standaloneMedia] : mediaGallery}
+        currentIndex={standaloneMedia ? 0 : lightboxIndex ?? 0}
+        isOpen={lightboxIndex !== null || standaloneMedia !== null}
+        onNavigate={standaloneMedia ? undefined : setLightboxIndex}
+        onClose={() => {
+          setLightboxIndex(null);
+          setStandaloneMedia(null);
+        }}
       />
     </div>
   );

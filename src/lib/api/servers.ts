@@ -5,6 +5,8 @@ import { checkRateLimit, getClientIP, sanitizeInput, isValidObjectId } from '@/l
 import { cache } from '@/lib/db';
 import { nanoid } from 'nanoid';
 import { config } from '@/lib/config';
+import { resolveEffectiveStatus } from '@/lib/services/presence';
+import { Types } from 'mongoose';
 
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -22,6 +24,120 @@ const DEFAULT_PERMISSIONS = {
   everyone: '1071698660929',
   admin: '8',
 };
+
+interface PopulatedRole {
+  _id: Types.ObjectId;
+  name: string;
+  color?: number | string | null;
+  position?: number;
+  permissions?: string;
+  hoist?: boolean;
+  mentionable?: boolean;
+  managed?: boolean;
+  isDefault?: boolean;
+}
+
+interface PopulatedMemberUser {
+  _id: Types.ObjectId;
+  username: string;
+  displayName?: string;
+  avatar?: string;
+  status?: string;
+  customStatus?: string;
+  isPremium?: boolean;
+  presenceLastHeartbeatAt?: Date | null;
+}
+
+function normalizeRoleColor(color?: number | string | null): string {
+  if (typeof color === 'number' && Number.isFinite(color)) {
+    return `#${Math.max(0, color).toString(16).padStart(6, '0').toUpperCase()}`;
+  }
+
+  if (typeof color === 'string' && color.trim()) {
+    const stripped = color.trim().replace(/^#/, '');
+    if (/^[0-9a-fA-F]{6}$/.test(stripped)) {
+      return `#${stripped.toUpperCase()}`;
+    }
+    const asNumber = Number.parseInt(stripped, 16);
+    if (Number.isFinite(asNumber)) {
+      return `#${Math.max(0, asNumber).toString(16).padStart(6, '0').toUpperCase()}`;
+    }
+  }
+
+  return '#99AAB5';
+}
+
+function parseHexColorToNumber(color?: string | null): number {
+  if (!color) return 0x99aab5;
+  const stripped = color.trim().replace(/^#/, '');
+  if (!/^[0-9a-fA-F]{6}$/.test(stripped)) return 0x99aab5;
+  return Number.parseInt(stripped, 16);
+}
+
+function normalizeRoleDto(role: PopulatedRole, memberCount: number = 0) {
+  return {
+    id: role._id.toString(),
+    name: role.name,
+    color: normalizeRoleColor(role.color),
+    position: role.position ?? 0,
+    permissions: role.permissions || '0',
+    hoist: Boolean(role.hoist),
+    mentionable: Boolean(role.mentionable),
+    managed: Boolean(role.managed),
+    isDefault: Boolean(role.isDefault),
+    memberCount,
+  };
+}
+
+async function getRoleMemberCountMap(serverId: string): Promise<Map<string, number>> {
+  const aggregated = await ServerMember.aggregate<{ _id: Types.ObjectId; count: number }>([
+    { $match: { serverId: new Types.ObjectId(serverId) } },
+    { $unwind: '$roles' },
+    { $group: { _id: '$roles', count: { $sum: 1 } } },
+  ]);
+
+  return new Map(aggregated.map((item) => [item._id.toString(), item.count]));
+}
+
+async function getNormalizedRoles(serverId: string) {
+  const roles = await Role.find({ serverId }).sort({ position: -1 });
+  const memberCountMap = await getRoleMemberCountMap(serverId);
+  return roles.map((role) =>
+    normalizeRoleDto(role as unknown as PopulatedRole, memberCountMap.get(role._id.toString()) || 0)
+  );
+}
+
+function normalizeMemberDto(member: {
+  _id: Types.ObjectId;
+  userId?: PopulatedMemberUser | null;
+  roles?: PopulatedRole[];
+  joinedAt?: Date;
+}) {
+  const memberRoles = (member.roles || [])
+    .map((role) => normalizeRoleDto(role))
+    .sort((a, b) => b.position - a.position);
+  const highestRole = memberRoles[0] || null;
+  const highestHoistedRole = memberRoles.find((role) => role.hoist) || null;
+  const userData = member.userId;
+
+  return {
+    id: userData?._id?.toString() || '',
+    membershipId: member._id.toString(),
+    username: userData?.username || 'Unknown',
+    displayName: userData?.displayName || userData?.username || 'Unknown',
+    avatar: userData?.avatar || null,
+    status: resolveEffectiveStatus({
+      status: userData?.status || 'offline',
+      presenceLastHeartbeatAt: userData?.presenceLastHeartbeatAt || null,
+    }),
+    customStatus: userData?.customStatus || null,
+    isPremium: Boolean(userData?.isPremium),
+    joinedAt: member.joinedAt || null,
+    roles: memberRoles,
+    highestRole,
+    highestHoistedRole,
+  };
+}
 
 export const serverRoutes = new Elysia({ prefix: '/servers' })
   // Get user's servers
@@ -568,10 +684,19 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const members = await ServerMember.find(filter)
       .limit(limit)
-      .populate('userId', 'username displayName avatar status customStatus isPremium')
-      .populate('roles', 'name color position');
+      .populate('userId', 'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt')
+      .populate('roles', 'name color position permissions hoist mentionable managed isDefault');
 
-    return { members };
+    return {
+      members: members.map((member) =>
+        normalizeMemberDto(member as unknown as {
+          _id: Types.ObjectId;
+          userId?: PopulatedMemberUser | null;
+          roles?: PopulatedRole[];
+          joinedAt?: Date;
+        })
+      ),
+    };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -579,6 +704,92 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     query: t.Object({
       limit: t.Optional(t.String()),
       after: t.Optional(t.String()),
+    }),
+  })
+  // Assign member roles
+  .patch('/:serverId/members/:memberUserId/roles', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId) || !isValidObjectId(params.memberUserId)) {
+      set.status = 400;
+      return { error: 'Invalid ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'Only the server owner can assign roles' };
+    }
+
+    const member = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: params.memberUserId,
+    });
+
+    if (!member) {
+      set.status = 404;
+      return { error: 'Member not found' };
+    }
+
+    const everyoneRole = await Role.findOne({
+      serverId: params.serverId,
+      isDefault: true,
+    });
+
+    if (!everyoneRole) {
+      set.status = 500;
+      return { error: 'Default role is missing for this server' };
+    }
+
+    const requestedRoleIds = Array.from(new Set((body.roleIds || []).filter((id): id is string => isValidObjectId(id))));
+    const requestedWithEveryone = Array.from(new Set([everyoneRole._id.toString(), ...requestedRoleIds]));
+
+    const validRoles = await Role.find({
+      serverId: params.serverId,
+      _id: { $in: requestedWithEveryone.map((id) => new Types.ObjectId(id)) },
+    }).select('_id');
+
+    if (validRoles.length !== requestedWithEveryone.length) {
+      set.status = 400;
+      return { error: 'One or more provided role IDs are invalid for this server' };
+    }
+
+    member.roles = requestedWithEveryone.map((id) => new Types.ObjectId(id));
+    await member.save();
+
+    const populatedMember = await ServerMember.findById(member._id)
+      .populate('userId', 'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt')
+      .populate('roles', 'name color position permissions hoist mentionable managed isDefault');
+
+    if (!populatedMember) {
+      set.status = 404;
+      return { error: 'Member not found' };
+    }
+
+    return {
+      member: normalizeMemberDto(populatedMember as unknown as {
+        _id: Types.ObjectId;
+        userId?: PopulatedMemberUser | null;
+        roles?: PopulatedRole[];
+        joinedAt?: Date;
+      }),
+    };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+      memberUserId: t.String(),
+    }),
+    body: t.Object({
+      roleIds: t.Array(t.String()),
     }),
   })
   // Leave server
@@ -753,7 +964,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You are not a member of this server' };
     }
 
-    const roles = await Role.find({ serverId: params.serverId }).sort({ position: -1 });
+    const roles = await getNormalizedRoles(params.serverId);
     return { roles };
   }, {
     params: t.Object({
@@ -789,17 +1000,10 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const highestRole = await Role.findOne({ serverId: params.serverId }).sort({ position: -1 });
     const newPosition = (highestRole?.position || 0) + 1;
 
-    // Convert color string to number
-    let colorValue = 0x99AAB5; // Default gray
-    if (body.color) {
-      const colorStr = body.color.replace('#', '');
-      colorValue = parseInt(colorStr, 16) || 0x99AAB5;
-    }
-
     const role = new Role({
       serverId: params.serverId,
       name: body.name || 'new role',
-      color: colorValue,
+      color: parseHexColorToNumber(body.color),
       position: newPosition,
       permissions: body.permissions || DEFAULT_PERMISSIONS.everyone,
       hoist: body.hoist || false,
@@ -808,7 +1012,10 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     await role.save();
 
-    return { role };
+    const roles = await getNormalizedRoles(params.serverId);
+    const createdRole = roles.find((item) => item.id === role._id.toString());
+
+    return { role: createdRole || normalizeRoleDto(role as unknown as PopulatedRole) };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -858,14 +1065,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     if (body.name !== undefined) role.name = body.name;
-    if (body.color !== undefined) role.color = body.color;
+    if (body.color !== undefined) role.color = parseHexColorToNumber(body.color);
     if (body.permissions !== undefined) role.permissions = body.permissions;
     if (body.hoist !== undefined) role.hoist = body.hoist;
     if (body.mentionable !== undefined) role.mentionable = body.mentionable;
 
     await role.save();
 
-    return { role };
+    const roles = await getNormalizedRoles(params.serverId);
+    const updatedRole = roles.find((item) => item.id === role._id.toString());
+    return { role: updatedRole || normalizeRoleDto(role as unknown as PopulatedRole) };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -877,6 +1086,83 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       permissions: t.Optional(t.String()),
       hoist: t.Optional(t.Boolean()),
       mentionable: t.Optional(t.Boolean()),
+    }),
+  })
+  // Reorder server roles
+  .patch('/:serverId/roles/reorder', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'Only the server owner can reorder roles' };
+    }
+
+    const orderedRoleIds = body.orderedRoleIds || [];
+    if (orderedRoleIds.length === 0) {
+      set.status = 400;
+      return { error: 'orderedRoleIds is required' };
+    }
+
+    const uniqueRoleIds = Array.from(new Set(orderedRoleIds));
+    if (uniqueRoleIds.length !== orderedRoleIds.length) {
+      set.status = 400;
+      return { error: 'orderedRoleIds contains duplicates' };
+    }
+
+    if (!uniqueRoleIds.every((roleId) => isValidObjectId(roleId))) {
+      set.status = 400;
+      return { error: 'orderedRoleIds contains invalid role IDs' };
+    }
+
+    const reorderableRoles = await Role.find({
+      serverId: params.serverId,
+      isDefault: false,
+    }).select('_id position');
+
+    if (reorderableRoles.length !== uniqueRoleIds.length) {
+      set.status = 400;
+      return { error: 'orderedRoleIds must include every non-default role exactly once' };
+    }
+
+    const existingIds = new Set(reorderableRoles.map((role) => role._id.toString()));
+    if (!uniqueRoleIds.every((roleId) => existingIds.has(roleId))) {
+      set.status = 400;
+      return { error: 'orderedRoleIds contains role IDs that do not belong to this server' };
+    }
+
+    const highestPosition = uniqueRoleIds.length;
+    await Promise.all(
+      uniqueRoleIds.map((roleId, index) =>
+        Role.updateOne(
+          { _id: roleId, serverId: params.serverId, isDefault: false },
+          { $set: { position: highestPosition - index } }
+        )
+      )
+    );
+
+    const roles = await getNormalizedRoles(params.serverId);
+    return { roles };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      orderedRoleIds: t.Array(t.String()),
     }),
   })
   // Delete server role
@@ -922,7 +1208,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     await role.deleteOne();
 
-    return { success: true };
+    const roles = await getNormalizedRoles(params.serverId);
+    return { success: true, roles };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -949,7 +1236,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     
     // Get online members
     const members = await ServerMember.find({ serverId: params.serverId })
-      .populate('userId', 'username displayName avatar status')
+      .populate('userId', 'username displayName avatar status presenceLastHeartbeatAt')
       .limit(50);
     
     // Get channels
@@ -969,13 +1256,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }).sort({ createdAt: -1 });
 
     const transformedMembers = members.map(m => {
-      const userData = m.userId as any;
+      const userData = m.userId as unknown as PopulatedMemberUser;
       return {
         id: userData._id.toString(),
         username: userData.username,
         displayName: userData.displayName,
         avatar: userData.avatar,
-        status: userData.status || 'offline',
+        status: resolveEffectiveStatus({
+          status: userData.status || 'offline',
+          presenceLastHeartbeatAt: userData.presenceLastHeartbeatAt || null,
+        }),
       };
     });
 

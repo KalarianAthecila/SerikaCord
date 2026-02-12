@@ -2,6 +2,7 @@ import { Elysia, t } from 'elysia';
 import { Channel, Message, User, ServerMember } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
 import { parseCustomEmojis, normalizeEmojiFormat } from '@/lib/services/emoji';
+import { resolveEffectiveStatus } from '@/lib/services/presence';
 import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage } from '@/lib/security';
 import { cache, getPublisher } from '@/lib/db';
 import { Types } from 'mongoose';
@@ -11,6 +12,13 @@ function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string):
   const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
   const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
   return str1 === str2;
+}
+
+function getPublicPresenceStatus(user: { status?: string | null; presenceLastHeartbeatAt?: Date | string | number | null }) {
+  return resolveEffectiveStatus({
+    status: user.status,
+    presenceLastHeartbeatAt: user.presenceLastHeartbeatAt ?? null,
+  });
 }
 
 // Helper function for auth
@@ -89,7 +97,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           (id: Types.ObjectId) => !id.equals(user._id)
         );
         const recipients = await User.find({ _id: { $in: recipientIds } }).select(
-          'username displayName avatar status customStatus isPremium'
+          'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt'
         );
         
         return {
@@ -100,7 +108,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
             username: r.username,
             displayName: r.displayName,
             avatar: r.avatar,
-            status: r.status,
+            status: getPublicPresenceStatus(r),
             customStatus: r.customStatus,
             isPremium: r.isPremium,
           })),
@@ -204,7 +212,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     const messages = await Message.find(messageQuery)
       .sort({ createdAt: -1 })
       .limit(limit)
-      .populate('authorId', 'username displayName avatar status customStatus isPremium');
+      .populate('authorId', 'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt');
 
     // Decrypt messages
     const decryptedMessages = await Promise.all(messages.reverse().map(async (msg) => {
@@ -214,6 +222,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         displayName?: string;
         avatar?: string;
         status?: string;
+        presenceLastHeartbeatAt?: Date;
         customStatus?: string;
         isPremium?: boolean;
       };
@@ -227,7 +236,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           username: author.username,
           displayName: author.displayName,
           avatar: author.avatar,
-          status: author.status,
+          status: getPublicPresenceStatus(author),
           customStatus: author.customStatus,
           isPremium: author.isPremium,
         },
@@ -348,7 +357,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         username: user.username,
         displayName: user.displayName,
         avatar: user.avatar,
-        status: user.status,
+        status: getPublicPresenceStatus(user),
         customStatus: user.customStatus,
         isPremium: user.isPremium,
       },

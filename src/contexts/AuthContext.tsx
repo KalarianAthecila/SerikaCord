@@ -44,6 +44,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [isLoading, setIsLoading] = useState(true);
   const statusUpdatePending = useRef(false);
 
+  const sendPresenceHeartbeat = useCallback(async () => {
+    if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
+
+    try {
+      await fetch("/api/users/me/presence/heartbeat", {
+        method: "POST",
+        keepalive: true,
+      });
+    } catch {
+      // Heartbeats are best-effort.
+    }
+  }, []);
+
   const setOnlineStatus = useCallback(async (status: "online" | "idle" | "dnd" | "offline") => {
     if (statusUpdatePending.current) return;
     statusUpdatePending.current = true;
@@ -109,8 +122,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else if (document.visibilityState === 'visible') {
         // Set back to online when user returns
         if (user.status === "idle") {
-          setOnlineStatus("online");
+          void setOnlineStatus("online");
         }
+        void sendPresenceHeartbeat();
       }
     };
 
@@ -127,7 +141,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const handlePageHide = (e: PageTransitionEvent) => {
       if (e.persisted) {
         // Page is going into bfcache, set idle
-        setOnlineStatus("idle");
+        void setOnlineStatus("idle");
       } else {
         // Page is being unloaded, set offline
         if (typeof navigator !== 'undefined' && navigator.sendBeacon) {
@@ -146,7 +160,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       window.removeEventListener('beforeunload', handleBeforeUnload);
       window.removeEventListener('pagehide', handlePageHide);
     };
-  }, [user, setOnlineStatus]);
+  }, [user, setOnlineStatus, sendPresenceHeartbeat]);
+
+  useEffect(() => {
+    if (!user) return;
+
+    void sendPresenceHeartbeat();
+    const interval = window.setInterval(() => {
+      if (document.visibilityState === "visible") {
+        void sendPresenceHeartbeat();
+      }
+    }, 30000);
+
+    return () => {
+      window.clearInterval(interval);
+    };
+  }, [user, sendPresenceHeartbeat]);
 
   useEffect(() => {
     refresh();

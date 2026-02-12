@@ -46,6 +46,8 @@ export interface IUser extends Document {
   pronouns?: string;
   status?: 'online' | 'idle' | 'dnd' | 'offline' | 'invisible';
   customStatus?: string;
+  presenceLastHeartbeatAt?: Date;
+  presenceLastDisconnectAt?: Date;
   
   // Badges
   badges: BadgeId[];
@@ -236,6 +238,14 @@ const UserSchema = new Schema<IUser>({
   customStatus: {
     type: String,
     maxlength: 128,
+    default: null,
+  },
+  presenceLastHeartbeatAt: {
+    type: Date,
+    default: Date.now,
+  },
+  presenceLastDisconnectAt: {
+    type: Date,
     default: null,
   },
   pronouns: {

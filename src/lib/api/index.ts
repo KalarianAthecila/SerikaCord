@@ -17,6 +17,7 @@ import { experimentRoutes, instanceRoutes } from './experiments';
 import { voiceRoutes } from './voice';
 import { gifRoutes } from './gifs';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
+import { resolveEffectiveStatus } from '@/lib/services/presence';
 import { Types } from 'mongoose';
 
 // Helper to safely compare IDs (handles both ObjectId and string)
@@ -157,6 +158,13 @@ function mergeDeep<T extends Record<string, any>>(base: T, patch: Record<string,
     }
   }
   return output as T;
+}
+
+function getPublicPresenceStatus(user: { status?: string | null; presenceLastHeartbeatAt?: Date | string | number | null }) {
+  return resolveEffectiveStatus({
+    status: user.status,
+    presenceLastHeartbeatAt: user.presenceLastHeartbeatAt ?? null,
+  });
 }
 
 const activeFriendStreamConnections = new Map<string, Set<ReadableStreamDefaultController>>();
@@ -317,7 +325,15 @@ const userRoutes = new Elysia({ prefix: '/users' })
       if (bio !== undefined) user.bio = bio;
       if (pronouns !== undefined) user.pronouns = pronouns;
       if (customStatus !== undefined) user.customStatus = customStatus;
-      if (status !== undefined) user.status = status;
+      if (status !== undefined) {
+        user.status = status;
+        if (status === 'offline' || status === 'invisible') {
+          user.presenceLastDisconnectAt = new Date();
+        } else {
+          user.presenceLastDisconnectAt = null;
+          user.presenceLastHeartbeatAt = new Date();
+        }
+      }
       if (settings !== undefined) {
         const currentSettings = normalizeUserSettingsShape((user.settings || {}) as Record<string, any>);
         const normalizedPatch = normalizeSettingsPatch(settings);
@@ -340,7 +356,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
         emitFriendEvent(friendIds, {
           type: 'presence:update',
           userId: user._id.toString(),
-          status: user.status,
+          status: getPublicPresenceStatus(user),
           timestamp: Date.now(),
         });
       }
@@ -366,6 +382,41 @@ const userRoutes = new Elysia({ prefix: '/users' })
       ])),
       settings: t.Optional(t.Object({}, { additionalProperties: true })),
     }),
+  })
+  .post('/me/presence/heartbeat', async ({ headers, cookie, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const user = await User.findById(authUser._id || (authUser as unknown as { id: string }).id);
+    if (!user) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    const previousStatus = getPublicPresenceStatus(user);
+    user.presenceLastHeartbeatAt = new Date();
+    if (user.status !== 'offline' && user.status !== 'invisible') {
+      user.presenceLastDisconnectAt = null;
+    }
+    await user.save();
+
+    const nextStatus = getPublicPresenceStatus(user);
+    if (previousStatus !== nextStatus) {
+      const friendIds = (user.friends || []).map((friend: Types.ObjectId | string) =>
+        friend instanceof Types.ObjectId ? friend.toString() : friend
+      );
+      emitFriendEvent(friendIds, {
+        type: 'presence:update',
+        userId: user._id.toString(),
+        status: nextStatus,
+        timestamp: Date.now(),
+      });
+    }
+
+    return { success: true };
   })
   .get('/me/settings', async ({ headers, cookie, set }) => {
     const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -594,7 +645,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       avatar: user.avatar,
       banner: user.banner,
       bio: user.bio,
-      status: user.status,
+      status: getPublicPresenceStatus(user),
       customStatus: user.customStatus,
       isPremium: user.isPremium,
       createdAt: user.createdAt,
@@ -615,9 +666,9 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     const populatedUser = await User.findById(user._id)
-      .populate('friends', 'username displayName avatar status customStatus isPremium badges createdAt')
-      .populate('pendingFriendRequests.incoming', 'username displayName avatar status customStatus isPremium badges createdAt')
-      .populate('pendingFriendRequests.outgoing', 'username displayName avatar status customStatus isPremium badges createdAt')
+      .populate('friends', 'username displayName avatar status customStatus isPremium badges createdAt presenceLastHeartbeatAt')
+      .populate('pendingFriendRequests.incoming', 'username displayName avatar status customStatus isPremium badges createdAt presenceLastHeartbeatAt')
+      .populate('pendingFriendRequests.outgoing', 'username displayName avatar status customStatus isPremium badges createdAt presenceLastHeartbeatAt')
       .populate('blockedUsers', 'username displayName avatar');
     
     return {
@@ -626,7 +677,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
         username: friend.username,
         displayName: friend.displayName,
         avatar: friend.avatar,
-        status: friend.status || 'offline',
+        status: getPublicPresenceStatus(friend),
         customStatus: friend.customStatus,
         isPremium: friend.isPremium,
         badges: friend.badges || [],
@@ -638,7 +689,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
           username: u.username,
           displayName: u.displayName,
           avatar: u.avatar,
-          status: u.status || 'offline',
+          status: getPublicPresenceStatus(u),
           customStatus: u.customStatus,
           isPremium: u.isPremium,
           badges: u.badges || [],
@@ -649,7 +700,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
           username: u.username,
           displayName: u.displayName,
           avatar: u.avatar,
-          status: u.status || 'offline',
+          status: getPublicPresenceStatus(u),
           customStatus: u.customStatus,
           isPremium: u.isPremium,
           badges: u.badges || [],
@@ -813,7 +864,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
           username: targetUser.username,
           displayName: targetUser.displayName,
           avatar: targetUser.avatar,
-          status: targetUser.status,
+          status: getPublicPresenceStatus(targetUser),
         },
       };
     }

@@ -1,8 +1,8 @@
 import { Elysia, t } from 'elysia';
-import { Channel, Message, Server, ServerMember } from '@/lib/models';
+import { Channel, Message, Role, Server, ServerMember } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
 import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
-import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage } from '@/lib/security';
+import { checkRateLimit, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage } from '@/lib/security';
 import { cache, getPublisher } from '@/lib/db';
 import { config } from '@/lib/config';
 import { Types } from 'mongoose';
@@ -20,6 +20,136 @@ interface PopulatedAuthor {
   displayName?: string;
   avatar?: string;
   status?: string;
+}
+
+interface ReferencedMessageRaw {
+  _id: Types.ObjectId;
+  content?: string;
+  authorId?: PopulatedAuthor | Types.ObjectId | string | null;
+  createdAt?: Date;
+}
+
+interface RawLeanMessage {
+  _id: Types.ObjectId;
+  content?: string;
+  authorId?: PopulatedAuthor | Types.ObjectId | string | null;
+  referencedMessageId?: ReferencedMessageRaw | Types.ObjectId | string | null;
+  channelId: Types.ObjectId;
+  serverId?: Types.ObjectId;
+  createdAt: Date;
+  updatedAt: Date;
+  attachments?: unknown[];
+  edited?: boolean;
+  type?: string;
+  pinned?: boolean;
+  reactions?: unknown[];
+  mentionEveryone?: boolean;
+  mentionedUserIds?: Array<Types.ObjectId | string>;
+  mentionedRoleIds?: Array<Types.ObjectId | string>;
+  mentionedChannelIds?: Array<Types.ObjectId | string>;
+}
+
+const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#(?:[0-9a-fA-F]{24})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>/g;
+const USER_MENTION_REGEX = /<@!?([0-9a-fA-F]{24})>/g;
+const ROLE_MENTION_REGEX = /<@&([0-9a-fA-F]{24})>/g;
+const CHANNEL_MENTION_REGEX = /<#([0-9a-fA-F]{24})>/g;
+
+function sanitizeMessageContent(content: string): string {
+  const preservedTokens = new Map<string, string>();
+  let tokenIndex = 0;
+  const placeholderPrefix = '__SERIKACORD_TOKEN__';
+  const withPlaceholders = content.replace(PRESERVED_MESSAGE_TOKEN_REGEX, (token) => {
+    const key = `${placeholderPrefix}${tokenIndex++}__`;
+    preservedTokens.set(key, token);
+    return key;
+  });
+
+  let sanitized = sanitizeInput(withPlaceholders);
+  for (const [placeholder, token] of preservedTokens) {
+    sanitized = sanitized.split(placeholder).join(token);
+  }
+  return sanitized;
+}
+
+async function extractMentionsFromContent(
+  content: string,
+  serverId?: Types.ObjectId | string | null
+): Promise<{
+  mentionEveryone: boolean;
+  mentionedUserIds: string[];
+  mentionedRoleIds: string[];
+  mentionedChannelIds: string[];
+}> {
+  const mentionedUserIds: string[] = [];
+  const mentionedRoleIds: string[] = [];
+  const mentionedChannelIds: string[] = [];
+
+  let match: RegExpExecArray | null;
+
+  USER_MENTION_REGEX.lastIndex = 0;
+  while ((match = USER_MENTION_REGEX.exec(content)) !== null) {
+    if (isValidObjectId(match[1])) {
+      mentionedUserIds.push(match[1]);
+    }
+  }
+
+  ROLE_MENTION_REGEX.lastIndex = 0;
+  while ((match = ROLE_MENTION_REGEX.exec(content)) !== null) {
+    if (isValidObjectId(match[1])) {
+      mentionedRoleIds.push(match[1]);
+    }
+  }
+
+  CHANNEL_MENTION_REGEX.lastIndex = 0;
+  while ((match = CHANNEL_MENTION_REGEX.exec(content)) !== null) {
+    if (isValidObjectId(match[1])) {
+      mentionedChannelIds.push(match[1]);
+    }
+  }
+
+  const dedupedUsers = Array.from(new Set(mentionedUserIds));
+  const dedupedRoles = Array.from(new Set(mentionedRoleIds));
+  const dedupedChannels = Array.from(new Set(mentionedChannelIds));
+  const mentionEveryone = /(^|\s)@(everyone|here)\b/i.test(content);
+
+  if (!serverId) {
+    return {
+      mentionEveryone,
+      mentionedUserIds: dedupedUsers,
+      mentionedRoleIds: dedupedRoles,
+      mentionedChannelIds: dedupedChannels,
+    };
+  }
+
+  const normalizedServerId = typeof serverId === 'string' ? serverId : serverId.toString();
+
+  const [memberRows, roleRows, channelRows] = await Promise.all([
+    dedupedUsers.length
+      ? ServerMember.find({
+          serverId: normalizedServerId,
+          userId: { $in: dedupedUsers.map((id) => new Types.ObjectId(id)) },
+        }).select('userId')
+      : Promise.resolve([]),
+    dedupedRoles.length
+      ? Role.find({
+          serverId: normalizedServerId,
+          _id: { $in: dedupedRoles.map((id) => new Types.ObjectId(id)) },
+        }).select('_id')
+      : Promise.resolve([]),
+    dedupedChannels.length
+      ? Channel.find({
+          serverId: normalizedServerId,
+          _id: { $in: dedupedChannels.map((id) => new Types.ObjectId(id)) },
+        }).select('_id')
+      : Promise.resolve([]),
+  ]);
+
+  return {
+    mentionEveryone,
+    mentionedUserIds: memberRows.map((row) => row.userId.toString()),
+    mentionedRoleIds: roleRows.map((row) => row._id.toString()),
+    mentionedChannelIds: channelRows.map((row) => row._id.toString()),
+  };
 }
 
 // Store active SSE connections for server channels
@@ -290,12 +420,12 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     // Transform for frontend - return array directly and map _id to id
     // Decrypt messages
-    const decryptedMessages = await Promise.all(messages.map(async (msg: any) => {
+    const decryptedMessages = await Promise.all((messages as RawLeanMessage[]).map(async (msg) => {
       const author = msg.authorId as PopulatedAuthor | Types.ObjectId | string | null;
       const populatedAuthor =
         author && typeof author === 'object' && '_id' in author ? author as PopulatedAuthor : null;
-      const decryptedContent = await decryptFromStorage(msg.content);
-      const referencedRaw = msg.referencedMessageId as any;
+      const decryptedContent = await decryptFromStorage(msg.content || '');
+      const referencedRaw = msg.referencedMessageId;
       let referencedMessage:
         | {
             id: string;
@@ -310,7 +440,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           }
         | undefined;
 
-      if (referencedRaw && typeof referencedRaw === 'object' && referencedRaw._id) {
+      if (referencedRaw && typeof referencedRaw === 'object' && '_id' in referencedRaw) {
         const referencedAuthor = referencedRaw.authorId as PopulatedAuthor | Types.ObjectId | string | null;
         const populatedReferencedAuthor =
           referencedAuthor && typeof referencedAuthor === 'object' && '_id' in referencedAuthor
@@ -356,6 +486,10 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         referencedMessage,
         pinned: msg.pinned,
         reactions: msg.reactions || [],
+        mentionEveryone: Boolean(msg.mentionEveryone),
+        mentionedUserIds: (msg.mentionedUserIds || []).map((id: Types.ObjectId | string) => id.toString()),
+        mentionedRoleIds: (msg.mentionedRoleIds || []).map((id: Types.ObjectId | string) => id.toString()),
+        mentionedChannelIds: (msg.mentionedChannelIds || []).map((id: Types.ObjectId | string) => id.toString()),
       };
     }));
 
@@ -409,7 +543,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const lowered = rawQuery.toLowerCase();
     const results: Array<Record<string, unknown>> = [];
 
-    for (const msg of candidates as any[]) {
+    for (const msg of candidates as RawLeanMessage[]) {
       const decrypted = await decryptFromStorage(msg.content || '');
       if (!decrypted.toLowerCase().includes(lowered)) continue;
 
@@ -450,7 +584,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }),
   })
   // Send message
-  .post('/:channelId/messages', async ({ headers, cookie, params, body, request, set }) => {
+  .post('/:channelId/messages', async ({ headers, cookie, params, body, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user) {
       set.status = 401;
@@ -515,8 +649,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
-    // Sanitize content and normalize emoji format
-    let sanitizedContent = content ? sanitizeInput(content) : '';
+    // Sanitize content while preserving mention/channel/custom-emoji tokens.
+    let sanitizedContent = content ? sanitizeMessageContent(content) : '';
     if (sanitizedContent) {
       sanitizedContent = normalizeEmojiFormat(sanitizedContent);
     }
@@ -536,41 +670,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       url: e.url,
     }));
 
-    // Parse mentions
-    const mentionedUserIds: string[] = [];
-    const mentionedRoleIds: string[] = [];
-    const mentionedChannelIds: string[] = [];
-    let mentionEveryone = false;
-
-    // @user mentions
-    const userMentionRegex = /<@!?(\w{24})>/g;
-    let match;
-    while ((match = userMentionRegex.exec(sanitizedContent)) !== null) {
-      if (isValidObjectId(match[1])) {
-        mentionedUserIds.push(match[1]);
-      }
-    }
-
-    // @role mentions
-    const roleMentionRegex = /<@&(\w{24})>/g;
-    while ((match = roleMentionRegex.exec(sanitizedContent)) !== null) {
-      if (isValidObjectId(match[1])) {
-        mentionedRoleIds.push(match[1]);
-      }
-    }
-
-    // #channel mentions
-    const channelMentionRegex = /<#(\w{24})>/g;
-    while ((match = channelMentionRegex.exec(sanitizedContent)) !== null) {
-      if (isValidObjectId(match[1])) {
-        mentionedChannelIds.push(match[1]);
-      }
-    }
-
-    // @everyone/@here
-    if (/@(everyone|here)/.test(sanitizedContent)) {
-      mentionEveryone = true;
-    }
+    const mentionData = await extractMentionsFromContent(sanitizedContent, channel.serverId || null);
 
     // Encrypt content for storage
     const encryptedContent = sanitizedContent ? await encryptForStorage(sanitizedContent) : '';
@@ -584,10 +684,10 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       type: replyTo ? 'reply' : 'default',
       referencedMessageId: replyTo,
       attachments,
-      mentionEveryone,
-      mentionedUserIds: [...new Set(mentionedUserIds)],
-      mentionedRoleIds: [...new Set(mentionedRoleIds)],
-      mentionedChannelIds: [...new Set(mentionedChannelIds)],
+      mentionEveryone: mentionData.mentionEveryone,
+      mentionedUserIds: mentionData.mentionedUserIds,
+      mentionedRoleIds: mentionData.mentionedRoleIds,
+      mentionedChannelIds: mentionData.mentionedChannelIds,
     });
 
     await message.save();
@@ -665,6 +765,10 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       referencedMessage,
       pinned: message.pinned,
       reactions: message.reactions || [],
+      mentionEveryone: message.mentionEveryone,
+      mentionedUserIds: message.mentionedUserIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
+      mentionedRoleIds: message.mentionedRoleIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
+      mentionedChannelIds: message.mentionedChannelIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
       customEmojis: customEmojis.length > 0 ? customEmojis : undefined, // Include parsed emoji data
     };
 
@@ -733,7 +837,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       .lean();
 
     const messages = await Promise.all(
-      (pinnedMessages as any[]).map(async (msg) => {
+      (pinnedMessages as RawLeanMessage[]).map(async (msg) => {
         const author = msg.authorId as PopulatedAuthor | Types.ObjectId | string | null;
         const populatedAuthor =
           author && typeof author === 'object' && '_id' in author ? author as PopulatedAuthor : null;
@@ -925,7 +1029,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         return { error: validation.error };
       }
 
-      sanitizedEditContent = sanitizeInput(content);
+      sanitizedEditContent = sanitizeMessageContent(content);
+      sanitizedEditContent = normalizeEmojiFormat(sanitizedEditContent);
+      const mentionData = await extractMentionsFromContent(sanitizedEditContent, channel.serverId || null);
+      message.mentionEveryone = mentionData.mentionEveryone;
+      message.mentionedUserIds = mentionData.mentionedUserIds.map((id) => new Types.ObjectId(id));
+      message.mentionedRoleIds = mentionData.mentionedRoleIds.map((id) => new Types.ObjectId(id));
+      message.mentionedChannelIds = mentionData.mentionedChannelIds.map((id) => new Types.ObjectId(id));
       // Encrypt content for storage
       message.content = await encryptForStorage(sanitizedEditContent);
       message.edited = true;
@@ -1070,9 +1180,6 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       set.status = 400;
       return { error: 'Invalid emoji' };
     }
-    
-    // For custom emojis, use ID as identifier; for unicode, use the name
-    const emojiIdentifier = emojiData.id || emojiData.name;
     
     // Find or create reaction - match by ID for custom emojis, name for unicode
     const existingReaction = message.reactions.find(

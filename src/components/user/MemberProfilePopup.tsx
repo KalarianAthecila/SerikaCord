@@ -8,19 +8,13 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   MessageSquare,
   UserPlus,
   MoreHorizontal,
-  Ban,
-  Volume2,
-  VolumeX,
   Crown,
-  Shield,
   Copy,
   Check,
-  ChevronRight,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, type BadgeId } from "@/lib/constants/badges";
@@ -45,6 +39,7 @@ interface MemberProfilePopupProps {
     joinedAt?: string;
     createdAt?: string;
     isPremium?: boolean;
+    isOwner?: boolean;
   };
   serverId?: string;
   side?: "left" | "right" | "top" | "bottom";
@@ -58,13 +53,6 @@ const statusColors: Record<string, string> = {
   offline: "#555555",
 };
 
-const statusLabels: Record<string, string> = {
-  online: "Online",
-  idle: "Idle",
-  dnd: "Do Not Disturb",
-  offline: "Offline",
-};
-
 export function MemberProfilePopup({ 
   children, 
   member, 
@@ -76,29 +64,29 @@ export function MemberProfilePopup({
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [fullProfile, setFullProfile] = useState(member);
-  const [isLoading, setIsLoading] = useState(false);
 
   // Fetch full profile when popup opens
+  useEffect(() => {
+    setFullProfile(member);
+  }, [member]);
+
   useEffect(() => {
     if (!open || !member.id) return;
 
     const fetchProfile = async () => {
-      setIsLoading(true);
       try {
         const response = await fetch(`/api/users/${member.id}`);
         if (response.ok) {
           const data = await response.json();
-          setFullProfile({ ...member, ...data });
+          setFullProfile((prev) => ({ ...prev, ...data }));
         }
       } catch (error) {
         console.error("Failed to fetch user profile:", error);
-      } finally {
-        setIsLoading(false);
       }
     };
 
-    fetchProfile();
-  }, [open, member.id]);
+    void fetchProfile();
+  }, [open, member.id, member]);
 
   const handleCopyUsername = async () => {
     await navigator.clipboard.writeText(fullProfile.username);
@@ -108,8 +96,7 @@ export function MemberProfilePopup({
 
   const handleSendMessage = () => {
     setOpen(false);
-    // Navigate to DM - use proper dm route
-    window.location.href = `/dm/${member.id}`;
+    window.location.href = `/channels/me/${member.id}`;
   };
 
   const handleAddFriend = async () => {
@@ -131,7 +118,7 @@ export function MemberProfilePopup({
     }
   };
 
-  const isOwner = serverId && (fullProfile as any).isOwner;
+  const isOwner = serverId && fullProfile.isOwner;
   const isCurrentUser = currentUser?.id === member.id;
 
   const renderBadges = () => {

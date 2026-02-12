@@ -19,9 +19,7 @@ import {
   Link2,
   Ban,
   FileText,
-  Bell,
   Folder,
-  Sparkles,
   Camera,
   Loader2,
   Check,
@@ -29,21 +27,15 @@ import {
   Plus,
   Copy,
   ExternalLink,
-  ChevronRight,
   Crown,
-  Hash,
   Volume2,
   MoreHorizontal,
-  UserPlus,
-  RefreshCw,
-  Clock,
   AlertTriangle,
-  Eye,
-  EyeOff,
-  Pencil,
   GripVertical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { ROLE_PERMISSION_CATEGORIES } from "@/lib/constants/rolePermissions";
+import { hasPermissionBit, setPermissionBit } from "@/lib/roles/bitfield";
 
 interface ServerSettingsDialogProps {
   open: boolean;
@@ -71,7 +63,11 @@ interface Role {
   name: string;
   color: string;
   position: number;
-  permissions: string[];
+  permissions: string;
+  hoist: boolean;
+  mentionable: boolean;
+  managed: boolean;
+  isDefault: boolean;
   memberCount?: number;
 }
 
@@ -106,12 +102,17 @@ interface BannedUser {
 
 interface ServerMember {
   id: string;
+  membershipId: string;
   username: string;
   displayName?: string;
   avatar?: string;
-  roles: string[];
+  status: "online" | "idle" | "dnd" | "offline";
+  customStatus?: string | null;
+  isPremium?: boolean;
+  roles: Role[];
+  highestRole?: Role | null;
+  highestHoistedRole?: Role | null;
   joinedAt: string;
-  status: string;
 }
 
 interface ServerEmoji {
@@ -148,7 +149,7 @@ interface AuditLogEntry {
 }
 
 export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialogProps) {
-  const { currentServer, fetchChannels, fetchServers, channels } = useServer();
+  const { currentServer, fetchServers, channels } = useServer();
   const { user } = useAuth();
   const [activeTab, setActiveTab] = useState<SettingsTab>("overview");
   const [isSaving, setIsSaving] = useState(false);
@@ -175,9 +176,22 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
   // Data state
   const [roles, setRoles] = useState<Role[]>([]);
+  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
+  const [roleDraft, setRoleDraft] = useState<{
+    name: string;
+    color: string;
+    permissions: string;
+    hoist: boolean;
+    mentionable: boolean;
+  } | null>(null);
+  const [draggingRoleId, setDraggingRoleId] = useState<string | null>(null);
+  const [isSavingRole, setIsSavingRole] = useState(false);
+  const [isReorderingRoles, setIsReorderingRoles] = useState(false);
   const [invites, setInvites] = useState<Invite[]>([]);
   const [bans, setBans] = useState<BannedUser[]>([]);
   const [members, setMembers] = useState<ServerMember[]>([]);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberRoleSavingId, setMemberRoleSavingId] = useState<string | null>(null);
   const [emojis, setEmojis] = useState<ServerEmoji[]>([]);
   const [stickers, setStickers] = useState<ServerSticker[]>([]);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
@@ -211,9 +225,15 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   // Initialize with server data
   useEffect(() => {
     if (currentServer) {
+      const server = currentServer as typeof currentServer & {
+        description?: string;
+        banner?: string | null;
+        systemChannelId?: string | null;
+        rulesChannelId?: string | null;
+        afkChannelId?: string | null;
+        afkTimeout?: number;
+      };
       setServerName(currentServer.name);
-      // Cast for optional properties
-      const server = currentServer as any;
       setServerDescription(server.description || "");
       setServerIcon(server.icon || null);
       setServerBanner(server.banner || null);
@@ -228,15 +248,32 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   useEffect(() => {
     if (channels) {
       const textChs = channels
-        .filter((ch: any) => ch.type === "text")
-        .map((ch: any) => ({
-          id: ch.id || ch._id,
+        .filter((ch) => ch.type === "text")
+        .map((ch) => ({
+          id: ch.id,
           name: ch.name,
           type: ch.type,
         }));
       setTextChannels(textChs);
     }
   }, [channels]);
+
+  const fetchRolesData = useCallback(async () => {
+    if (!currentServer) return;
+    const rolesRes = await fetch(`/api/servers/${currentServer.id}/roles`);
+    if (!rolesRes.ok) return;
+    const data = await rolesRes.json();
+    const nextRoles = (data.roles || []) as Role[];
+    setRoles(nextRoles);
+  }, [currentServer]);
+
+  const fetchMembersData = useCallback(async () => {
+    if (!currentServer) return;
+    const membersRes = await fetch(`/api/servers/${currentServer.id}/members?limit=1000`);
+    if (!membersRes.ok) return;
+    const data = await membersRes.json();
+    setMembers((data.members || []) as ServerMember[]);
+  }, [currentServer]);
 
   // Fetch data based on active tab
   useEffect(() => {
@@ -247,11 +284,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       try {
         switch (activeTab) {
           case "roles":
-            const rolesRes = await fetch(`/api/servers/${currentServer.id}/roles`);
-            if (rolesRes.ok) {
-              const data = await rolesRes.json();
-              setRoles(data.roles || []);
-            }
+            await fetchRolesData();
             break;
           case "invites":
             const invitesRes = await fetch(`/api/servers/${currentServer.id}/invites`);
@@ -268,11 +301,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             }
             break;
           case "members":
-            const membersRes = await fetch(`/api/servers/${currentServer.id}/members`);
-            if (membersRes.ok) {
-              const data = await membersRes.json();
-              setMembers(data.members || []);
-            }
+            await Promise.all([fetchMembersData(), fetchRolesData()]);
             break;
           case "emoji":
             const emojisRes = await fetch(`/api/servers/${currentServer.id}/emojis`);
@@ -331,7 +360,31 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     };
 
     fetchData();
-  }, [activeTab, open, currentServer]);
+  }, [activeTab, open, currentServer, fetchMembersData, fetchRolesData]);
+
+  useEffect(() => {
+    if (!roles.length) {
+      setSelectedRoleId(null);
+      setRoleDraft(null);
+      return;
+    }
+
+    const fallbackRole = roles.find((role) => !role.isDefault) || roles[0];
+    const selectedRole = roles.find((role) => role.id === selectedRoleId) || fallbackRole;
+    if (!selectedRole) return;
+
+    if (selectedRoleId !== selectedRole.id) {
+      setSelectedRoleId(selectedRole.id);
+    }
+
+    setRoleDraft({
+      name: selectedRole.name,
+      color: selectedRole.color || "#99AAB5",
+      permissions: selectedRole.permissions || "0",
+      hoist: Boolean(selectedRole.hoist),
+      mentionable: Boolean(selectedRole.mentionable),
+    });
+  }, [roles, selectedRoleId]);
 
   // Handle escape key
   useEffect(() => {
@@ -433,7 +486,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         const data = await response.json();
         toast.error(data.error || `Failed to upload ${cropperType}`);
       }
-    } catch (error) {
+    } catch {
       toast.error(`Failed to upload ${cropperType}`);
     } finally {
       setUploading(false);
@@ -485,13 +538,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       if (response.ok) {
         const data = await response.json();
-        setRoles(prev => [...prev, {
-          id: data.role._id,
-          name: data.role.name,
-          color: data.role.color?.toString(16) || "99AAB5",
-          position: data.role.position,
-          permissions: [],
-        }]);
+        const createdRole = data.role as Role;
+        setRoles((prev) => {
+          const deduped = prev.filter((role) => role.id !== createdRole.id);
+          return [...deduped, createdRole].sort((a, b) => b.position - a.position);
+        });
+        setSelectedRoleId(createdRole.id);
         toast.success("Role created!");
       } else {
         toast.error("Failed to create role");
@@ -510,7 +562,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       });
 
       if (response.ok) {
-        setRoles(prev => prev.filter(r => r.id !== roleId));
+        const data = await response.json().catch(() => null);
+        if (data?.roles) {
+          setRoles(data.roles as Role[]);
+        } else {
+          setRoles(prev => prev.filter(r => r.id !== roleId));
+        }
         toast.success("Role deleted");
       } else {
         const data = await response.json();
@@ -519,6 +576,137 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     } catch (error) {
       console.error("Failed to delete role:", error);
       toast.error("Failed to delete role");
+    }
+  };
+
+  const selectedRole = roles.find((role) => role.id === selectedRoleId) || null;
+
+  const handleRoleDrop = async (targetRoleId: string) => {
+    if (!draggingRoleId || !currentServer || draggingRoleId === targetRoleId) return;
+
+    const reorderable = roles.filter((role) => !role.isDefault);
+    const fromIndex = reorderable.findIndex((role) => role.id === draggingRoleId);
+    const toIndex = reorderable.findIndex((role) => role.id === targetRoleId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const reordered = [...reorderable];
+    const [movedRole] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, movedRole);
+
+    const reorderedWithPositions = reordered.map((role, index) => ({
+      ...role,
+      position: reordered.length - index,
+    }));
+    const defaultRoles = roles.filter((role) => role.isDefault);
+    const optimistic = [...reorderedWithPositions, ...defaultRoles].sort((a, b) => b.position - a.position);
+    const previous = roles;
+    setRoles(optimistic);
+    setIsReorderingRoles(true);
+
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/roles/reorder`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderedRoleIds: reorderedWithPositions.map((role) => role.id) }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Failed to reorder roles");
+      }
+
+      const data = await response.json();
+      setRoles((data.roles || []) as Role[]);
+    } catch (error) {
+      setRoles(previous);
+      toast.error(error instanceof Error ? error.message : "Failed to reorder roles");
+    } finally {
+      setIsReorderingRoles(false);
+      setDraggingRoleId(null);
+    }
+  };
+
+  const handleRolePermissionToggle = (bit: bigint, enabled: boolean) => {
+    setRoleDraft((prev) => {
+      if (!prev) return prev;
+      return {
+        ...prev,
+        permissions: setPermissionBit(prev.permissions, bit, enabled),
+      };
+    });
+  };
+
+  const handleSaveRole = async () => {
+    if (!currentServer || !selectedRole || !roleDraft) return;
+    setIsSavingRole(true);
+
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/roles/${selectedRole.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: roleDraft.name.trim() || selectedRole.name,
+          color: roleDraft.color,
+          permissions: roleDraft.permissions,
+          hoist: roleDraft.hoist,
+          mentionable: roleDraft.mentionable,
+        }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Failed to update role");
+      }
+
+      const data = await response.json();
+      const updatedRole = data.role as Role;
+      setRoles((prev) =>
+        prev.map((role) => (role.id === updatedRole.id ? updatedRole : role)).sort((a, b) => b.position - a.position)
+      );
+      toast.success("Role updated");
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update role");
+    } finally {
+      setIsSavingRole(false);
+    }
+  };
+
+  const handleToggleMemberRole = async (member: ServerMember, roleId: string, checked: boolean) => {
+    if (!currentServer) return;
+
+    const currentRoleIds = new Set(member.roles.map((role) => role.id));
+    if (checked) {
+      currentRoleIds.add(roleId);
+    } else {
+      currentRoleIds.delete(roleId);
+    }
+
+    const everyoneRole = roles.find((role) => role.isDefault);
+    if (everyoneRole) {
+      currentRoleIds.add(everyoneRole.id);
+    }
+
+    setMemberRoleSavingId(member.id);
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/members/${member.id}/roles`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roleIds: Array.from(currentRoleIds) }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error || "Failed to update member roles");
+      }
+
+      const data = await response.json();
+      const updatedMember = data.member as ServerMember;
+      setMembers((prev) => prev.map((entry) => (entry.id === updatedMember.id ? updatedMember : entry)));
+      await fetchRolesData();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Failed to update member roles");
+    } finally {
+      setMemberRoleSavingId(null);
     }
   };
 
@@ -851,7 +1039,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     <div className="space-y-6">
       <div>
         <h2 className="text-xl font-bold text-white mb-1">Server Overview</h2>
-        <p className="text-sm text-[#888888]">Customize your server's identity</p>
+        <p className="text-sm text-[#888888]">Customize your server&apos;s identity</p>
       </div>
 
       {/* Hidden file inputs */}
@@ -1039,7 +1227,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-white mb-1">Roles</h2>
-          <p className="text-sm text-[#888888]">Manage server roles and permissions</p>
+          <p className="text-sm text-[#888888]">Manage role order, display, and permissions</p>
         </div>
         <button
           onClick={handleCreateRole}
@@ -1055,45 +1243,168 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
         </div>
       ) : (
-        <div className="space-y-2">
-          {/* Default @everyone role */}
-          <div
-            key="everyone"
-            className="flex items-center gap-3 p-3 rounded-lg bg-[#111111] border border-[#222222]"
-          >
-            <GripVertical className="w-4 h-4 text-[#666666]" />
-            <div className="w-3 h-3 rounded-full bg-[#888888]" />
-            <span className="flex-1 text-white">@everyone</span>
-            <span className="text-xs text-[#666666]">Default role</span>
-            <ChevronRight className="w-4 h-4 text-[#666666]" />
+        <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
+          <div className="space-y-2">
+            {roles
+              .slice()
+              .sort((a, b) => b.position - a.position)
+              .map((role) => {
+                const isSelected = role.id === selectedRoleId;
+                const canDrag = !role.isDefault && !role.managed;
+                return (
+                  <div
+                    key={role.id}
+                    draggable={canDrag}
+                    onDragStart={() => setDraggingRoleId(role.id)}
+                    onDragEnd={() => setDraggingRoleId(null)}
+                    onDragOver={(event) => {
+                      if (!canDrag) return;
+                      event.preventDefault();
+                    }}
+                    onDrop={(event) => {
+                      event.preventDefault();
+                      void handleRoleDrop(role.id);
+                    }}
+                    onClick={() => setSelectedRoleId(role.id)}
+                    className={cn(
+                      "flex items-center gap-3 p-3 rounded-lg border transition-colors",
+                      isSelected
+                        ? "bg-[#1d1630] border-[#8B5CF6]"
+                        : "bg-[#111111] border-[#222222] hover:bg-[#1a1a1a]",
+                      canDrag && "cursor-move",
+                      draggingRoleId === role.id && "opacity-60"
+                    )}
+                  >
+                    <GripVertical className={cn("w-4 h-4", canDrag ? "text-[#777777]" : "text-[#444444]")} />
+                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: role.color || "#888888" }} />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-white text-sm font-medium truncate">{role.name}</p>
+                      <p className="text-[11px] text-[#777777]">
+                        {role.memberCount ?? 0} members{role.isDefault ? " • default" : role.managed ? " • managed" : ""}
+                      </p>
+                    </div>
+                    {!role.isDefault && (
+                      <button
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          void handleDeleteRole(role.id);
+                        }}
+                        className="p-1 hover:bg-red-500/10 rounded text-[#666666] hover:text-red-500 transition-all"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                );
+              })}
+            {isReorderingRoles && (
+              <p className="text-xs text-[#888888]">Saving role order...</p>
+            )}
           </div>
 
-          {roles.filter(r => r.name !== "@everyone").map((role) => (
-            <div
-              key={role.id || role.name}
-              className="flex items-center gap-3 p-3 rounded-lg bg-[#111111] border border-[#222222] hover:bg-[#1a1a1a] cursor-pointer transition-colors group"
-            >
-              <GripVertical className="w-4 h-4 text-[#666666]" />
-              <div
-                className="w-3 h-3 rounded-full"
-                style={{ backgroundColor: role.color ? `#${role.color}` : "#888888" }}
-              />
-              <span className="flex-1 text-white">{role.name}</span>
-              {role.memberCount !== undefined && (
-                <span className="text-xs text-[#666666]">{role.memberCount} members</span>
-              )}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleDeleteRole(role.id);
-                }}
-                className="p-1 opacity-0 group-hover:opacity-100 hover:bg-red-500/10 rounded text-[#666666] hover:text-red-500 transition-all"
-              >
-                <Trash2 className="w-4 h-4" />
-              </button>
-              <ChevronRight className="w-4 h-4 text-[#666666]" />
-            </div>
-          ))}
+          <div className="rounded-lg bg-[#111111] border border-[#222222] p-4 space-y-4">
+            {!selectedRole || !roleDraft ? (
+              <div className="text-sm text-[#888888]">Select a role to edit.</div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-lg text-white font-semibold">{selectedRole.name}</h3>
+                  {selectedRole.managed && (
+                    <span className="text-xs px-2 py-1 rounded bg-[#1f1f1f] text-[#9b9b9b]">Managed role</span>
+                  )}
+                </div>
+
+                <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
+                  <div>
+                    <label className="block text-xs text-[#888888] mb-1">Role Name</label>
+                    <Input
+                      value={roleDraft.name}
+                      onChange={(event) => setRoleDraft((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
+                      disabled={selectedRole.isDefault || selectedRole.managed}
+                      className="bg-[#0a0a0a] border-[#222222] text-white disabled:opacity-60"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs text-[#888888] mb-1">Color</label>
+                    <input
+                      type="color"
+                      value={roleDraft.color}
+                      onChange={(event) =>
+                        setRoleDraft((prev) => (prev ? { ...prev, color: event.target.value } : prev))
+                      }
+                      disabled={selectedRole.managed}
+                      className="w-12 h-10 p-1 rounded bg-[#0a0a0a] border border-[#222222] disabled:opacity-60"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid sm:grid-cols-2 gap-3">
+                  <label className="flex items-center justify-between p-3 rounded bg-[#0a0a0a] border border-[#222222]">
+                    <span className="text-sm text-white">Display role separately</span>
+                    <input
+                      type="checkbox"
+                      checked={roleDraft.hoist}
+                      disabled={selectedRole.managed}
+                      onChange={(event) =>
+                        setRoleDraft((prev) => (prev ? { ...prev, hoist: event.target.checked } : prev))
+                      }
+                      className="w-4 h-4 accent-[#8B5CF6]"
+                    />
+                  </label>
+                  <label className="flex items-center justify-between p-3 rounded bg-[#0a0a0a] border border-[#222222]">
+                    <span className="text-sm text-white">Allow anyone to mention</span>
+                    <input
+                      type="checkbox"
+                      checked={roleDraft.mentionable}
+                      disabled={selectedRole.managed}
+                      onChange={(event) =>
+                        setRoleDraft((prev) => (prev ? { ...prev, mentionable: event.target.checked } : prev))
+                      }
+                      className="w-4 h-4 accent-[#8B5CF6]"
+                    />
+                  </label>
+                </div>
+
+                <div className="space-y-3">
+                  <h4 className="text-sm font-semibold text-white">Permissions</h4>
+                  {ROLE_PERMISSION_CATEGORIES.map((category) => (
+                    <div key={category.id} className="rounded border border-[#222222] bg-[#0a0a0a] p-3 space-y-2">
+                      <p className="text-xs uppercase tracking-wide text-[#8e8e8e]">{category.label}</p>
+                      {category.permissions.map((permission) => {
+                        const checked = hasPermissionBit(roleDraft.permissions, permission.bit);
+                        return (
+                          <label key={permission.key} className="flex items-start justify-between gap-3 py-1.5">
+                            <div>
+                              <p className="text-sm text-white">{permission.label}</p>
+                              <p className="text-xs text-[#777777]">{permission.description}</p>
+                            </div>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={selectedRole.managed}
+                              onChange={(event) => handleRolePermissionToggle(permission.bit, event.target.checked)}
+                              className="mt-1 w-4 h-4 accent-[#8B5CF6]"
+                            />
+                          </label>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+
+                <div className="flex justify-end">
+                  <button
+                    onClick={() => void handleSaveRole()}
+                    disabled={isSavingRole || selectedRole.managed}
+                    className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 disabled:opacity-50"
+                  >
+                    {isSavingRole && <Loader2 className="w-4 h-4 animate-spin" />}
+                    Save Role
+                  </button>
+                </div>
+              </>
+            )}
+          </div>
         </div>
       )}
     </div>
@@ -1229,6 +1540,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </div>
         <Input
           placeholder="Search members..."
+          value={memberSearch}
+          onChange={(event) => setMemberSearch(event.target.value)}
           className="w-64 bg-[#111111] border-[#222222] text-white"
         />
       </div>
@@ -1239,13 +1552,21 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </div>
       ) : (
         <div className="space-y-1">
-          {members.map((member, index) => (
+          {members
+            .filter((member) => {
+              const needle = memberSearch.trim().toLowerCase();
+              if (!needle) return true;
+              const name = (member.displayName || member.username || "").toLowerCase();
+              const username = member.username.toLowerCase();
+              return name.includes(needle) || username.includes(needle);
+            })
+            .map((member, index) => (
             <div
               key={member.id || `member-${index}`}
-              className="flex items-center gap-3 p-3 rounded-lg hover:bg-[#111111] transition-colors"
+              className="flex items-center gap-3 p-3 rounded-lg hover:bg-[#111111] transition-colors border border-transparent hover:border-[#222222]"
             >
               <Avatar className="w-10 h-10">
-                <AvatarImage src={member.avatar} />
+                <AvatarImage src={member.avatar || undefined} />
                 <AvatarFallback className="bg-[#8B5CF6] text-white">
                   {(member.displayName || member.username || '?').charAt(0)}
                 </AvatarFallback>
@@ -1260,10 +1581,60 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   )}
                 </div>
                 <span className="text-sm text-[#888888]">@{member.username}</span>
+                {member.roles.length > 0 && (
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {member.roles.slice(0, 3).map((role) => (
+                      <span
+                        key={`${member.id}-${role.id}`}
+                        className="px-2 py-0.5 rounded text-[11px]"
+                        style={{ backgroundColor: `${role.color}22`, color: role.color }}
+                      >
+                        {role.name}
+                      </span>
+                    ))}
+                    {member.roles.length > 3 && (
+                      <span className="px-2 py-0.5 rounded text-[11px] bg-[#1a1a1a] text-[#777777]">
+                        +{member.roles.length - 3}
+                      </span>
+                    )}
+                  </div>
+                )}
               </div>
-              <button className="p-2 hover:bg-[#1a1a1a] rounded-md text-[#888888] transition-colors">
-                <MoreHorizontal className="w-4 h-4" />
-              </button>
+              <details className="relative">
+                <summary className="list-none p-2 hover:bg-[#1a1a1a] rounded-md text-[#888888] transition-colors cursor-pointer">
+                  {memberRoleSavingId === member.id ? (
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                  ) : (
+                    <MoreHorizontal className="w-4 h-4" />
+                  )}
+                </summary>
+                <div className="absolute right-0 mt-2 z-20 w-64 rounded-lg bg-[#0c0c0c] border border-[#222222] p-3 shadow-xl">
+                  <p className="text-xs uppercase tracking-wide text-[#888888] mb-2">Assign Roles</p>
+                  <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
+                    {roles
+                      .slice()
+                      .sort((a, b) => b.position - a.position)
+                      .map((role) => {
+                        const checked = member.roles.some((entry) => entry.id === role.id);
+                        const isDisabled = role.isDefault || memberRoleSavingId === member.id;
+                        return (
+                          <label key={`${member.id}-${role.id}`} className="flex items-center justify-between gap-2 py-1">
+                            <span className="text-sm" style={{ color: role.color || "#ffffff" }}>
+                              {role.name}
+                            </span>
+                            <input
+                              type="checkbox"
+                              checked={checked}
+                              disabled={isDisabled}
+                              onChange={(event) => void handleToggleMemberRole(member, role.id, event.target.checked)}
+                              className="w-4 h-4 accent-[#8B5CF6]"
+                            />
+                          </label>
+                        );
+                      })}
+                  </div>
+                </div>
+              </details>
             </div>
           ))}
         </div>
@@ -1571,7 +1942,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             onChange={(e) => setExplicitContentFilter(e.target.value as typeof explicitContentFilter)}
             className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
           >
-            <option value="disabled">Don't scan any media content</option>
+            <option value="disabled">Don&apos;t scan any media content</option>
             <option value="members_without_roles">Scan content from members without roles</option>
             <option value="all_members">Scan content from all members</option>
           </select>

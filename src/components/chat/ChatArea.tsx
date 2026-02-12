@@ -112,6 +112,66 @@ interface Message {
     animated?: boolean;
     url: string;
   }>;
+  mentionEveryone?: boolean;
+  mentionedUserIds?: string[];
+  mentionedRoleIds?: string[];
+  mentionedChannelIds?: string[];
+}
+
+interface MentionUser {
+  id: string;
+  username: string;
+  displayName: string;
+}
+
+interface MentionRole {
+  id: string;
+  name: string;
+  color?: string;
+  mentionable?: boolean;
+  isDefault?: boolean;
+}
+
+interface MentionSuggestion {
+  id: string;
+  kind: "user" | "role" | "everyone" | "here";
+  label: string;
+  description?: string;
+  color?: string;
+}
+
+function escapeRegex(input: string): string {
+  return input.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+function replaceAliasMention(content: string, alias: string, token: string): string {
+  if (!alias) return content;
+  const escapedAlias = escapeRegex(alias);
+  const pattern = new RegExp(`(^|\\s)@${escapedAlias}(?=$|[\\s.,!?;:])`, "gi");
+  return content.replace(pattern, (_match, prefix: string) => `${prefix}${token}`);
+}
+
+function extractDraftMentionIds(content: string): {
+  mentionEveryone: boolean;
+  mentionedUserIds: string[];
+  mentionedRoleIds: string[];
+  mentionedChannelIds: string[];
+} {
+  const mentionedUserIds = Array.from(
+    new Set(Array.from(content.matchAll(/<@!?([a-f0-9]{24})>/gi)).map((match) => match[1]))
+  );
+  const mentionedRoleIds = Array.from(
+    new Set(Array.from(content.matchAll(/<@&([a-f0-9]{24})>/gi)).map((match) => match[1]))
+  );
+  const mentionedChannelIds = Array.from(
+    new Set(Array.from(content.matchAll(/<#([a-f0-9]{24})>/gi)).map((match) => match[1]))
+  );
+  return {
+    mentionEveryone: /(^|\s)@(everyone|here)\b/i.test(content),
+    mentionedUserIds,
+    mentionedRoleIds,
+    mentionedChannelIds,
+  };
 }
 
 interface ChatAreaProps {
@@ -164,6 +224,12 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     serverId: string;
     animated?: boolean;
   }>>([]);
+  const [mentionUsers, setMentionUsers] = useState<MentionUser[]>([]);
+  const [mentionRoles, setMentionRoles] = useState<MentionRole[]>([]);
+  const [currentUserRoleIds, setCurrentUserRoleIds] = useState<string[]>([]);
+  const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
+  const [activeMentionIndex, setActiveMentionIndex] = useState(0);
+  const mentionRangeRef = useRef<{ start: number; end: number } | null>(null);
 
   // Typing indicator
   const [typingUsers, setTypingUsers] = useState<string[]>([]);
@@ -181,6 +247,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const [isSearching, setIsSearching] = useState(false);
   const [searchResults, setSearchResults] = useState<Message[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [standaloneMedia, setStandaloneMedia] = useState<{ src: string; alt?: string } | null>(null);
 
   // Detect mobile
   useEffect(() => {
@@ -201,7 +268,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         const response = await fetch(`/api/servers/${currentServer.id}/emojis`);
         if (response.ok) {
           const data = await response.json();
-          const mapped = (data.emojis || []).map((emoji: any) => ({
+          const mapped = (data.emojis || []).map((emoji: { id?: string; _id?: string; name?: string; url?: string; imageUrl?: string; serverId?: string; animated?: boolean }) => ({
             id: emoji.id || emoji._id,
             name: emoji.name,
             url: emoji.url || emoji.imageUrl,
@@ -216,6 +283,69 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     };
     fetchServerEmojis();
   }, [currentServer]);
+
+  useEffect(() => {
+    const fetchMentionSources = async () => {
+      if (!currentServer) {
+        setMentionUsers([]);
+        setMentionRoles([]);
+        setCurrentUserRoleIds([]);
+        return;
+      }
+
+      try {
+        const [membersResponse, rolesResponse] = await Promise.all([
+          fetch(`/api/servers/${currentServer.id}/members`),
+          fetch(`/api/servers/${currentServer.id}/roles`),
+        ]);
+
+        if (membersResponse.ok) {
+          const membersData = await membersResponse.json();
+          const members = (membersData.members || []) as Array<{
+            id: string;
+            username: string;
+            displayName: string;
+            roles?: Array<{ id: string }>;
+          }>;
+
+          setMentionUsers(
+            members.map((member) => ({
+              id: member.id,
+              username: member.username,
+              displayName: member.displayName || member.username,
+            }))
+          );
+
+          const self = members.find((member) => member.id === user?.id);
+          setCurrentUserRoleIds((self?.roles || []).map((role) => role.id));
+        } else {
+          setMentionUsers([]);
+          setCurrentUserRoleIds([]);
+        }
+
+        if (rolesResponse.ok) {
+          const rolesData = await rolesResponse.json();
+          const roles = (rolesData.roles || []) as Array<{
+            id: string;
+            name: string;
+            color?: string;
+            mentionable?: boolean;
+            isDefault?: boolean;
+          }>;
+          setMentionRoles(roles);
+        } else {
+          setMentionRoles([]);
+        }
+      } catch (error) {
+        console.error("Failed to fetch mention sources:", error);
+        setMentionUsers([]);
+        setMentionRoles([]);
+        setCurrentUserRoleIds([]);
+      }
+    };
+
+    void fetchMentionSources();
+  }, [currentServer, user?.id]);
 
   const fetchMessages = useCallback(async () => {
     if (!currentChannel) return;
@@ -287,6 +417,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     setSearchQuery("");
     setSearchResults([]);
     setShowSearchResults(false);
+    mentionRangeRef.current = null;
+    setMentionSuggestions([]);
+    setActiveMentionIndex(0);
     void fetchPinnedMessages();
   }, [currentChannel, fetchPinnedMessages]);
 
@@ -296,6 +429,88 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     }, 220);
     return () => clearTimeout(timer);
   }, [searchQuery, runMessageSearch]);
+
+  const updateMentionSuggestions = useCallback(
+    (draft: string, explicitCaretPosition?: number | null) => {
+      const caretPosition =
+        explicitCaretPosition ??
+        (typeof textareaRef.current?.selectionStart === "number"
+          ? textareaRef.current.selectionStart
+          : draft.length);
+      const beforeCursor = draft.slice(0, caretPosition);
+      const mentionMatch = beforeCursor.match(/(^|\s)@([^\s@]{0,40})$/);
+
+      if (!mentionMatch) {
+        mentionRangeRef.current = null;
+        setMentionSuggestions([]);
+        setActiveMentionIndex(0);
+        return;
+      }
+
+      const tokenPrefix = mentionMatch[1] || "";
+      const queryRaw = mentionMatch[2] || "";
+      const query = queryRaw.toLowerCase();
+      const mentionStart = caretPosition - queryRaw.length - 1;
+      if (mentionStart - tokenPrefix.length < 0) {
+        mentionRangeRef.current = null;
+        setMentionSuggestions([]);
+        return;
+      }
+
+      const staticSuggestions: MentionSuggestion[] = [
+        { id: "everyone", kind: "everyone", label: "everyone", description: "Notify everyone in this channel" },
+        { id: "here", kind: "here", label: "here", description: "Notify currently active members" },
+      ].filter((entry) => entry.label.startsWith(query));
+
+      const userSuggestions = mentionUsers
+        .filter((entry) => {
+          const username = entry.username.toLowerCase();
+          const displayName = entry.displayName.toLowerCase();
+          return query.length === 0 || username.includes(query) || displayName.includes(query);
+        })
+        .sort((a, b) => a.displayName.localeCompare(b.displayName))
+        .slice(0, 8)
+        .map((entry) => ({
+          id: entry.id,
+          kind: "user" as const,
+          label: entry.displayName,
+          description: `@${entry.username}`,
+        }));
+
+      const roleSuggestions = mentionRoles
+        .filter((entry) => !entry.isDefault)
+        .filter((entry) => {
+          const roleName = entry.name.toLowerCase();
+          return query.length === 0 || roleName.includes(query);
+        })
+        .sort((a, b) => a.name.localeCompare(b.name))
+        .slice(0, 8)
+        .map((entry) => ({
+          id: entry.id,
+          kind: "role" as const,
+          label: entry.name,
+          description: entry.mentionable ? "Role mention" : "Role mention",
+          color: entry.color,
+        }));
+
+      const nextSuggestions = [...staticSuggestions, ...userSuggestions, ...roleSuggestions].slice(0, 12);
+
+      if (!nextSuggestions.length) {
+        mentionRangeRef.current = null;
+        setMentionSuggestions([]);
+        setActiveMentionIndex(0);
+        return;
+      }
+
+      mentionRangeRef.current = {
+        start: mentionStart,
+        end: caretPosition,
+      };
+      setMentionSuggestions(nextSuggestions);
+      setActiveMentionIndex(0);
+    },
+    [mentionRoles, mentionUsers]
+  );
 
   const addTypingUser = useCallback(
     (username: string) => {
@@ -333,6 +548,44 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       // Best-effort signal only.
     }
   }, [currentChannel, newMessage]);
+
+  const insertMentionFromSuggestion = useCallback(
+    (suggestion: MentionSuggestion) => {
+      const activeRange = mentionRangeRef.current;
+      if (!activeRange) return;
+
+      const mentionToken =
+        suggestion.kind === "user"
+          ? `<@${suggestion.id}>`
+          : suggestion.kind === "role"
+            ? `<@&${suggestion.id}>`
+            : suggestion.kind === "everyone"
+              ? "@everyone"
+              : "@here";
+
+      const before = newMessage.slice(0, activeRange.start);
+      const after = newMessage.slice(activeRange.end);
+      const separator = after.startsWith(" ") || after.startsWith("\n") || after.length === 0 ? "" : " ";
+      const nextMessage = `${before}${mentionToken}${separator}${after}`;
+      const nextCaret = before.length + mentionToken.length + separator.length;
+
+      setNewMessage(nextMessage);
+      mentionRangeRef.current = null;
+      setMentionSuggestions([]);
+      setActiveMentionIndex(0);
+
+      requestAnimationFrame(() => {
+        if (!textareaRef.current) return;
+        textareaRef.current.focus();
+        textareaRef.current.style.height = "44px";
+        textareaRef.current.style.height = Math.min(textareaRef.current.scrollHeight, 300) + "px";
+        textareaRef.current.setSelectionRange(nextCaret, nextCaret);
+      });
+
+      void sendTypingStatus(nextMessage);
+    },
+    [newMessage, sendTypingStatus]
+  );
 
   const applyReactionEvent = useCallback(
     (messageId: string, emoji: string, userId: string, isAdd: boolean) => {
@@ -444,6 +697,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
               attachments: data.message.attachments || [],
               reactions: data.message.reactions || [],
               customEmojis: data.message.customEmojis || [],
+              mentionEveryone: Boolean(data.message.mentionEveryone),
+              mentionedUserIds: data.message.mentionedUserIds || [],
+              mentionedRoleIds: data.message.mentionedRoleIds || [],
+              mentionedChannelIds: data.message.mentionedChannelIds || [],
             };
             const incomingAuthorId = newMsg.authorId || newMsg.author?.id;
             const ownTempIndex = prev.findIndex(
@@ -618,11 +875,48 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     return uploadedAttachments;
   };
 
+  const normalizeMessageMentions = useCallback(
+    (content: string): string => {
+      let nextContent = content;
+
+      const roleCandidates = [...mentionRoles]
+        .filter((role) => !role.isDefault)
+        .sort((a, b) => b.name.length - a.name.length);
+      for (const role of roleCandidates) {
+        nextContent = replaceAliasMention(nextContent, role.name, `<@&${role.id}>`);
+      }
+
+      const userAliasMap = new Map<string, string>();
+      for (const mentionUser of mentionUsers) {
+        const aliases = [mentionUser.displayName, mentionUser.username];
+        for (const alias of aliases) {
+          const normalizedAlias = alias.trim().toLowerCase();
+          if (!normalizedAlias || normalizedAlias === "everyone" || normalizedAlias === "here") continue;
+          if (!userAliasMap.has(normalizedAlias)) {
+            userAliasMap.set(normalizedAlias, mentionUser.id);
+          }
+        }
+      }
+
+      const userCandidates = Array.from(userAliasMap.entries())
+        .sort((a, b) => b[0].length - a[0].length)
+        .map(([alias, id]) => ({ alias, id }));
+
+      for (const userCandidate of userCandidates) {
+        nextContent = replaceAliasMention(nextContent, userCandidate.alias, `<@${userCandidate.id}>`);
+      }
+
+      return nextContent;
+    },
+    [mentionRoles, mentionUsers]
+  );
+
   const handleSendMessage = async (contentOverride?: string) => {
     if (isSending || !currentChannel) return;
 
     const isOverrideSend = typeof contentOverride === "string";
-    const messageContent = isOverrideSend ? contentOverride : newMessage;
+    const rawMessageContent = isOverrideSend ? contentOverride : newMessage;
+    const messageContent = currentServer ? normalizeMessageMentions(rawMessageContent) : rawMessageContent;
     const pendingAttachments = isOverrideSend ? [] : attachments;
 
     if (!messageContent.trim() && pendingAttachments.length === 0) return;
@@ -630,6 +924,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     const replyReference = replyToMessage;
     if (!isOverrideSend) {
       setNewMessage("");
+      mentionRangeRef.current = null;
+      setMentionSuggestions([]);
+      setActiveMentionIndex(0);
     }
     lastTypingSentAtRef.current = 0;
     setIsSending(true);
@@ -652,6 +949,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       }
 
       tempId = `temp-${Date.now()}`;
+      const optimisticMentionData = extractDraftMentionIds(messageContent);
       const optimisticMessage: Message = {
         id: tempId,
         content: messageContent,
@@ -678,6 +976,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         attachments: uploadedAttachments,
         reactions: [],
         customEmojis: [],
+        mentionEveryone: optimisticMentionData.mentionEveryone,
+        mentionedUserIds: optimisticMentionData.mentionedUserIds,
+        mentionedRoleIds: optimisticMentionData.mentionedRoleIds,
+        mentionedChannelIds: optimisticMentionData.mentionedChannelIds,
       };
 
       setMessages((prev) => [...prev, optimisticMessage]);
@@ -717,6 +1019,11 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                     attachments: message.attachments || msg.attachments,
                     reactions: message.reactions || msg.reactions,
                     customEmojis: message.customEmojis || msg.customEmojis,
+                    mentionEveryone:
+                      message.mentionEveryone !== undefined ? Boolean(message.mentionEveryone) : msg.mentionEveryone,
+                    mentionedUserIds: message.mentionedUserIds || msg.mentionedUserIds,
+                    mentionedRoleIds: message.mentionedRoleIds || msg.mentionedRoleIds,
+                    mentionedChannelIds: message.mentionedChannelIds || msg.mentionedChannelIds,
                   }
                 : msg
             )
@@ -725,7 +1032,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       } else {
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
         if (!isOverrideSend) {
-          setNewMessage(messageContent);
+          setNewMessage(rawMessageContent);
         }
         toast.error("Failed to send message");
       }
@@ -734,7 +1041,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMessages((prev) => prev.filter((msg) => msg.id !== tempId));
       }
       if (!isOverrideSend) {
-        setNewMessage(messageContent);
+        setNewMessage(rawMessageContent);
       }
       toast.error("Failed to send message");
     } finally {
@@ -827,9 +1134,37 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (mentionSuggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveMentionIndex((prev) => (prev + 1) % mentionSuggestions.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveMentionIndex((prev) => (prev - 1 + mentionSuggestions.length) % mentionSuggestions.length);
+        return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        e.preventDefault();
+        const selected = mentionSuggestions[activeMentionIndex];
+        if (selected) {
+          insertMentionFromSuggestion(selected);
+        }
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        mentionRangeRef.current = null;
+        setMentionSuggestions([]);
+        setActiveMentionIndex(0);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      handleSendMessage();
+      void handleSendMessage();
     }
   };
 
@@ -854,6 +1189,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     if (value.trim()) {
       void sendTypingStatus(value);
     }
+    updateMentionSuggestions(value, e.target.selectionStart);
   };
 
   const handleEmojiSelect = (emoji: string) => {
@@ -1038,12 +1374,12 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     (src: string, alt?: string, messageId?: string) => {
       const mediaIndex = findGalleryIndex(mediaGallery, { src, messageId });
       if (mediaIndex >= 0) {
+        setStandaloneMedia(null);
         setLightboxIndex(mediaIndex);
         return;
       }
-      if (typeof window !== "undefined") {
-        window.open(src, "_blank", "noopener,noreferrer");
-      }
+      setLightboxIndex(null);
+      setStandaloneMedia({ src, alt });
     },
     [mediaGallery]
   );
@@ -1060,16 +1396,28 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   }, [lightboxIndex, mediaGallery.length]);
 
   const inboxItems = useMemo(() => {
-    const username = user?.username?.toLowerCase() || "";
-    const mentionNeedle = username ? `@${username}` : "";
+    const currentUserId = user?.id;
+    const currentUsername = user?.username?.toLowerCase() || "";
+    const userTokenRegex = currentUserId ? new RegExp(`<@!?${escapeRegex(currentUserId)}>` , "i") : null;
     return messages
       .filter((message) => {
-        if (!mentionNeedle) return false;
-        return message.content.toLowerCase().includes(mentionNeedle);
+        const mentionedDirectly =
+          (currentUserId && message.mentionedUserIds?.includes(currentUserId)) ||
+          (userTokenRegex ? userTokenRegex.test(message.content) : false) ||
+          (currentUsername ? message.content.toLowerCase().includes(`@${currentUsername}`) : false);
+
+        const mentionedByRole =
+          Boolean(message.mentionedRoleIds?.some((roleId) => currentUserRoleIds.includes(roleId))) ||
+          currentUserRoleIds.some((roleId) => message.content.includes(`<@&${roleId}>`));
+
+        const mentionedEveryone =
+          Boolean(message.mentionEveryone) || /(^|\s)@(everyone|here)\b/i.test(message.content);
+
+        return Boolean(mentionedDirectly || mentionedByRole || mentionedEveryone);
       })
       .slice(-20)
       .reverse();
-  }, [messages, user?.username]);
+  }, [currentUserRoleIds, messages, user?.id, user?.username]);
 
   if (!currentChannel) {
     return (
@@ -1293,6 +1641,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                             <MessageContent
                               content={message.content}
                               serverEmojis={message.customEmojis?.length ? message.customEmojis : serverEmojis}
+                              mentionUsers={mentionUsers}
+                              mentionRoles={mentionRoles}
+                              currentUserId={user?.id}
                               edited={message.edited}
                               className="chat-message-body text-[var(--app-text)]"
                               onMediaClick={({ src, alt }) => openMediaViewer(src, alt, message.id)}
@@ -1517,6 +1868,33 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           </div>
         )}
         <div className="relative bg-[var(--app-surface)] rounded-lg border border-[var(--app-border)] shadow-[var(--app-elev-1)]">
+          {mentionSuggestions.length > 0 && (
+            <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-20 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-alt)] shadow-[var(--app-elev-2)] overflow-hidden">
+              {mentionSuggestions.map((suggestion, index) => (
+                <button
+                  key={`${suggestion.kind}-${suggestion.id}`}
+                  type="button"
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    insertMentionFromSuggestion(suggestion);
+                  }}
+                  className={cn(
+                    "w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+                    index === activeMentionIndex
+                      ? "bg-[var(--app-accent)]/20 text-[var(--text-primary)]"
+                      : "hover:bg-[var(--app-surface)] text-[var(--text-primary)]"
+                  )}
+                >
+                  <span className="truncate text-sm">
+                    @{suggestion.label}
+                  </span>
+                  <span className="text-xs text-[var(--app-muted)] truncate">
+                    {suggestion.kind === "role" ? "Role" : suggestion.description}
+                  </span>
+                </button>
+              ))}
+            </div>
+          )}
           <input type="file" ref={fileInputRef} onChange={handleFileSelect} multiple accept="*/*" className="hidden" />
           <button
             onClick={() => fileInputRef.current?.click()}
@@ -1530,6 +1908,12 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             value={newMessage}
             onChange={handleTextareaChange}
             onKeyDown={handleKeyDown}
+            onClick={(event) => {
+              updateMentionSuggestions(event.currentTarget.value, event.currentTarget.selectionStart);
+            }}
+            onKeyUp={(event) => {
+              updateMentionSuggestions(event.currentTarget.value, event.currentTarget.selectionStart);
+            }}
             placeholder={`Message #${currentChannel.name}`}
             className="w-full min-h-[44px] max-h-[300px] py-2.5 pl-10 sm:pl-14 pr-24 sm:pr-36 bg-transparent border-none text-[var(--text-primary)] placeholder:text-[var(--app-muted-2)] resize-none focus-visible:ring-0 focus-visible:ring-offset-0 text-sm sm:text-base"
             rows={1}
@@ -1608,11 +1992,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       </div>
 
       <ImageLightbox
-        items={mediaGallery}
-        currentIndex={lightboxIndex ?? 0}
-        isOpen={lightboxIndex !== null}
-        onNavigate={setLightboxIndex}
-        onClose={() => setLightboxIndex(null)}
+        items={standaloneMedia ? [standaloneMedia] : mediaGallery}
+        currentIndex={standaloneMedia ? 0 : lightboxIndex ?? 0}
+        isOpen={lightboxIndex !== null || standaloneMedia !== null}
+        onNavigate={standaloneMedia ? undefined : setLightboxIndex}
+        onClose={() => {
+          setLightboxIndex(null);
+          setStandaloneMedia(null);
+        }}
       />
 
       {/* Delete Confirmation Dialog */}
