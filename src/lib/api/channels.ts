@@ -433,6 +433,16 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       const populatedAuthor =
         isPopulatedAuthor(author) ? author : null;
       const decryptedContent = await decryptFromStorage(msg.content || '');
+
+      // Parse custom emojis from the decrypted content
+      const emojiResult = await parseCustomEmojis(decryptedContent, msg.serverId);
+      const customEmojis = emojiResult.emojis.map(e => ({
+        id: e.id,
+        name: e.name,
+        animated: e.animated,
+        url: e.url,
+      }));
+
       const referencedRaw = msg.referencedMessageId;
       let referencedMessage:
         | {
@@ -496,6 +506,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         mentionedUserIds: (msg.mentionedUserIds || []).map((id: Types.ObjectId | string) => id.toString()),
         mentionedRoleIds: (msg.mentionedRoleIds || []).map((id: Types.ObjectId | string) => id.toString()),
         mentionedChannelIds: (msg.mentionedChannelIds || []).map((id: Types.ObjectId | string) => id.toString()),
+        customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
       };
     }));
 
@@ -876,9 +887,17 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         const author = msg.authorId as PopulatedAuthor | Types.ObjectId | string | null;
         const populatedAuthor =
           isPopulatedAuthor(author) ? author : null;
+        const decryptedContent = msg.content ? await decryptFromStorage(msg.content) : '';
+        const emojiResult = await parseCustomEmojis(decryptedContent, msg.serverId);
+        const customEmojis = emojiResult.emojis.map(e => ({
+          id: e.id,
+          name: e.name,
+          animated: e.animated,
+          url: e.url,
+        }));
         return {
           id: msg._id.toString(),
-          content: msg.content ? await decryptFromStorage(msg.content) : '',
+          content: decryptedContent,
           authorId: populatedAuthor?._id?.toString() || msg.authorId,
           author: populatedAuthor
             ? {
@@ -894,6 +913,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           updatedAt: msg.updatedAt,
           pinned: true,
           attachments: msg.attachments || [],
+          customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
         };
       })
     );

@@ -238,6 +238,13 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         isPremium?: boolean;
       };
       const decryptedContent = await decryptFromStorage(msg.content);
+      const emojiResult = await parseCustomEmojis(decryptedContent);
+      const customEmojis = emojiResult.emojis.map(e => ({
+        id: e.id,
+        name: e.name,
+        animated: e.animated,
+        url: e.url,
+      }));
       return {
         id: msg._id,
         content: decryptedContent,
@@ -255,6 +262,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         attachments: msg.attachments,
         createdAt: msg.createdAt,
         updatedAt: msg.updatedAt,
+        customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
       };
     }));
 
