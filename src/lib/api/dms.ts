@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia';
-import { Channel, Message, User, ServerMember } from '@/lib/models';
+import { Channel, Message, User, ServerMember, ServerSticker } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
 import { parseCustomEmojis, normalizeEmojiFormat } from '@/lib/services/emoji';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
@@ -90,33 +90,44 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       recipientIds: user._id,
     }).sort({ updatedAt: -1 });
 
-    // Populate recipient info
-    const channelsWithRecipients = await Promise.all(
-      channels.map(async (channel) => {
-        const recipientIds = channel.recipientIds.filter(
-          (id: Types.ObjectId) => !id.equals(user._id)
-        );
-        const recipients = await User.find({ _id: { $in: recipientIds } }).select(
-          'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt'
-        );
-        
-        return {
-          id: channel._id,
-          type: channel.type,
-          recipients: recipients.map((r) => ({
-            id: r._id,
-            username: r.username,
-            displayName: r.displayName,
-            avatar: r.avatar,
-            status: getPublicPresenceStatus(r),
-            customStatus: r.customStatus,
-            isPremium: r.isPremium,
-          })),
-          lastMessageId: channel.lastMessageId,
-          updatedAt: channel.updatedAt,
-        };
-      })
-    );
+    // Populate recipient info, deduplicating by recipient to avoid showing same user twice
+    const seenRecipientIds = new Set<string>();
+    const channelsWithRecipients = (
+      await Promise.all(
+        channels.map(async (channel) => {
+          const recipientIds = channel.recipientIds.filter(
+            (id: Types.ObjectId) => !id.equals(user._id)
+          );
+          const recipients = await User.find({ _id: { $in: recipientIds } }).select(
+            'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt'
+          );
+
+          return {
+            id: channel._id,
+            type: channel.type,
+            recipients: recipients.map((r) => ({
+              id: r._id,
+              username: r.username,
+              displayName: r.displayName,
+              avatar: r.avatar,
+              status: getPublicPresenceStatus(r),
+              customStatus: r.customStatus,
+              isPremium: r.isPremium,
+            })),
+            lastMessageId: channel.lastMessageId,
+            updatedAt: channel.updatedAt,
+            _recipientKey: recipientIds.map((id: Types.ObjectId) => id.toString()).sort().join(','),
+          };
+        })
+      )
+    ).filter((ch) => {
+      // For DMs: deduplicate by the other participant's ID (keep the first/most-recent)
+      if (ch.type === 'dm') {
+        if (seenRecipientIds.has(ch._recipientKey)) return false;
+        seenRecipientIds.add(ch._recipientKey);
+      }
+      return true;
+    }).map(({ _recipientKey: _rk, ...rest }) => rest);
 
     return { channels: channelsWithRecipients };
   })
@@ -302,10 +313,33 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     }
 
     // Validate content
-    const { content } = body;
-    let sanitizedContent = sanitizeInput(content);
+    const { content, sticker } = body;
+    let sanitizedContent = content ? sanitizeInput(content) : '';
+
+    // Validate sticker if provided
+    let stickerData: { id: string; name: string; imageUrl: string; serverId?: string; serverName?: string } | undefined;
+    if (sticker?.id) {
+      if (!isValidObjectId(sticker.id)) {
+        set.status = 400;
+        return { error: 'Invalid sticker ID' };
+      }
+      const stickerDoc = await ServerSticker.findById(sticker.id).populate('serverId', 'name').lean();
+      if (!stickerDoc || !stickerDoc.available) {
+        set.status = 400;
+        return { error: 'Sticker not found' };
+      }
+      const populatedServer = stickerDoc.serverId as unknown as { _id: Types.ObjectId; name: string } | null;
+      stickerData = {
+        id: stickerDoc._id.toString(),
+        name: stickerDoc.name,
+        imageUrl: stickerDoc.imageUrl,
+        serverId: populatedServer?._id.toString(),
+        serverName: populatedServer?.name,
+      };
+    }
+
     const validation = validateMessageContent(sanitizedContent);
-    if (!validation.valid) {
+    if (!validation.valid && !stickerData) {
       set.status = 400;
       return { error: validation.error };
     }
@@ -340,6 +374,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       authorId: user._id,
       content: encryptedContent,
       type: 'default',
+      sticker: stickerData,
     });
     await message.save();
 
@@ -364,6 +399,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       channelId: channel._id,
       createdAt: message.createdAt,
       customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
+      sticker: message.sticker || undefined,
     };
 
     emitDmListUpdate(
@@ -414,7 +450,14 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       recipientId: t.String(),
     }),
     body: t.Object({
-      content: t.String({ minLength: 1, maxLength: 4000 }),
+      content: t.Optional(t.String({ minLength: 1, maxLength: 4000 })),
+      sticker: t.Optional(t.Object({
+        id: t.String(),
+        name: t.String(),
+        imageUrl: t.String(),
+        serverId: t.Optional(t.String()),
+        serverName: t.Optional(t.String()),
+      })),
     }),
   })
   // SSE stream for real-time messages

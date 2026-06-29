@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia';
-import { Channel, Message, Role, Server, ServerMember } from '@/lib/models';
+import { Channel, Message, Role, Server, ServerMember, ServerSticker } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
 import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
 import { checkRateLimit, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage } from '@/lib/security';
@@ -639,12 +639,34 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
-    const { content, replyTo, attachments = [] } = body;
+    const { content, replyTo, attachments = [], sticker } = body;
+
+    // Validate sticker if provided
+    let stickerData: { id: string; name: string; imageUrl: string; serverId?: string; serverName?: string } | undefined;
+    if (sticker?.id) {
+      if (!isValidObjectId(sticker.id)) {
+        set.status = 400;
+        return { error: 'Invalid sticker ID' };
+      }
+      const stickerDoc = await ServerSticker.findById(sticker.id).populate('serverId', 'name').lean();
+      if (!stickerDoc || !stickerDoc.available) {
+        set.status = 400;
+        return { error: 'Sticker not found' };
+      }
+      const populatedServer = stickerDoc.serverId as unknown as { _id: Types.ObjectId; name: string } | null;
+      stickerData = {
+        id: stickerDoc._id.toString(),
+        name: stickerDoc.name,
+        imageUrl: stickerDoc.imageUrl,
+        serverId: populatedServer?._id.toString(),
+        serverName: populatedServer?.name,
+      };
+    }
 
     // Validate content
-    if (!content && attachments.length === 0) {
+    if (!content && attachments.length === 0 && !stickerData) {
       set.status = 400;
-      return { error: 'Message must have content or attachments' };
+      return { error: 'Message must have content, attachments, or a sticker' };
     }
 
     if (content) {
@@ -690,6 +712,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       type: replyTo ? 'reply' : 'default',
       referencedMessageId: replyTo,
       attachments,
+      sticker: stickerData,
       mentionEveryone: mentionData.mentionEveryone,
       mentionedUserIds: mentionData.mentionedUserIds,
       mentionedRoleIds: mentionData.mentionedRoleIds,
@@ -774,6 +797,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       mentionedRoleIds: message.mentionedRoleIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
       mentionedChannelIds: message.mentionedChannelIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
       customEmojis: customEmojis.length > 0 ? customEmojis : undefined, // Include parsed emoji data
+      sticker: message.sticker || undefined,
     };
 
     // Publish message event
@@ -809,6 +833,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         width: t.Optional(t.Number()),
         height: t.Optional(t.Number()),
       }))),
+      sticker: t.Optional(t.Object({
+        id: t.String(),
+        name: t.String(),
+        imageUrl: t.String(),
+        serverId: t.Optional(t.String()),
+        serverName: t.Optional(t.String()),
+      })),
     }),
   })
   // Get pinned messages for channel

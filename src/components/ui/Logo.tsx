@@ -56,30 +56,19 @@ export function Logo({
     );
   }
 
-  // Full logo
+  // Full logo — wordmark only
   return (
-    <div className={cn("flex items-center gap-2", className)}>
-      <Image
-        src="/logo-icon.svg"
-        alt="SerikaCord"
-        width={sizeConfig.icon}
-        height={sizeConfig.icon}
-        priority
-        className="object-contain"
-      />
-      {showText && (
-        <span className={cn(
-          "font-extrabold tracking-tight",
-          size === "sm" && "text-lg",
-          size === "md" && "text-xl",
-          size === "lg" && "text-2xl",
-          size === "xl" && "text-4xl",
-        )}>
-          <span className="text-white">Serika</span>
-          <span className="text-[#8b5cf6]">Cord</span>
-        </span>
-      )}
-    </div>
+    <span className={cn(
+      "font-extrabold tracking-tight",
+      size === "sm" && "text-lg",
+      size === "md" && "text-xl",
+      size === "lg" && "text-2xl",
+      size === "xl" && "text-4xl",
+      className
+    )}>
+      <span className="text-white">Serika</span>
+      <span className="text-[#8b5cf6]">Cord</span>
+    </span>
   );
 }
 

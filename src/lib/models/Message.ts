@@ -64,6 +64,14 @@ export interface IEmbed {
   }>;
 }
 
+export interface ISticker {
+  id: string;
+  name: string;
+  imageUrl: string;
+  serverId?: string;
+  serverName?: string;
+}
+
 export interface IReaction {
   emoji: {
     id?: string;
@@ -86,9 +94,10 @@ export interface IMessage extends Document {
   // Reply reference
   referencedMessageId?: Types.ObjectId;
   
-  // Attachments & embeds
+  // Attachments, embeds & sticker
   attachments: IAttachment[];
   embeds: IEmbed[];
+  sticker?: ISticker;
   
   // Mentions
   mentionEveryone: boolean;
@@ -127,6 +136,14 @@ const AttachmentSchema = new Schema<IAttachment>({
   height: Number,
   duration: Number,
   waveform: String,
+}, { _id: false });
+
+const StickerSchema = new Schema<ISticker>({
+  id: { type: String, required: true },
+  name: { type: String, required: true },
+  imageUrl: { type: String, required: true },
+  serverId: String,
+  serverName: String,
 }, { _id: false });
 
 const EmbedSchema = new Schema<IEmbed>({
@@ -222,6 +239,7 @@ const MessageSchema = new Schema<IMessage>({
   },
   attachments: [AttachmentSchema],
   embeds: [EmbedSchema],
+  sticker: StickerSchema,
   mentionEveryone: {
     type: Boolean,
     default: false,

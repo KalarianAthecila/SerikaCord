@@ -41,6 +41,13 @@ export interface IServer extends Document {
       volume: number;
     };
   };
+  soundboardSounds: {
+    name: string;
+    url: string;
+    emoji: string;
+    uploadedBy?: any;
+    createdAt: Date;
+  }[];
   
   // Features
   features: string[];
@@ -180,6 +187,13 @@ const ServerSchema = new Schema<IServer>({
       volume: { type: Number, default: 100 },
     },
   },
+  soundboardSounds: [{
+    name: { type: String, required: true },
+    url: { type: String, required: true },
+    emoji: { type: String, default: '🔊' },
+    uploadedBy: { type: Schema.Types.ObjectId, ref: 'User' },
+    createdAt: { type: Date, default: Date.now },
+  }],
   features: [{
     type: String,
   }],

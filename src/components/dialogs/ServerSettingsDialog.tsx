@@ -41,6 +41,8 @@ import {
   MoreHorizontal,
   AlertTriangle,
   GripVertical,
+  Search,
+  Play,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ROLE_PERMISSION_CATEGORIES } from "@/lib/constants/rolePermissions";
@@ -193,6 +195,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     hoist: boolean;
     mentionable: boolean;
   } | null>(null);
+  const [roleSearch, setRoleSearch] = useState("");
+  const [permissionSearch, setPermissionSearch] = useState("");
   const [draggingRoleId, setDraggingRoleId] = useState<string | null>(null);
   const [isSavingRole, setIsSavingRole] = useState(false);
   const [isReorderingRoles, setIsReorderingRoles] = useState(false);
@@ -203,6 +207,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [memberRoleSavingId, setMemberRoleSavingId] = useState<string | null>(null);
   const [emojis, setEmojis] = useState<ServerEmoji[]>([]);
   const [stickers, setStickers] = useState<ServerSticker[]>([]);
+  const [emojiSearch, setEmojiSearch] = useState("");
+  const [stickerSearch, setStickerSearch] = useState("");
+  const [soundboardSounds, setSoundboardSounds] = useState<{ _id: string; name: string; url: string; emoji: string }[]>([]);
+  const [isUploadingSound, setIsUploadingSound] = useState(false);
+  const soundInputRef = useRef<HTMLInputElement>(null);
+  const [playingSoundId, setPlayingSoundId] = useState<string | null>(null);
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [textChannels, setTextChannels] = useState<ServerChannel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -358,6 +368,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               });
               setSoundboardEnabled(serverSettings.soundboard?.enabled ?? true);
               setSoundboardVolume(serverSettings.soundboard?.volume ?? 100);
+            }
+            if (activeTab === "soundboard") {
+              const soundsRes = await fetch(`/api/servers/${currentServer.id}/soundboard`);
+              if (soundsRes.ok) {
+                const soundsData = await soundsRes.json();
+                setSoundboardSounds(soundsData.sounds || []);
+              }
             }
             break;
         }
@@ -591,6 +608,18 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   };
 
   const selectedRole = roles.find((role) => role.id === selectedRoleId) || null;
+
+  const hasUnsavedRoleChanges = (() => {
+    if (!selectedRole || !roleDraft) return false;
+    const normalizeColor = (c: string) => (c || "").toLowerCase().replace(/^#/, "").padStart(6, "0");
+    return (
+      roleDraft.name !== selectedRole.name ||
+      normalizeColor(roleDraft.color) !== normalizeColor(selectedRole.color || "#99AAB5") ||
+      roleDraft.permissions !== (selectedRole.permissions || "0") ||
+      roleDraft.hoist !== Boolean(selectedRole.hoist) ||
+      roleDraft.mentionable !== Boolean(selectedRole.mentionable)
+    );
+  })();
 
   const handleRoleDrop = async (targetRoleId: string) => {
     if (!draggingRoleId || !currentServer || draggingRoleId === targetRoleId) return;
@@ -882,6 +911,91 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       console.error("Failed to delete sticker:", error);
       toast.error("Failed to delete sticker");
     }
+  };
+
+  const handleSoundUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file || !currentServer) return;
+
+    if (!file.type.startsWith("audio/")) {
+      toast.error("File must be an audio file");
+      return;
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      toast.error("Sound must be less than 2MB");
+      return;
+    }
+
+    const soundName = file.name.replace(/\.[^/.]+$/, "").replace(/[^a-zA-Z0-9_ ]/g, "").substring(0, 32);
+
+    setIsUploadingSound(true);
+    const formData = new FormData();
+    formData.append("file", file);
+
+    try {
+      const uploadRes = await fetch(`/api/upload/audio`, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!uploadRes.ok) {
+        throw new Error("Failed to upload sound file");
+      }
+
+      const uploadData = await uploadRes.json();
+
+      const response = await fetch(`/api/servers/${currentServer.id}/soundboard`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: soundName,
+          url: uploadData.url,
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        setSoundboardSounds((prev) => [...prev, data.sound]);
+        toast.success("Sound added!");
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to add sound");
+      }
+    } catch (error) {
+      console.error("Failed to upload sound:", error);
+      toast.error("Failed to upload sound");
+    } finally {
+      setIsUploadingSound(false);
+      if (soundInputRef.current) {
+        soundInputRef.current.value = "";
+      }
+    }
+  };
+
+  const handleDeleteSound = async (soundId: string) => {
+    if (!currentServer) return;
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/soundboard/${soundId}`, {
+        method: "DELETE",
+      });
+      if (response.ok) {
+        setSoundboardSounds((prev) => prev.filter((s) => s._id !== soundId));
+        toast.success("Sound deleted");
+      } else {
+        toast.error("Failed to delete sound");
+      }
+    } catch {
+      toast.error("Failed to delete sound");
+    }
+  };
+
+  const playSound = (sound: { _id: string; url: string }) => {
+    const audio = new Audio(sound.url);
+    audio.volume = soundboardVolume / 100;
+    audio.play().catch(() => toast.error("Failed to play sound"));
+    setPlayingSoundId(sound._id);
+    audio.onended = () => setPlayingSoundId(null);
   };
 
   const handleSaveAdvancedSettings = async (section: "widget" | "moderation" | "safety" | "integrations" | "soundboard") => {
@@ -1233,7 +1347,22 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     </div>
   );
 
-  const renderRoles = () => (
+  const renderRoles = () => {
+    const filteredRoles = roleSearch.trim()
+      ? roles.filter((r) => r.name.toLowerCase().includes(roleSearch.toLowerCase()))
+      : roles;
+    const permNeedle = permissionSearch.trim().toLowerCase();
+    const filteredCategories = permNeedle
+      ? ROLE_PERMISSION_CATEGORIES.map((cat) => {
+          const perms = cat.permissions.filter(
+            (p) =>
+              p.label.toLowerCase().includes(permNeedle) ||
+              p.description.toLowerCase().includes(permNeedle),
+          );
+          return { ...cat, permissions: perms };
+        }).filter((cat) => cat.permissions.length > 0)
+      : ROLE_PERMISSION_CATEGORIES;
+    return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -1254,9 +1383,22 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
         </div>
       ) : (
-        <div className="grid grid-cols-1 xl:grid-cols-[320px_1fr] gap-6">
+        <div className="grid grid-cols-1 xl:grid-cols-[300px_1fr] gap-6">
+          {/* Role list sidebar */}
           <div className="space-y-2">
-            {roles
+            {roles.length > 0 && (
+              <div className="relative mb-2">
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666666]" />
+                <input
+                  type="text"
+                  value={roleSearch}
+                  onChange={(e) => setRoleSearch(e.target.value)}
+                  placeholder="Search roles..."
+                  className="w-full pl-9 pr-3 py-2 bg-[#111111] border border-[#222222] rounded-md text-sm text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
+                />
+              </div>
+            )}
+            {filteredRoles
               .slice()
               .sort((a, b) => b.position - a.position)
               .map((role) => {
@@ -1278,16 +1420,16 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     }}
                     onClick={() => setSelectedRoleId(role.id)}
                     className={cn(
-                      "flex items-center gap-3 p-3 rounded-lg border transition-colors",
+                      "flex items-center gap-3 p-3 rounded-lg border transition-all cursor-pointer",
                       isSelected
-                        ? "bg-[#1d1630] border-[#8B5CF6]"
-                        : "bg-[#111111] border-[#222222] hover:bg-[#1a1a1a]",
+                        ? "bg-[#1d1630] border-[#8B5CF6] shadow-[0_0_12px_rgba(139,92,246,0.15)]"
+                        : "bg-[#111111] border-[#222222] hover:bg-[#1a1a1a] hover:border-[#333333]",
                       canDrag && "cursor-move",
-                      draggingRoleId === role.id && "opacity-60"
+                      draggingRoleId === role.id && "opacity-50"
                     )}
                   >
-                    <GripVertical className={cn("w-4 h-4", canDrag ? "text-[#777777]" : "text-[#444444]")} />
-                    <div className="w-3 h-3 rounded-full" style={{ backgroundColor: role.color || "#888888" }} />
+                    <GripVertical className={cn("w-4 h-4 flex-shrink-0", canDrag ? "text-[#777777]" : "text-[#333333]")} />
+                    <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: role.color || "#888888" }} />
                     <div className="flex-1 min-w-0">
                       <p className="text-white text-sm font-medium truncate">{role.name}</p>
                       <p className="text-[11px] text-[#777777]">
@@ -1309,108 +1451,159 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 );
               })}
             {isReorderingRoles && (
-              <p className="text-xs text-[#888888]">Saving role order...</p>
+              <p className="text-xs text-[#888888] flex items-center gap-1.5">
+                <Loader2 className="w-3 h-3 animate-spin" />
+                Saving role order...
+              </p>
             )}
           </div>
 
-          <div className="rounded-lg bg-[#111111] border border-[#222222] p-4 space-y-4">
+          {/* Role editor panel */}
+          <div className="rounded-lg bg-[#111111] border border-[#222222] flex flex-col max-h-[calc(100vh-220px)]">
             {!selectedRole || !roleDraft ? (
-              <div className="text-sm text-[#888888]">Select a role to edit.</div>
+              <div className="flex items-center justify-center py-16 text-sm text-[#888888]">
+                Select a role to edit.
+              </div>
             ) : (
               <>
-                <div className="flex items-center justify-between">
+                {/* Header */}
+                <div className="flex items-center gap-3 p-4 border-b border-[#222222] flex-shrink-0">
+                  <div className="w-4 h-4 rounded-full" style={{ backgroundColor: roleDraft.color || "#888888" }} />
                   <h3 className="text-lg text-white font-semibold">{selectedRole.name}</h3>
+                  {selectedRole.isDefault && (
+                    <span className="text-xs px-2 py-0.5 rounded bg-[#1f1f1f] text-[#9b9b9b]">Default</span>
+                  )}
                   {selectedRole.managed && (
-                    <span className="text-xs px-2 py-1 rounded bg-[#1f1f1f] text-[#9b9b9b]">Managed role</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-[#1f1f1f] text-[#9b9b9b]">Managed</span>
                   )}
                 </div>
 
-                <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
-                  <div>
-                    <label className="block text-xs text-[#888888] mb-1">Role Name</label>
-                    <Input
-                      value={roleDraft.name}
-                      onChange={(event) => setRoleDraft((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
-                      disabled={selectedRole.isDefault || selectedRole.managed}
-                      className="bg-[#0a0a0a] border-[#222222] text-white disabled:opacity-60"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs text-[#888888] mb-1">Color</label>
-                    <input
-                      type="color"
-                      value={roleDraft.color}
-                      onChange={(event) =>
-                        setRoleDraft((prev) => (prev ? { ...prev, color: event.target.value } : prev))
-                      }
-                      disabled={selectedRole.managed}
-                      className="w-12 h-10 p-1 rounded bg-[#0a0a0a] border border-[#222222] disabled:opacity-60"
-                    />
-                  </div>
-                </div>
-
-                <div className="grid sm:grid-cols-2 gap-3">
-                  <label className="flex items-center justify-between p-3 rounded bg-[#0a0a0a] border border-[#222222]">
-                    <span className="text-sm text-white">Display role separately</span>
-                    <input
-                      type="checkbox"
-                      checked={roleDraft.hoist}
-                      disabled={selectedRole.managed}
-                      onChange={(event) =>
-                        setRoleDraft((prev) => (prev ? { ...prev, hoist: event.target.checked } : prev))
-                      }
-                      className="w-4 h-4 accent-[#8B5CF6]"
-                    />
-                  </label>
-                  <label className="flex items-center justify-between p-3 rounded bg-[#0a0a0a] border border-[#222222]">
-                    <span className="text-sm text-white">Allow anyone to mention</span>
-                    <input
-                      type="checkbox"
-                      checked={roleDraft.mentionable}
-                      disabled={selectedRole.managed}
-                      onChange={(event) =>
-                        setRoleDraft((prev) => (prev ? { ...prev, mentionable: event.target.checked } : prev))
-                      }
-                      className="w-4 h-4 accent-[#8B5CF6]"
-                    />
-                  </label>
-                </div>
-
-                <div className="space-y-3">
-                  <h4 className="text-sm font-semibold text-white">Permissions</h4>
-                  {ROLE_PERMISSION_CATEGORIES.map((category) => (
-                    <div key={category.id} className="rounded border border-[#222222] bg-[#0a0a0a] p-3 space-y-2">
-                      <p className="text-xs uppercase tracking-wide text-[#8e8e8e]">{category.label}</p>
-                      {category.permissions.map((permission) => {
-                        const checked = hasPermissionBit(roleDraft.permissions, permission.bit);
-                        return (
-                          <label key={permission.key} className="flex items-start justify-between gap-3 py-1.5">
-                            <div>
-                              <p className="text-sm text-white">{permission.label}</p>
-                              <p className="text-xs text-[#777777]">{permission.description}</p>
-                            </div>
-                            <input
-                              type="checkbox"
-                              checked={checked}
-                              disabled={selectedRole.managed}
-                              onChange={(event) => handleRolePermissionToggle(permission.bit, event.target.checked)}
-                              className="mt-1 w-4 h-4 accent-[#8B5CF6]"
-                            />
-                          </label>
-                        );
-                      })}
+                {/* Scrollable content */}
+                <div className="flex-1 overflow-y-auto p-4 space-y-5">
+                  {/* Name + Color */}
+                  <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
+                    <div>
+                      <label className="block text-xs text-[#888888] mb-1.5">Role Name</label>
+                      <Input
+                        value={roleDraft.name}
+                        onChange={(event) => setRoleDraft((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
+                        disabled={selectedRole.isDefault || selectedRole.managed}
+                        className="bg-[#0a0a0a] border-[#222222] text-white disabled:opacity-60"
+                      />
                     </div>
-                  ))}
+                    <div>
+                      <label className="block text-xs text-[#888888] mb-1.5">Color</label>
+                      <div className="flex items-center gap-2">
+                        <input
+                          type="color"
+                          value={roleDraft.color}
+                          onChange={(event) =>
+                            setRoleDraft((prev) => (prev ? { ...prev, color: event.target.value } : prev))
+                          }
+                          disabled={selectedRole.managed}
+                          className="w-10 h-10 p-1 rounded bg-[#0a0a0a] border border-[#222222] disabled:opacity-60 cursor-pointer"
+                        />
+                        <span className="text-sm text-[#888888] font-mono">{roleDraft.color}</span>
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Toggles */}
+                  <div className="grid sm:grid-cols-2 gap-3">
+                    <label className="flex items-center justify-between p-3 rounded-lg bg-[#0a0a0a] border border-[#222222] cursor-pointer hover:border-[#333333] transition-colors">
+                      <div>
+                        <span className="text-sm text-white">Display separately</span>
+                        <p className="text-xs text-[#666666] mt-0.5">Show members with this role separately</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={roleDraft.hoist}
+                        disabled={selectedRole.managed}
+                        onChange={(event) =>
+                          setRoleDraft((prev) => (prev ? { ...prev, hoist: event.target.checked } : prev))
+                        }
+                        className="w-4 h-4 accent-[#8B5CF6]"
+                      />
+                    </label>
+                    <label className="flex items-center justify-between p-3 rounded-lg bg-[#0a0a0a] border border-[#222222] cursor-pointer hover:border-[#333333] transition-colors">
+                      <div>
+                        <span className="text-sm text-white">Allow mention</span>
+                        <p className="text-xs text-[#666666] mt-0.5">Anyone can mention this role</p>
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={roleDraft.mentionable}
+                        disabled={selectedRole.managed}
+                        onChange={(event) =>
+                          setRoleDraft((prev) => (prev ? { ...prev, mentionable: event.target.checked } : prev))
+                        }
+                        className="w-4 h-4 accent-[#8B5CF6]"
+                      />
+                    </label>
+                  </div>
+
+                  {/* Permissions */}
+                  <div className="space-y-3">
+                    <div className="flex items-center justify-between gap-3">
+                      <h4 className="text-sm font-semibold text-white">Permissions</h4>
+                      <div className="relative flex-1 max-w-[240px]">
+                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#666666]" />
+                        <input
+                          type="text"
+                          value={permissionSearch}
+                          onChange={(e) => setPermissionSearch(e.target.value)}
+                          placeholder="Filter permissions..."
+                          className="w-full pl-8 pr-3 py-1.5 bg-[#0a0a0a] border border-[#222222] rounded-md text-xs text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
+                        />
+                      </div>
+                    </div>
+                    {filteredCategories.length === 0 ? (
+                      <p className="text-sm text-[#666666] text-center py-4">No permissions match your search.</p>
+                    ) : (
+                      filteredCategories.map((category) => (
+                        <div key={category.id} className="rounded-lg border border-[#222222] bg-[#0a0a0a] p-3 space-y-2">
+                          <p className="text-xs uppercase tracking-wide text-[#8e8e8e] font-semibold">{category.label}</p>
+                          {category.permissions.map((permission) => {
+                            const checked = hasPermissionBit(roleDraft.permissions, permission.bit);
+                            return (
+                              <label key={permission.key} className="flex items-start justify-between gap-3 py-1.5 cursor-pointer hover:bg-[#141414] -mx-2 px-2 rounded transition-colors">
+                                <div>
+                                  <p className={cn("text-sm", checked ? "text-white" : "text-[#aaa]")}>{permission.label}</p>
+                                  <p className="text-xs text-[#666666]">{permission.description}</p>
+                                </div>
+                                <input
+                                  type="checkbox"
+                                  checked={checked}
+                                  disabled={selectedRole.managed}
+                                  onChange={(event) => handleRolePermissionToggle(permission.bit, event.target.checked)}
+                                  className="mt-1 w-4 h-4 accent-[#8B5CF6] flex-shrink-0"
+                                />
+                              </label>
+                            );
+                          })}
+                        </div>
+                      ))
+                    )}
+                  </div>
                 </div>
 
-                <div className="flex justify-end">
+                {/* Sticky save bar */}
+                <div className="flex items-center justify-between p-3 border-t border-[#222222] flex-shrink-0 bg-[#0d0d0d] rounded-b-lg">
+                  <p className="text-xs text-[#666666]">
+                    {hasUnsavedRoleChanges ? "You have unsaved changes" : "All changes saved"}
+                  </p>
                   <button
                     onClick={() => void handleSaveRole()}
-                    disabled={isSavingRole || selectedRole.managed}
-                    className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 disabled:opacity-50"
+                    disabled={isSavingRole || selectedRole.managed || !hasUnsavedRoleChanges}
+                    className={cn(
+                      "px-4 py-2 rounded-md flex items-center gap-2 transition-all",
+                      hasUnsavedRoleChanges
+                        ? "bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+                        : "bg-[#222222] text-[#666666]"
+                    )}
                   >
                     {isSavingRole && <Loader2 className="w-4 h-4 animate-spin" />}
-                    Save Role
+                    {hasUnsavedRoleChanges ? "Save Changes" : "Saved"}
                   </button>
                 </div>
               </>
@@ -1419,7 +1612,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   const renderInvites = () => (
     <div className="space-y-6">
@@ -1592,9 +1786,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     )}
                   </div>
                   <span className="text-sm text-[#888888]">@{member.username}</span>
-                  {member.roles.length > 0 && (
-                    <div className="flex flex-wrap gap-1 mt-1">
-                      {member.roles.slice(0, 3).map((role) => (
+                  <div className="flex flex-wrap gap-1 mt-1 items-center">
+                    {member.roles
+                      .filter(r => !r.isDefault)
+                      .slice(0, 3)
+                      .map((role) => (
                         <span
                           key={`${member.id}-${role.id}`}
                           className="px-2 py-0.5 rounded text-[11px]"
@@ -1603,52 +1799,51 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                           {role.name}
                         </span>
                       ))}
-                      {member.roles.length > 3 && (
-                        <span className="px-2 py-0.5 rounded text-[11px] bg-[#1a1a1a] text-[#777777]">
-                          +{member.roles.length - 3}
-                        </span>
-                      )}
-                      <DropdownMenu>
-                        <DropdownMenuTrigger asChild>
-                          <button className="p-0.5 text-[#888888] hover:text-[#8B5CF6] transition-colors">
-                            <Plus className="w-3.5 h-3.5" />
-                          </button>
-                        </DropdownMenuTrigger>
-                        <DropdownMenuContent className="w-56 bg-[#111111] border-[#222222] text-[#888888]">
-                          <DropdownMenuLabel className="text-xs font-bold text-[#666666] uppercase">
-                            Manage Roles
-                          </DropdownMenuLabel>
-                          <DropdownMenuSeparator className="bg-[#222222]" />
-                          <ScrollArea className="h-[200px]">
-                            {roles
-                              .filter(r => !r.isDefault && !r.managed)
-                              .sort((a, b) => b.position - a.position)
-                              .map((role) => {
-                                const hasRole = member.roles.some(r => r.id === role.id);
-                                return (
-                                  <DropdownMenuCheckboxItem
-                                    key={role.id}
-                                    checked={hasRole}
-                                    onCheckedChange={(checked) =>
-                                      handleToggleMemberRole(member, role.id, checked)
-                                    }
-                                    className="focus:bg-[#8B5CF6] focus:text-white"
-                                  >
-                                    <div className="flex items-center gap-2">
-                                      <div
-                                        className="w-2 h-2 rounded-full"
-                                        style={{ backgroundColor: role.color }}
-                                      />
-                                      <span className={hasRole ? "text-white" : ""}>{role.name}</span>
-                                    </div>
-                                  </DropdownMenuCheckboxItem>
-                                );
-                              })}
-                          </ScrollArea>
-                        </DropdownMenuContent>
-                      </DropdownMenu>
-                    </div>
-                  )}
+                    {member.roles.filter(r => !r.isDefault).length > 3 && (
+                      <span className="px-2 py-0.5 rounded text-[11px] bg-[#1a1a1a] text-[#777777]">
+                        +{member.roles.filter(r => !r.isDefault).length - 3}
+                      </span>
+                    )}
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <button className="p-0.5 text-[#888888] hover:text-[#8B5CF6] transition-colors" title="Assign roles">
+                          <Plus className="w-3.5 h-3.5" />
+                        </button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent className="w-56 bg-[#111111] border-[#222222] text-[#888888]">
+                        <DropdownMenuLabel className="text-xs font-bold text-[#666666] uppercase">
+                          Manage Roles
+                        </DropdownMenuLabel>
+                        <DropdownMenuSeparator className="bg-[#222222]" />
+                        <ScrollArea className="h-[200px]">
+                          {roles
+                            .filter(r => !r.isDefault && !r.managed)
+                            .sort((a, b) => b.position - a.position)
+                            .map((role) => {
+                              const hasRole = member.roles.some(r => r.id === role.id);
+                              return (
+                                <DropdownMenuCheckboxItem
+                                  key={role.id}
+                                  checked={hasRole}
+                                  onCheckedChange={(checked) =>
+                                    handleToggleMemberRole(member, role.id, checked)
+                                  }
+                                  className="focus:bg-[#8B5CF6] focus:text-white"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div
+                                      className="w-2 h-2 rounded-full"
+                                      style={{ backgroundColor: role.color }}
+                                    />
+                                    <span className={hasRole ? "text-white" : ""}>{role.name}</span>
+                                  </div>
+                                </DropdownMenuCheckboxItem>
+                              );
+                            })}
+                        </ScrollArea>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
                 </div>
                 <details className="relative">
                   <summary className="list-none p-2 hover:bg-[#1a1a1a] rounded-md text-[#888888] transition-colors cursor-pointer">
@@ -1692,7 +1887,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     </div>
   );
 
-  const renderEmoji = () => (
+  const renderEmoji = () => {
+    const filteredEmojis = emojiSearch.trim()
+      ? emojis.filter((e) => e.name.toLowerCase().includes(emojiSearch.toLowerCase()))
+      : emojis;
+    return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -1722,6 +1921,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         className="hidden"
       />
 
+      {/* Search */}
+      {emojis.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666666]" />
+          <input
+            type="text"
+            value={emojiSearch}
+            onChange={(e) => setEmojiSearch(e.target.value)}
+            placeholder="Search emoji by name..."
+            className="w-full pl-9 pr-3 py-2 bg-[#111111] border border-[#222222] rounded-md text-sm text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
+          />
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
@@ -1739,18 +1952,26 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             Upload Emoji
           </button>
         </div>
+      ) : filteredEmojis.length === 0 ? (
+        <div className="text-center py-8 text-[#888888] text-sm">
+          No emoji matching "{emojiSearch}"
+        </div>
       ) : (
         <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
-          {emojis.map((emoji) => (
+          {filteredEmojis.map((emoji) => (
             <div
               key={emoji._id}
-              className="relative group aspect-square bg-[#111111] border border-[#222222] rounded-lg p-2 flex items-center justify-center"
+              className="relative group aspect-square bg-[#111111] border border-[#222222] rounded-lg p-2 flex flex-col items-center justify-center hover:border-[#8B5CF6]/50 transition-colors"
+              title={`:${emoji.name}:`}
             >
               <img
                 src={emoji.imageUrl}
                 alt={`:${emoji.name}:`}
                 className="w-8 h-8 object-contain"
               />
+              {emoji.animated && (
+                <span className="absolute top-1 left-1 px-1 py-0.5 text-[8px] font-bold bg-[#8B5CF6] text-white rounded">GIF</span>
+              )}
               <button
                 onClick={() => handleDeleteEmoji(emoji._id)}
                 className="absolute top-1 right-1 p-1 bg-red-500/80 hover:bg-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity"
@@ -1765,9 +1986,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </div>
       )}
     </div>
-  );
+    );
+  };
 
-  const renderStickers = () => (
+  const renderStickers = () => {
+    const filteredStickers = stickerSearch.trim()
+      ? stickers.filter((s) => s.name.toLowerCase().includes(stickerSearch.toLowerCase()))
+      : stickers;
+    return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
@@ -1792,6 +2018,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         className="hidden"
       />
 
+      {/* Search */}
+      {stickers.length > 0 && (
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666666]" />
+          <input
+            type="text"
+            value={stickerSearch}
+            onChange={(e) => setStickerSearch(e.target.value)}
+            placeholder="Search stickers by name..."
+            className="w-full pl-9 pr-3 py-2 bg-[#111111] border border-[#222222] rounded-md text-sm text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
+          />
+        </div>
+      )}
+
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
           <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
@@ -1808,12 +2048,17 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             Upload First Sticker
           </button>
         </div>
+      ) : filteredStickers.length === 0 ? (
+        <div className="text-center py-8 text-[#888888] text-sm">
+          No stickers matching "{stickerSearch}"
+        </div>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
-          {stickers.map((sticker) => (
+          {filteredStickers.map((sticker) => (
             <div
               key={sticker._id}
-              className="relative group rounded-lg bg-[#111111] border border-[#222222] p-2"
+              className="relative group rounded-lg bg-[#111111] border border-[#222222] p-2 hover:border-[#8B5CF6]/50 transition-colors"
+              title={sticker.name}
             >
               <img
                 src={sticker.imageUrl}
@@ -1832,7 +2077,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         </div>
       )}
     </div>
-  );
+    );
+  };
 
   const renderWidget = () => (
     <div className="space-y-6">
@@ -2109,6 +2355,76 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             className="w-full accent-[#8B5CF6]"
           />
         </div>
+      </div>
+
+      {/* Sound list */}
+      <div className="space-y-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-white">Sounds ({soundboardSounds.length}/20)</h3>
+            <p className="text-xs text-[#888888]">Upload audio files (max 2MB, mp3/wav/ogg)</p>
+          </div>
+          <button
+            onClick={() => soundInputRef.current?.click()}
+            disabled={isUploadingSound}
+            className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 disabled:opacity-50"
+          >
+            {isUploadingSound ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
+            Upload Sound
+          </button>
+        </div>
+
+        <input
+          type="file"
+          ref={soundInputRef}
+          onChange={handleSoundUpload}
+          accept="audio/mpeg,audio/wav,audio/ogg,audio/mp3,audio/x-wav"
+          className="hidden"
+        />
+
+        {soundboardSounds.length === 0 ? (
+          <div className="text-center py-12 border-2 border-dashed border-[#222222] rounded-lg">
+            <Volume2 className="w-12 h-12 text-[#666666] mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-white mb-2">No sounds yet</h3>
+            <p className="text-[#888888] text-sm mb-4">Upload audio files to use in voice channels</p>
+            <button
+              onClick={() => soundInputRef.current?.click()}
+              className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
+            >
+              Upload First Sound
+            </button>
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {soundboardSounds.map((sound) => (
+              <div
+                key={sound._id}
+                className="relative group flex items-center gap-3 p-3 bg-[#111111] border border-[#222222] rounded-lg hover:border-[#8B5CF6]/50 transition-colors"
+              >
+                <button
+                  onClick={() => playSound(sound)}
+                  className="flex-shrink-0 w-10 h-10 rounded-full bg-[#8B5CF6] hover:bg-[#7C3AED] flex items-center justify-center transition-colors"
+                >
+                  {playingSoundId === sound._id ? (
+                    <Loader2 className="w-5 h-5 text-white animate-spin" />
+                  ) : (
+                    <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
+                  )}
+                </button>
+                <div className="flex-1 min-w-0">
+                  <p className="text-sm text-white truncate">{sound.name}</p>
+                  <p className="text-xs text-[#666666]">{sound.emoji}</p>
+                </div>
+                <button
+                  onClick={() => handleDeleteSound(sound._id)}
+                  className="flex-shrink-0 p-1 bg-red-500/80 hover:bg-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity"
+                >
+                  <X className="w-3 h-3 text-white" />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       <div className="flex justify-end">

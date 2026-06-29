@@ -10,6 +10,7 @@ export interface VoiceParticipant {
   deafened: boolean;
   joinedAt: string;
   stream?: MediaStream;
+  screenShare?: boolean;
 }
 
 export type VoiceEvent =
@@ -17,7 +18,11 @@ export type VoiceEvent =
   | { type: "speaking"; userId: string; speaking: boolean }
   | { type: "error"; message: string }
   | { type: "connected" }
-  | { type: "disconnected" };
+  | { type: "disconnected" }
+  | { type: "video_toggled"; enabled: boolean }
+  | { type: "screen_share_toggled"; enabled: boolean }
+  | { type: "mute_toggled"; muted: boolean }
+  | { type: "deafen_toggled"; deafened: boolean };
 
 type VoiceListener = (event: VoiceEvent) => void;
 
@@ -31,7 +36,24 @@ class VoiceService {
   private listeners: Set<VoiceListener> = new Set();
   private isMuted = false;
   private isDeafened = false;
+  private isVideoOn = false;
+  private isScreenSharing = false;
+  private screenStream: MediaStream | null = null;
   private reconnectTimeout: NodeJS.Timeout | null = null;
+  private speakingAnalyser: { userId: string; analyser: AnalyserNode; ctx: AudioContext } | null = null;
+  private speakingInterval: NodeJS.Timeout | null = null;
+  private speakingState: Map<string, boolean> = new Map();
+
+  private myUserId: string = "";
+
+  setUserId(userId: string) {
+    this.myUserId = userId;
+    try {
+      sessionStorage.setItem("serika-user-id", userId);
+    } catch {
+      // ignore
+    }
+  }
 
   subscribe(fn: VoiceListener): () => void {
     this.listeners.add(fn);
@@ -50,20 +72,29 @@ class VoiceService {
     this.emit({ type: "participants_changed", participants: list });
   }
 
-  async joinChannel(channelId: string): Promise<void> {
-    if (this.roomId === channelId) return;
+  async joinChannel(channelId: string, withVideo = false): Promise<void> {
+    // Already connected to this exact room — just re-emit current state so UI syncs
+    if (this.roomId === channelId) {
+      this.emit({ type: "connected" });
+      this.emitParticipants();
+      return;
+    }
     if (this.roomId) await this.leaveChannel();
 
     this.roomId = channelId;
+    this.isMuted = false;
+    this.isDeafened = false;
+    this.isScreenSharing = false;
 
-    // Get mic
+    // Get mic (and optionally camera)
     try {
       this.localStream = await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true },
-        video: false,
+        video: withVideo ? { width: 1280, height: 720 } : false,
       });
+      this.isVideoOn = withVideo;
     } catch {
-      this.emit({ type: "error", message: "Microphone access denied." });
+      this.emit({ type: "error", message: "Microphone/camera access denied." });
       this.roomId = null;
       return;
     }
@@ -72,11 +103,12 @@ class VoiceService {
     await fetch(`/api/voice/join`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ roomId: channelId, audio: true, video: false }),
+      body: JSON.stringify({ roomId: channelId, audio: true, video: withVideo }),
     });
 
     // Connect SSE signaling
     this.connectSignaling(channelId);
+    this.startSpeakingDetection();
     this.emit({ type: "connected" });
   }
 
@@ -107,9 +139,12 @@ class VoiceService {
   private handleSignalingMessage(msg: Record<string, unknown>) {
     switch (msg.type) {
       case "voice:state": {
+        // Server tells us our own id for reliable self-identification
+        if (msg.self) this.myUserId = msg.self as string;
         const parts = (msg.participants as VoiceParticipant[]) || [];
         this.participants = new Map(parts.map((p) => [p.userId, p]));
-        // Initiate peer connections with existing participants
+        // We are the newcomer: initiate connections to all existing participants.
+        // Existing members will receive our offer and create non-initiator peers.
         parts.forEach((p) => {
           if (p.userId !== this.getMyUserId()) {
             this.createPeer(p.userId, true);
@@ -120,9 +155,11 @@ class VoiceService {
       }
       case "voice:participant_joined": {
         const p = msg.participant as VoiceParticipant;
+        if (p.userId === this.getMyUserId()) break;
         this.participants.set(p.userId, p);
-        // They joined after us — we initiate
-        this.createPeer(p.userId, true);
+        // Do NOT initiate here — the newcomer initiates to us, and their offer
+        // will arrive via voice:offer which creates the non-initiator peer.
+        // This avoids WebRTC glare (both sides initiating).
         this.emitParticipants();
         break;
       }
@@ -161,6 +198,8 @@ class VoiceService {
         if (participant) {
           if (msg.audio !== undefined) participant.audio = msg.audio as boolean;
           if (msg.deafened !== undefined) participant.deafened = msg.deafened as boolean;
+          if (msg.video !== undefined) participant.video = msg.video as boolean;
+          if (msg.screenShare !== undefined) participant.screenShare = msg.screenShare as boolean;
           this.emitParticipants();
         }
         break;
@@ -169,7 +208,7 @@ class VoiceService {
   }
 
   private getMyUserId(): string {
-    // Read from local storage as a fallback — the chat app stores user there
+    if (this.myUserId) return this.myUserId;
     try {
       const stored = sessionStorage.getItem("serika-user-id") || "";
       return stored;
@@ -233,11 +272,16 @@ class VoiceService {
     const roomId = this.roomId;
     this.roomId = null;
 
+    // Stop screen share
+    this.stopScreenShare();
+    this.stopSpeakingDetection();
+
     // Stop local stream
     if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop());
       this.localStream = null;
     }
+    this.isVideoOn = false;
 
     // Destroy all peers
     this.peers.forEach((_, userId) => this.destroyPeer(userId));
@@ -267,6 +311,78 @@ class VoiceService {
     this.emitParticipants();
   }
 
+  private startSpeakingDetection() {
+    this.stopSpeakingDetection();
+    this.speakingInterval = setInterval(() => {
+      // Check local stream
+      if (this.localStream && !this.isMuted) {
+        const audioTracks = this.localStream.getAudioTracks();
+        if (audioTracks.length > 0 && audioTracks[0].enabled) {
+          try {
+            if (!this.speakingAnalyser || this.speakingAnalyser.userId !== "local") {
+              const ctx = new AudioContext();
+              const source = ctx.createMediaStreamSource(this.localStream);
+              const analyser = ctx.createAnalyser();
+              analyser.fftSize = 256;
+              source.connect(analyser);
+              this.speakingAnalyser = { userId: "local", analyser, ctx };
+            }
+            const data = new Uint8Array(this.speakingAnalyser.analyser.frequencyBinCount);
+            this.speakingAnalyser.analyser.getByteFrequencyData(data);
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            const isSpeaking = avg > 20;
+            const wasSpeaking = this.speakingState.get("local") || false;
+            if (isSpeaking !== wasSpeaking) {
+              this.speakingState.set("local", isSpeaking);
+              this.emit({ type: "speaking", userId: this.getMyUserId(), speaking: isSpeaking });
+            }
+          } catch {
+            // AudioContext may fail in some browsers
+          }
+        }
+      }
+
+      // Check remote streams
+      this.remoteStreams.forEach((stream, userId) => {
+        const audioTracks = stream.getAudioTracks();
+        if (audioTracks.length > 0 && audioTracks[0].enabled) {
+          try {
+            // Create a fresh analyser for each remote stream
+            const ctx = new AudioContext();
+            const source = ctx.createMediaStreamSource(stream);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            source.connect(analyser);
+            const data = new Uint8Array(analyser.frequencyBinCount);
+            analyser.getByteFrequencyData(data);
+            const avg = data.reduce((a, b) => a + b, 0) / data.length;
+            const isSpeaking = avg > 20;
+            const wasSpeaking = this.speakingState.get(userId) || false;
+            if (isSpeaking !== wasSpeaking) {
+              this.speakingState.set(userId, isSpeaking);
+              this.emit({ type: "speaking", userId, speaking: isSpeaking });
+            }
+            ctx.close();
+          } catch {
+            // ignore
+          }
+        }
+      });
+    }, 100);
+  }
+
+  private stopSpeakingDetection() {
+    if (this.speakingInterval) {
+      clearInterval(this.speakingInterval);
+      this.speakingInterval = null;
+    }
+    if (this.speakingAnalyser) {
+      try { this.speakingAnalyser.ctx.close(); } catch { /* ignore */ }
+      this.speakingAnalyser = null;
+    }
+    this.speakingState.clear();
+  }
+
   toggleMute(): boolean {
     this.isMuted = !this.isMuted;
     if (this.localStream) {
@@ -281,6 +397,7 @@ class VoiceService {
         body: JSON.stringify({ audio: !this.isMuted }),
       }).catch(() => {});
     }
+    this.emit({ type: "mute_toggled", muted: this.isMuted });
     return this.isMuted;
   }
 
@@ -292,18 +409,135 @@ class VoiceService {
         t.enabled = !this.isDeafened;
       });
     });
+    // If deafening, also mute
+    if (this.isDeafened && !this.isMuted) {
+      this.isMuted = true;
+      if (this.localStream) {
+        this.localStream.getAudioTracks().forEach((t) => {
+          t.enabled = false;
+        });
+      }
+      this.emit({ type: "mute_toggled", muted: true });
+    }
     if (this.roomId) {
       fetch(`/api/voice/state/${this.roomId}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ deafened: this.isDeafened }),
+        body: JSON.stringify({ deafened: this.isDeafened, audio: !this.isMuted }),
       }).catch(() => {});
     }
+    this.emit({ type: "deafen_toggled", deafened: this.isDeafened });
     return this.isDeafened;
+  }
+
+  async toggleVideo(): Promise<boolean> {
+    if (!this.localStream || !this.roomId) return false;
+
+    if (this.isVideoOn) {
+      // Turn off video
+      this.localStream.getVideoTracks().forEach((t) => {
+        t.stop();
+        this.localStream?.removeTrack(t);
+      });
+      this.isVideoOn = false;
+      // Update peers - replaceStream will remove video track
+      this.peers.forEach((peer) => {
+        try { (peer as unknown as { replaceStream: (s: MediaStream) => void }).replaceStream(this.localStream!); } catch { /* ignore */ }
+      });
+    } else {
+      // Turn on video
+      try {
+        const videoStream = await navigator.mediaDevices.getUserMedia({
+          video: { width: 1280, height: 720 },
+          audio: false,
+        });
+        const videoTrack = videoStream.getVideoTracks()[0];
+        if (videoTrack) {
+          this.localStream.addTrack(videoTrack);
+          this.isVideoOn = true;
+          // Update peers - add track or replace stream
+          this.peers.forEach((peer) => {
+            try { (peer as unknown as { addTrack: (t: MediaStreamTrack, s: MediaStream) => void }).addTrack(videoTrack, this.localStream!); } catch {
+              try { (peer as unknown as { replaceStream: (s: MediaStream) => void }).replaceStream(this.localStream!); } catch { /* ignore */ }
+            }
+          });
+        }
+      } catch {
+        this.emit({ type: "error", message: "Camera access denied." });
+        return false;
+      }
+    }
+
+    // Update server state
+    await fetch(`/api/voice/state/${this.roomId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ video: this.isVideoOn }),
+    }).catch(() => {});
+
+    this.emit({ type: "video_toggled", enabled: this.isVideoOn });
+    return this.isVideoOn;
+  }
+
+  async startScreenShare(): Promise<boolean> {
+    if (!this.roomId) return false;
+
+    try {
+      this.screenStream = await navigator.mediaDevices.getDisplayMedia({
+        video: { cursor: "always" } as MediaTrackConstraints,
+        audio: false,
+      });
+      this.isScreenSharing = true;
+
+      const screenTrack = this.screenStream.getVideoTracks()[0];
+      if (screenTrack) {
+        screenTrack.onended = () => {
+          this.stopScreenShare();
+        };
+
+        // Add screen track to all peers
+        this.peers.forEach((peer) => {
+          try { (peer as unknown as { addTrack: (t: MediaStreamTrack, s: MediaStream) => void }).addTrack(screenTrack, this.screenStream!); } catch { /* ignore */ }
+        });
+      }
+
+      // Notify server
+      await fetch(`/api/voice/state/${this.roomId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ screenShare: true }),
+      }).catch(() => {});
+
+      this.emit({ type: "screen_share_toggled", enabled: true });
+      return true;
+    } catch {
+      this.emit({ type: "error", message: "Screen share permission denied." });
+      return false;
+    }
+  }
+
+  stopScreenShare() {
+    if (this.screenStream) {
+      this.screenStream.getTracks().forEach((t) => t.stop());
+      this.screenStream = null;
+    }
+    if (this.isScreenSharing && this.roomId) {
+      this.isScreenSharing = false;
+      fetch(`/api/voice/state/${this.roomId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ screenShare: false }),
+      }).catch(() => {});
+      this.emit({ type: "screen_share_toggled", enabled: false });
+    }
   }
 
   get muted() { return this.isMuted; }
   get deafened() { return this.isDeafened; }
+  get videoOn() { return this.isVideoOn; }
+  get screenSharing() { return this.isScreenSharing; }
+  get connected() { return this.roomId !== null; }
+  isConnectedTo(roomId: string) { return this.roomId === roomId; }
   get currentRoomId() { return this.roomId; }
   get currentParticipants(): VoiceParticipant[] {
     return Array.from(this.participants.values()).map((p) => ({
@@ -312,6 +546,8 @@ class VoiceService {
     }));
   }
   get localAudioStream() { return this.localStream; }
+  get localStream_() { return this.localStream; }
+  get screenShareStream() { return this.screenStream; }
 }
 
 export const voiceService = new VoiceService();

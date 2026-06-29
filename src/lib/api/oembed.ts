@@ -90,12 +90,94 @@ const BLOCKED_DOMAINS = [
   'iplogger.org',
 ];
 
+// Whitelist of domains allowed for oembed meta tag fetching.
+// Domains not on this list will still be fetched but with stricter limits.
+const OEMBED_WHITELIST = [
+  'github.com',
+  'gitlab.com',
+  'stackoverflow.com',
+  'reddit.com',
+  'medium.com',
+  'dev.to',
+  'npmjs.com',
+  'pypi.org',
+  'crates.io',
+  'wikipedia.org',
+  'youtube.com',
+  'youtu.be',
+  'open.spotify.com',
+  'soundcloud.com',
+  'bandcamp.com',
+  'twitch.tv',
+  'vimeo.com',
+  'dailymotion.com',
+  'streamable.com',
+  'giphy.com',
+  'tenor.com',
+  'klipy.com',
+  'klipy.dev',
+  'imgur.com',
+  'gfycat.com',
+  'x.com',
+  'twitter.com',
+  'bsky.app',
+  'mastodon.social',
+  'threads.net',
+  'instagram.com',
+  'tiktok.com',
+  'linkedin.com',
+  'facebook.com',
+  'steamcommunity.com',
+  'store.steampowered.com',
+  'itch.io',
+  'newgrounds.com',
+  'apple.com',
+  'developer.apple.com',
+  'apps.apple.com',
+  'play.google.com',
+  'amazon.com',
+  'ebay.com',
+  'etsy.com',
+  'walmart.com',
+  'target.com',
+  'bestbuy.com',
+  'newegg.com',
+  'bilibili.com',
+  'pixiv.net',
+  'artstation.com',
+  'behance.net',
+  'dribbble.com',
+  'figma.com',
+  'dribbble.com',
+  'notion.so',
+  'linear.app',
+  'vercel.com',
+  'netlify.app',
+  'cloudflare.com',
+  'discord.com',
+  'discord.gg',
+  'serika.dev',
+  'serikacord.com',
+  'serika.chat',
+  'serika.cc',
+  'waifu.ws',
+];
+
 function isBlockedDomain(url: string): boolean {
   try {
     const hostname = new URL(url).hostname.toLowerCase();
     return BLOCKED_DOMAINS.some(blocked => hostname === blocked || hostname.endsWith(`.${blocked}`));
   } catch {
     return true;
+  }
+}
+
+function isWhitelistedDomain(url: string): boolean {
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return OEMBED_WHITELIST.some(domain => hostname === domain || hostname.endsWith(`.${domain}`));
+  } catch {
+    return false;
   }
 }
 
@@ -128,9 +210,13 @@ export const oembedRoutes = new Elysia({ prefix: '/oembed' })
       return {};
     }
     
+    const whitelisted = isWhitelistedDomain(url);
+    const fetchTimeout = whitelisted ? 5000 : 3000;
+    const maxReadBytes = whitelisted ? 50 * 1024 : 20 * 1024;
+    
     try {
       const controller = new AbortController();
-      const timeout = setTimeout(() => controller.abort(), 5000);
+      const timeout = setTimeout(() => controller.abort(), fetchTimeout);
       
       const response = await fetch(url, {
         signal: controller.signal,
@@ -164,9 +250,8 @@ export const oembedRoutes = new Elysia({ prefix: '/oembed' })
       let html = '';
       const decoder = new TextDecoder();
       let bytesRead = 0;
-      const maxBytes = 50 * 1024;
       
-      while (bytesRead < maxBytes) {
+      while (bytesRead < maxReadBytes) {
         const { done, value } = await reader.read();
         if (done) break;
         html += decoder.decode(value, { stream: true });

@@ -22,7 +22,8 @@ export type UploadCategory =
   | 'server-icons' 
   | 'server-banners' 
   | 'emojis'
-  | 'stickers';
+  | 'stickers'
+  | 'audio';
 
 interface UploadResult {
   url: string;
@@ -53,6 +54,7 @@ function validateFileType(category: UploadCategory, contentType: string): boolea
     attachments: config.ALLOWED_FILE_TYPES,
     emojis: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     stickers: ['image/png', 'image/apng', 'application/json'], // JSON for Lottie
+    audio: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/webm'],
   };
 
   return categoryAllowedTypes[category]?.includes(contentType) ?? false;
@@ -68,6 +70,7 @@ function getMaxSize(category: UploadCategory): number {
     attachments: config.MAX_FILE_SIZE,
     emojis: 256 * 1024, // 256KB
     stickers: 512 * 1024, // 512KB
+    audio: 2 * 1024 * 1024, // 2MB
   };
 
   return categorySizes[category] ?? config.MAX_FILE_SIZE;

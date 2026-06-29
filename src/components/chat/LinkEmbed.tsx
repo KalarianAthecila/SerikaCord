@@ -36,9 +36,13 @@ function parseYouTubeUrl(url: string): string | null {
   return null;
 }
 
-function getUrlType(url: string): "youtube" | "twitter" | "generic" {
+function getUrlType(url: string): "youtube" | "twitter" | "spotify" | "giphy" | "tenor" | "klipy" | "generic" {
   if (/youtube\.com|youtu\.be/.test(url)) return "youtube";
   if (/twitter\.com|x\.com/.test(url)) return "twitter";
+  if (/open\.spotify\.com/.test(url)) return "spotify";
+  if (/giphy\.com/.test(url)) return "giphy";
+  if (/tenor\.com/.test(url)) return "tenor";
+  if (/klipy\.com|klipy\.dev/.test(url)) return "klipy";
   return "generic";
 }
 
@@ -56,7 +60,33 @@ function isFirstPartyUrl(url: string): boolean {
 }
 
 function shouldSkipOEmbed(url: string): boolean {
+  // Giphy URLs are rendered directly from the ID, no need for oEmbed
+  if (/giphy\.com/.test(url)) return true;
   return isImageUrl(url) || isFirstPartyUrl(url);
+}
+
+function parseSpotifyUrl(url: string): { type: string; id: string } | null {
+  const match = url.match(/open\.spotify\.com\/(track|album|artist|playlist|episode|show)\/([a-zA-Z0-9]+)/);
+  if (match) return { type: match[1], id: match[2] };
+  return null;
+}
+
+function parseGiphyUrl(url: string): string | null {
+  // https://giphy.com/gifs/{slug}-{id} or https://giphy.com/embed/{id}
+  const embedMatch = url.match(/giphy\.com\/embed\/([a-zA-Z0-9]+)/);
+  if (embedMatch) return embedMatch[1];
+  const gifsMatch = url.match(/giphy\.com\/gifs\/(?:.*-)?([a-zA-Z0-9]+)(?:\/|$)/);
+  if (gifsMatch) return gifsMatch[1];
+  return null;
+}
+
+function parseTenorUrl(url: string): string | null {
+  // https://tenor.com/view/{slug}-{numeric_id} or https://tenor.com/i/{id}
+  const viewMatch = url.match(/tenor\.com\/view\/(?:.*-)?(\d+)(?:\/|$)/);
+  if (viewMatch) return viewMatch[1];
+  const iMatch = url.match(/tenor\.com\/i\/(\d+)/);
+  if (iMatch) return iMatch[1];
+  return null;
 }
 
 function YouTubeEmbed({ videoId, url }: { videoId: string; url: string }) {
@@ -164,6 +194,174 @@ function GenericEmbed({
   );
 }
 
+function SpotifyEmbed({ type, id, url }: { type: string; id: string; url: string }) {
+  const height = type === "track" || type === "episode" ? 152 : 380;
+  return (
+    <div className="mt-2 max-w-[400px] rounded-lg overflow-hidden bg-[#1ed760]/10 border border-[#1ed760]/30">
+      <iframe
+        src={`https://open.spotify.com/embed/${type}/${id}`}
+        width="100%"
+        height={height}
+        frameBorder="0"
+        allow="autoplay; clipboard-write; encrypted-media; fullscreen; picture-in-picture"
+        loading="lazy"
+        className="border-0"
+        title="Spotify player"
+      />
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-2 px-3 py-1.5 text-xs text-[#1ed760] hover:text-[#1ed760]/80 transition-colors"
+      >
+        <span className="font-medium">Spotify</span>
+        <ExternalLink className="w-3 h-3 opacity-70" />
+      </a>
+    </div>
+  );
+}
+
+function GiphyEmbed({ gifId, url }: { gifId: string; url: string }) {
+  const gifUrl = `https://media.giphy.com/media/${gifId}/giphy.gif`;
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-block relative group rounded-lg overflow-hidden max-w-[400px]"
+    >
+      <img
+        src={gifUrl}
+        alt="Giphy GIF"
+        className="rounded-lg max-h-[300px] w-auto"
+        loading="lazy"
+      />
+      <div className="absolute bottom-1 right-1 px-2 py-0.5 bg-black/70 rounded text-[10px] text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+        GIPHY
+      </div>
+    </a>
+  );
+}
+
+function TenorEmbed({ gifId, url, preview }: { gifId: string; url: string; preview?: { title?: string; description?: string; thumbnail?: string; siteName?: string } }) {
+  const [gifSrc, setGifSrc] = useState<string | null>(preview?.thumbnail || null);
+
+  useEffect(() => {
+    if (preview?.thumbnail) {
+      setGifSrc(preview.thumbnail);
+      return;
+    }
+    // Try to fetch oEmbed from Tenor
+    let active = true;
+    fetch(`/api/oembed?url=${encodeURIComponent(url)}`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then((data) => {
+        if (!active || !data) return;
+        if (data.thumbnail) setGifSrc(data.thumbnail);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [url, preview]);
+
+  if (!gifSrc) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-block max-w-[400px] border-l-4 border-[#8B5CF6] bg-[#1a1a1a] rounded-r-lg p-3 hover:bg-[#222222] transition-colors"
+      >
+        <div className="flex items-center gap-2 text-xs text-[#8B5CF6] font-medium mb-1">
+          <span>tenor.com</span>
+          <ExternalLink className="w-3 h-3 opacity-70" />
+        </div>
+        <div className="text-white text-sm">View GIF on Tenor</div>
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-block relative group rounded-lg overflow-hidden max-w-[400px]"
+    >
+      <img
+        src={gifSrc}
+        alt={preview?.title || "Tenor GIF"}
+        className="rounded-lg max-h-[300px] w-auto"
+        loading="lazy"
+      />
+      <div className="absolute bottom-1 right-1 px-2 py-0.5 bg-black/70 rounded text-[10px] text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+        Tenor
+      </div>
+    </a>
+  );
+}
+
+function KlipyEmbed({ url, preview }: { url: string; preview?: { title?: string; description?: string; thumbnail?: string; siteName?: string } }) {
+  const [gifSrc, setGifSrc] = useState<string | null>(preview?.thumbnail || null);
+
+  useEffect(() => {
+    if (preview?.thumbnail) {
+      setGifSrc(preview.thumbnail);
+      return;
+    }
+    let active = true;
+    fetch(`/api/oembed?url=${encodeURIComponent(url)}`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return res.json();
+      })
+      .then((data) => {
+        if (!active || !data) return;
+        if (data.thumbnail) setGifSrc(data.thumbnail);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [url, preview]);
+
+  if (!gifSrc) {
+    return (
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="mt-2 inline-block max-w-[400px] border-l-4 border-[#8B5CF6] bg-[#1a1a1a] rounded-r-lg p-3 hover:bg-[#222222] transition-colors"
+      >
+        <div className="flex items-center gap-2 text-xs text-[#8B5CF6] font-medium mb-1">
+          <span>klipy.com</span>
+          <ExternalLink className="w-3 h-3 opacity-70" />
+        </div>
+        <div className="text-white text-sm">View GIF on Klipy</div>
+      </a>
+    );
+  }
+
+  return (
+    <a
+      href={url}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="mt-2 inline-block relative group rounded-lg overflow-hidden max-w-[400px]"
+    >
+      <img
+        src={gifSrc}
+        alt={preview?.title || "Klipy GIF"}
+        className="rounded-lg max-h-[300px] w-auto"
+        loading="lazy"
+      />
+      <div className="absolute bottom-1 right-1 px-2 py-0.5 bg-black/70 rounded text-[10px] text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+        Klipy
+      </div>
+    </a>
+  );
+}
+
 export function LinkEmbed({ content }: LinkEmbedProps) {
   const urls = extractUrls(content);
   const url = urls[0] || "";
@@ -215,6 +413,31 @@ export function LinkEmbed({ content }: LinkEmbedProps) {
     if (videoId) {
       return <YouTubeEmbed videoId={videoId} url={url} />;
     }
+  }
+
+  if (urlType === "spotify") {
+    const spotifyData = parseSpotifyUrl(url);
+    if (spotifyData) {
+      return <SpotifyEmbed type={spotifyData.type} id={spotifyData.id} url={url} />;
+    }
+  }
+
+  if (urlType === "giphy") {
+    const gifId = parseGiphyUrl(url);
+    if (gifId) {
+      return <GiphyEmbed gifId={gifId} url={url} />;
+    }
+  }
+
+  if (urlType === "tenor") {
+    const gifId = parseTenorUrl(url);
+    if (gifId) {
+      return <TenorEmbed gifId={gifId} url={url} preview={preview || undefined} />;
+    }
+  }
+
+  if (urlType === "klipy") {
+    return <KlipyEmbed url={url} preview={preview || undefined} />;
   }
 
   return <GenericEmbed url={url} preview={preview || undefined} />;

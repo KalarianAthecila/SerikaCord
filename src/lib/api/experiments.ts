@@ -29,7 +29,14 @@ export const experimentRoutes = new Elysia({ prefix: '/experiments' })
       };
     }
 
-    const result = await getUserVariant(experiment, user._id.toString());
+    const userAttributes: Record<string, unknown> = {
+      user_id: user._id.toString(),
+      badge: user.badges ?? [],
+      premium: user.isPremium ?? false,
+      staff: (user.badges ?? []).some((b: string) => b === 'staff' || b === 'admin'),
+      account_age: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000) : 0,
+    };
+    const result = getUserVariant(experiment, user._id.toString(), userAttributes);
     
     return {
       experimentKey: params.experimentKey,
@@ -60,11 +67,20 @@ export const experimentRoutes = new Elysia({ prefix: '/experiments' })
 
     // Get all running experiments
     const experiments = await Experiment.find({ status: 'running' });
-    
+
+    // Build user attributes for filter evaluation
+    const userAttributes: Record<string, unknown> = {
+      user_id: user._id.toString(),
+      badge: user.badges ?? [],
+      premium: user.isPremium ?? false,
+      staff: (user.badges ?? []).some((b: string) => b === 'staff' || b === 'admin'),
+      account_age: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000) : 0,
+    };
+
     // Get user's variant for each experiment
     const results = await Promise.all(
       experiments.map(async (exp) => {
-        const result = await getUserVariant(exp, user._id.toString());
+        const result = getUserVariant(exp, user._id.toString(), userAttributes);
         return {
           key: exp.key,
           name: exp.name,
@@ -107,7 +123,14 @@ export const experimentRoutes = new Elysia({ prefix: '/experiments' })
       };
     }
 
-    const result = await getUserVariant(experiment, user._id.toString());
+    const featureAttributes: Record<string, unknown> = {
+      user_id: user._id.toString(),
+      badge: user.badges ?? [],
+      premium: user.isPremium ?? false,
+      staff: (user.badges ?? []).some((b: string) => b === 'staff' || b === 'admin'),
+      account_age: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000) : 0,
+    };
+    const result = getUserVariant(experiment, user._id.toString(), featureAttributes);
     
     // For feature flags, any variant that's not null and not 'control' means enabled
     const enabled = result.inExperiment && result.variant !== null && result.variant.id !== 'control';

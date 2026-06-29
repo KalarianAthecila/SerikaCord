@@ -85,7 +85,7 @@ export async function ensureSystemUsers(): Promise<void> {
               mentions: false,
             },
             privacy: {
-              directMessages: 'none' as any,
+              directMessages: 'everyone',
               friendRequests: 'none' as any,
             },
           },

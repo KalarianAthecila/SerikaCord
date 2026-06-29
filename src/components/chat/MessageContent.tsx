@@ -35,6 +35,11 @@ interface MessageContentProps {
   currentUserId?: string;
   className?: string;
   edited?: boolean;
+  sticker?: {
+    id: string;
+    name: string;
+    imageUrl: string;
+  };
   onMediaClick?: (media: { src: string; alt?: string }) => void;
   onImageClick?: (src: string, alt?: string) => void;
 }
@@ -67,6 +72,7 @@ export function MessageContent({
   currentUserId,
   className,
   edited,
+  sticker,
   onMediaClick,
   onImageClick,
 }: MessageContentProps) {
@@ -240,6 +246,23 @@ export function MessageContent({
   }, [content, serverEmojis]);
 
   const emojiSize = isLargeEmoji ? "w-10 h-10" : "w-5 h-5";
+
+  // If the message has a sticker, render it as a smaller Discord-like sticker
+  if (sticker) {
+    return (
+      <div className={className}>
+        <img
+          src={sticker.imageUrl}
+          alt={sticker.name}
+          title={sticker.name}
+          className="max-w-[160px] max-h-[160px] w-auto h-auto object-contain cursor-pointer hover:opacity-90 transition-opacity rounded-lg"
+          onClick={() => handleMediaClick(sticker.imageUrl, sticker.name)}
+          loading="lazy"
+        />
+        {edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
+      </div>
+    );
+  }
 
   // If the message is just an image URL, render it as a large image
   if (imageOnlyUrl) {

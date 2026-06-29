@@ -1,58 +1,56 @@
 import Link from "next/link";
+import { Logo } from "@/components/ui/Logo";
+import { PartnerSection } from "@/components/home/PartnerSection";
 import { 
-  MessageSquare, 
+  MessageSquare,
   Users, 
   Shield, 
-  Sparkles, 
   ArrowRight,
-  Hash,
   Volume2,
   Megaphone,
-  Check,
-  Star,
   Zap,
-  Globe
 } from "lucide-react";
 
 export default function HomePage() {
   return (
     <div className="min-h-screen bg-[#000000] text-white overflow-x-hidden">
       {/* Navigation */}
-      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#000000]/80 backdrop-blur-xl border-b border-white/[0.06] transition-all">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16">
+      <nav className="fixed top-0 left-0 right-0 z-50 bg-[#000]/70 backdrop-blur-2xl border-b border-white/[0.05]">
+        <div className="max-w-7xl mx-auto px-6 lg:px-10">
+          <div className="flex items-center justify-between h-[60px]">
+            {/* Logo */}
+            <Link href="/" className="shrink-0">
+              <Logo size="sm" />
+            </Link>
+            
+            {/* Center links */}
+            <div className="hidden md:flex items-center gap-1">
+              {[
+                { label: "Features", href: "#features" },
+                { label: "Discover", href: "#discover" },
+                { label: "Safety", href: "#safety" },
+              ].map((item) => (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  className="px-3 py-1.5 text-sm text-[#999] hover:text-white rounded-lg hover:bg-white/5 transition-all"
+                >
+                  {item.label}
+                </Link>
+              ))}
+            </div>
+            
+            {/* Right actions */}
             <div className="flex items-center gap-2">
-              <div className="w-8 h-8 rounded-lg bg-[#8B5CF6] flex items-center justify-center">
-                <MessageSquare className="w-5 h-5" />
-              </div>
-              <span className="text-xl font-bold">SerikaCord</span>
-            </div>
-            
-            <div className="hidden md:flex items-center gap-8">
-              <Link href="#features" className="text-sm text-[#888888] hover:text-white transition-colors">
-                Features
-              </Link>
-              <Link href="#discover" className="text-sm text-[#888888] hover:text-white transition-colors">
-                Discover
-              </Link>
-              <Link href="#safety" className="text-sm text-[#888888] hover:text-white transition-colors">
-                Safety
-              </Link>
-              <Link href="https://accounts.serika.dev" className="text-sm text-[#8B5CF6] font-medium hover:text-white transition-colors">
-                Serika+
-              </Link>
-            </div>
-            
-            <div className="flex items-center gap-3">
               <Link 
                 href="/login"
-                className="text-sm font-medium text-white hover:text-[#888888] transition-colors"
+                className="px-4 py-2 text-sm font-medium text-[#ccc] hover:text-white transition-colors"
               >
-                Login
+                Log In
               </Link>
               <Link 
                 href="/register"
-                className="px-4 py-2 text-sm font-medium bg-[#8B5CF6] hover:bg-[#7C3AED] rounded-md transition-colors"
+                className="px-4 py-2 text-sm font-semibold bg-white text-black hover:bg-white/90 rounded-full transition-all"
               >
                 Sign Up
               </Link>
@@ -62,129 +60,49 @@ export default function HomePage() {
       </nav>
 
       {/* Hero Section */}
-      <section className="relative pt-32 pb-20 px-4 sm:px-6 lg:px-8">
-        {/* Background effects */}
-        <div className="absolute inset-0 overflow-hidden pointer-events-none">
-          {/* Radial purple glow */}
-          <div className="absolute top-0 left-1/2 -translate-x-1/2 w-[800px] h-[600px] rounded-full bg-[#8B5CF6]/10 blur-[120px]" />
-          {/* Grid */}
-          <div 
-            className="absolute inset-0 opacity-30"
-            style={{
-              backgroundImage: `
-                linear-gradient(rgba(139, 92, 246, 0.06) 1px, transparent 1px),
-                linear-gradient(90deg, rgba(139, 92, 246, 0.06) 1px, transparent 1px)
-              `,
-              backgroundSize: '60px 60px'
-            }}
-          />
-          {/* Fade bottom */}
-          <div className="absolute bottom-0 left-0 right-0 h-32 bg-gradient-to-t from-[#000000] to-transparent" />
+      <section className="relative min-h-screen flex flex-col items-center justify-center px-6 text-center overflow-hidden">
+        {/* Background */}
+        <div className="absolute inset-0 pointer-events-none">
+          {/* Deep radial glow — left */}
+          <div className="absolute -top-40 -left-60 w-[700px] h-[700px] rounded-full bg-[#4c1d95]/30 blur-[140px]" />
+          {/* Deep radial glow — right */}
+          <div className="absolute -bottom-20 -right-60 w-[700px] h-[600px] rounded-full bg-[#312e81]/25 blur-[140px]" />
+          {/* Subtle center glow */}
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] h-[400px] rounded-full bg-[#8B5CF6]/8 blur-[100px]" />
         </div>
-        
-        <div className="max-w-5xl mx-auto text-center relative">
-          <div className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#8B5CF6]/10 border border-[#8B5CF6]/20 mb-8">
-            <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
-            <span className="text-sm text-[#888888]">The future of communication is here</span>
-          </div>
-          
-          <h1 className="text-4xl sm:text-5xl md:text-7xl font-bold tracking-tight mb-6 leading-[1.08]">
-            <span className="text-white">
-              Where Communities
-            </span>
-            <br />
-            <span style={{ background: 'linear-gradient(135deg, #8B5CF6 0%, #a78bfa 40%, #c4b5fd 100%)', WebkitBackgroundClip: 'text', WebkitTextFillColor: 'transparent', backgroundClip: 'text' }}>
-              Come Together
+
+        <div className="relative max-w-4xl mx-auto">
+          <h1 className="text-5xl sm:text-6xl md:text-[82px] font-extrabold tracking-tight leading-[1.04] mb-7">
+            <span className="text-white">Your place to </span>
+            <br className="hidden sm:block" />
+            <span style={{
+              background: 'linear-gradient(135deg, #a78bfa 0%, #8B5CF6 50%, #6d28d9 100%)',
+              WebkitBackgroundClip: 'text',
+              WebkitTextFillColor: 'transparent',
+              backgroundClip: 'text'
+            }}>
+              talk &amp; hang out
             </span>
           </h1>
-          
-          <p className="text-lg sm:text-xl text-[#666666] max-w-2xl mx-auto mb-10 leading-relaxed">
-            SerikaCord is the place to talk, hang out, and build communities. 
-            Whether you&apos;re a gaming group, study club, or worldwide art community — 
-            your space is here.
+
+          <p className="text-lg sm:text-xl text-[#888] max-w-xl mx-auto mb-12 leading-relaxed font-medium">
+            SerikaCord is where communities come together. Talk, build, and belong — all in one place.
           </p>
-          
+
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link 
-              href="/channels/me"
-              className="w-full sm:w-auto px-8 py-4 text-base font-semibold bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] shadow-[0_0_40px_rgba(139,92,246,0.3)] hover:shadow-[0_0_60px_rgba(139,92,246,0.45)] flex items-center justify-center gap-2"
+            <Link
+              href="/register"
+              className="w-full sm:w-auto px-8 py-4 text-[15px] font-bold bg-white text-black hover:bg-white/90 rounded-full transition-all hover:scale-[1.03] active:scale-[0.98] shadow-[0_0_0_0_rgba(255,255,255,0)] hover:shadow-[0_0_40px_rgba(255,255,255,0.12)]"
             >
-              Open SerikaCord in your browser
+              Get Started — it&apos;s free
+            </Link>
+            <Link
+              href="/channels/me"
+              className="w-full sm:w-auto px-8 py-4 text-[15px] font-bold bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-full transition-all hover:scale-[1.03] active:scale-[0.98] shadow-[0_0_30px_rgba(139,92,246,0.35)] hover:shadow-[0_0_50px_rgba(139,92,246,0.5)] flex items-center justify-center gap-2"
+            >
+              Open in browser
               <ArrowRight className="w-4 h-4" />
             </Link>
-            <Link 
-              href="/register"
-              className="w-full sm:w-auto px-8 py-4 text-base font-semibold bg-transparent border border-white/10 hover:border-[#8B5CF6]/50 hover:bg-[#8B5CF6]/5 rounded-xl transition-all hover:scale-[1.02] active:scale-[0.98] flex items-center justify-center gap-2"
-            >
-              Create an Account
-            </Link>
-          </div>
-        </div>
-        
-        {/* App Preview */}
-        <div className="max-w-6xl mx-auto mt-20 relative">
-          <div className="aspect-video rounded-2xl bg-[#050608] border border-white/[0.07] overflow-hidden shadow-2xl shadow-black/60">
-            <div className="flex h-full">
-              {/* Server sidebar preview */}
-              <div className="w-[72px] bg-[#0a0a0a] p-3 flex flex-col items-center gap-2 border-r border-[#1a1a1a]">
-                <div className="w-12 h-12 rounded-2xl bg-[#8B5CF6] flex items-center justify-center">
-                  <MessageSquare className="w-6 h-6" />
-                </div>
-                <div className="w-8 h-0.5 bg-[#222222] rounded-full" />
-                {[1, 2, 3].map((i) => (
-                  <div key={i} className="w-12 h-12 rounded-[24px] bg-[#111111] hover:rounded-[16px] transition-all" />
-                ))}
-              </div>
-              
-              {/* Channel sidebar preview */}
-              <div className="w-60 bg-[#0a0a0a] border-r border-[#1a1a1a]">
-                <div className="h-12 px-4 flex items-center border-b border-[#1a1a1a]">
-                  <span className="font-semibold text-white">Your Server</span>
-                </div>
-                <div className="p-2 space-y-1">
-                  <div className="px-2 py-1 text-xs font-semibold uppercase text-[#555555]">Text Channels</div>
-                  {["general", "announcements", "support"].map((channel, i) => (
-                    <div key={channel} className={`flex items-center gap-2 px-2 py-1.5 rounded ${i === 0 ? 'bg-[#8B5CF6]/10 text-[#8B5CF6]' : 'text-[#666666]'}`}>
-                      {i === 1 ? <Megaphone className="w-5 h-5" /> : <Hash className="w-5 h-5" />}
-                      <span className="text-sm">{channel}</span>
-                    </div>
-                  ))}
-                  <div className="px-2 py-1 text-xs font-semibold uppercase text-[#555555] mt-4">Voice Channels</div>
-                  <div className="flex items-center gap-2 px-2 py-1.5 rounded text-[#666666]">
-                    <Volume2 className="w-5 h-5" />
-                    <span className="text-sm">Lounge</span>
-                  </div>
-                </div>
-              </div>
-              
-              {/* Chat area preview */}
-              <div className="flex-1 bg-[#0a0a0a] flex flex-col">
-                <div className="h-12 px-4 flex items-center border-b border-[#1a1a1a]">
-                  <Hash className="w-5 h-5 text-[#555555] mr-2" />
-                  <span className="font-semibold text-white">general</span>
-                </div>
-                <div className="flex-1 p-4 space-y-4 overflow-hidden">
-                  {[
-                    { name: "Alice", avatar: "A", message: "Hey everyone! Welcome to the server! 👋" },
-                    { name: "Bob", avatar: "B", message: "Thanks! This place looks amazing" },
-                    { name: "Charlie", avatar: "C", message: "Can't wait to start chatting with everyone here" },
-                  ].map((msg, i) => (
-                    <div key={i} className="flex items-start gap-4">
-                      <div className="w-10 h-10 rounded-full bg-[#8B5CF6] flex items-center justify-center flex-shrink-0">
-                        <span className="text-sm font-medium">{msg.avatar}</span>
-                      </div>
-                      <div>
-                        <div className="flex items-baseline gap-2">
-                          <span className="font-medium text-white">{msg.name}</span>
-                          <span className="text-xs text-[#555555]">Today at 12:0{i}</span>
-                        </div>
-                        <p className="text-[#888888]">{msg.message}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </div>
           </div>
         </div>
       </section>
@@ -250,153 +168,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* Serika+ Section */}
-      <section className="py-24 px-4 sm:px-6 lg:px-8 bg-[#0a0a0a]">
-        <div className="max-w-5xl mx-auto">
-          <div className="text-center mb-16">
-            <div className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#8B5CF6]/10 border border-[#8B5CF6]/20 mb-6">
-              <Sparkles className="w-4 h-4 text-[#8B5CF6]" />
-              <span className="text-sm text-[#8B5CF6] font-medium">Serika+</span>
-            </div>
-            <h2 className="text-3xl sm:text-4xl font-bold mb-4">
-              Upgrade Your Experience
-            </h2>
-            <p className="text-lg text-[#666666] max-w-2xl mx-auto">
-              Get the most out of SerikaCord with premium features, higher limits, and exclusive customization options.
-            </p>
-          </div>
-          
-          <div className="grid md:grid-cols-2 gap-12 items-start">
-            <div className="space-y-4">
-              {[
-                { title: "100MB File Uploads", description: "Share bigger files with your friends" },
-                { title: "Animated Avatars", description: "Express yourself with animated profile pictures" },
-                { title: "Profile Customization", description: "Custom colors, banners, and themes" },
-                { title: "Longer Messages", description: "Up to 4000 characters per message" },
-                { title: "HD Streaming", description: "Stream in 1080p 60fps quality" },
-                { title: "Exclusive Badge", description: "Show off your Serika+ supporter badge" },
-              ].map((perk) => (
-                <div key={perk.title} className="flex items-start gap-3">
-                  <div className="w-5 h-5 rounded-md bg-[#8B5CF6]/20 flex items-center justify-center flex-shrink-0 mt-0.5">
-                    <Check className="w-3 h-3 text-[#8B5CF6]" />
-                  </div>
-                  <div>
-                    <h4 className="font-medium">{perk.title}</h4>
-                    <p className="text-sm text-[#666666]">{perk.description}</p>
-                  </div>
-                </div>
-              ))}
-            </div>
-            
-            <div>
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                {/* Monthly */}
-                <div className="p-5 rounded-lg bg-[#111111] border border-[#1a1a1a] hover:border-[#8B5CF6]/30 transition-colors">
-                  <div className="text-xs font-semibold text-[#8B5CF6] mb-2">SERIKA+M</div>
-                  <div className="text-2xl font-bold mb-1">€9.99</div>
-                  <div className="text-sm text-[#666666]">per month</div>
-                </div>
-                
-                {/* Quarterly - Popular */}
-                <div className="p-5 rounded-lg bg-[#8B5CF6]/10 border border-[#8B5CF6]/30 relative">
-                  <div className="absolute -top-2.5 left-1/2 -translate-x-1/2 px-3 py-0.5 rounded-md bg-[#8B5CF6] text-xs font-semibold">
-                    POPULAR
-                  </div>
-                  <div className="text-xs font-semibold text-[#8B5CF6] mb-2">SERIKA+Q</div>
-                  <div className="text-2xl font-bold mb-1">€24.99</div>
-                  <div className="text-sm text-[#666666]">per quarter</div>
-                </div>
-                
-                {/* Yearly */}
-                <div className="p-5 rounded-lg bg-[#111111] border border-[#1a1a1a] hover:border-[#8B5CF6]/30 transition-colors">
-                  <div className="text-xs font-semibold text-[#8B5CF6] mb-2">SERIKA+Y</div>
-                  <div className="text-2xl font-bold mb-1">€79.99</div>
-                  <div className="text-sm text-[#666666]">per year</div>
-                </div>
-              </div>
-              
-              <div className="text-center mt-8">
-                <Link 
-                  href="https://accounts.serika.dev"
-                  className="inline-block px-8 py-3 font-medium bg-[#8B5CF6] hover:bg-[#7C3AED] rounded-md transition-colors"
-                >
-                  Get Serika+
-                </Link>
-                <p className="text-xs text-[#555555] mt-3">
-                  Managed through accounts.serika.dev
-                </p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      {/* Partner Section */}
-      <section id="discover" className="py-24 px-4 sm:px-6 lg:px-8">
-        <div className="max-w-7xl mx-auto">
-          <div className="grid lg:grid-cols-2 gap-12 items-center">
-            <div>
-              <div className="inline-flex items-center gap-2 px-4 py-2 rounded-md bg-[#8B5CF6]/10 border border-[#8B5CF6]/20 mb-6">
-                <Star className="w-4 h-4 text-[#8B5CF6]" />
-                <span className="text-sm text-[#8B5CF6] font-medium">Partner Program</span>
-              </div>
-              <h2 className="text-3xl sm:text-4xl font-bold mb-4">
-                Become a Partner
-              </h2>
-              <p className="text-lg text-[#666666] mb-8 leading-relaxed">
-                Partner with SerikaCord to get exclusive perks for your community. 
-                Get a custom invite link, partner badge, and priority support.
-              </p>
-              
-              <div className="space-y-4 mb-8">
-                {[
-                  "Custom vanity invite URL (serika.cc/yourname)",
-                  "Partner badge for server owner",
-                  "Server featured in discovery",
-                  "Priority support from our team",
-                  "Exclusive partner-only features",
-                ].map((benefit) => (
-                  <div key={benefit} className="flex items-center gap-3">
-                    <div className="w-5 h-5 rounded-md bg-[#8B5CF6]/20 flex items-center justify-center flex-shrink-0">
-                      <Check className="w-3 h-3 text-[#8B5CF6]" />
-                    </div>
-                    <span className="text-[#888888]">{benefit}</span>
-                  </div>
-                ))}
-              </div>
-              
-              <div className="flex items-center gap-4 text-sm text-[#666666]">
-                <div className="flex items-center gap-2">
-                  <Users className="w-4 h-4" />
-                  <span>100+ members required</span>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Globe className="w-4 h-4" />
-                  <span>Community server only</span>
-                </div>
-              </div>
-            </div>
-            
-            <div className="relative">
-              <div className="aspect-square rounded-lg bg-[#0a0a0a] border border-[#1a1a1a] p-8 flex items-center justify-center">
-                <div className="text-center">
-                  <div className="w-32 h-32 mx-auto mb-6 rounded-2xl bg-[#8B5CF6] flex items-center justify-center">
-                    <Star className="w-16 h-16" />
-                  </div>
-                  <div className="font-bold text-xl mb-2">Your Server</div>
-                  <div className="inline-flex items-center gap-1 px-3 py-1 rounded-md bg-[#8B5CF6]/10 border border-[#8B5CF6]/20">
-                    <Star className="w-3 h-3 text-[#8B5CF6]" />
-                    <span className="text-xs font-medium text-[#8B5CF6]">Partnered</span>
-                  </div>
-                  <div className="mt-4 text-sm text-[#666666]">
-                    serika.cc/<span className="text-white">yourserver</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
+      {/* Partnered Servers Section */}
+      <PartnerSection />
 
       {/* Safety Section */}
       <section id="safety" className="py-24 px-4 sm:px-6 lg:px-8 bg-[#0a0a0a]">
@@ -448,56 +221,53 @@ export default function HomePage() {
               Create Account
             </Link>
           </div>
-          <p className="text-xs text-[#333] mt-6">No credit card required · Free forever for core features</p>
+          <p className="text-xs text-[#333] mt-6">Free and open source · Forever</p>
         </div>
       </section>
 
       {/* Footer */}
-      <footer className="py-12 px-4 sm:px-6 lg:px-8 border-t border-[#1a1a1a]">
+      <footer className="py-16 px-4 sm:px-6 lg:px-8 border-t border-white/[0.06]">
         <div className="max-w-7xl mx-auto">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8 mb-12">
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-10 mb-14">
             <div>
-              <h4 className="font-semibold mb-4 text-[#8B5CF6]">Product</h4>
-              <ul className="space-y-2 text-sm text-[#666666]">
-                <li><Link href="#" className="hover:text-white transition-colors">Download</Link></li>
-                <li><Link href="#" className="hover:text-white transition-colors">Status</Link></li>
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-[#555] mb-4">Product</h4>
+              <ul className="space-y-3 text-sm text-[#666]">
+                <li><Link href="/download" className="hover:text-white transition-colors">Download</Link></li>
+                <li><Link href="https://status.serika.dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Status</Link></li>
+                <li><Link href="/channels/me" className="hover:text-white transition-colors">Open App</Link></li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-4 text-[#8B5CF6]">Company</h4>
-              <ul className="space-y-2 text-sm text-[#666666]">
-                <li><Link href="#" className="hover:text-white transition-colors">About</Link></li>
-                <li><Link href="#" className="hover:text-white transition-colors">Blog</Link></li>
-                <li><Link href="#" className="hover:text-white transition-colors">Careers</Link></li>
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-[#555] mb-4">Company</h4>
+              <ul className="space-y-3 text-sm text-[#666]">
+                <li><Link href="https://serika.pro" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">About Serika</Link></li>
+                <li><Link href="https://accounts.serika.dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Serika Accounts</Link></li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-4 text-[#8B5CF6]">Resources</h4>
-              <ul className="space-y-2 text-sm text-[#666666]">
-                <li><Link href="#" className="hover:text-white transition-colors">Support</Link></li>
-                <li><Link href="#" className="hover:text-white transition-colors">Safety</Link></li>
-                <li><Link href="#" className="hover:text-white transition-colors">Developers</Link></li>
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-[#555] mb-4">Resources</h4>
+              <ul className="space-y-3 text-sm text-[#666]">
+                <li><a href="mailto:support@serika.dev" className="hover:text-white transition-colors">Support</a></li>
+                <li><Link href="#safety" className="hover:text-white transition-colors">Safety</Link></li>
+                <li><Link href="https://status.serika.dev" target="_blank" rel="noopener noreferrer" className="hover:text-white transition-colors">Service Status</Link></li>
               </ul>
             </div>
             <div>
-              <h4 className="font-semibold mb-4 text-[#8B5CF6]">Legal</h4>
-              <ul className="space-y-2 text-sm text-[#666666]">
-                <li><Link href="#" className="hover:text-white transition-colors">Terms</Link></li>
-                <li><Link href="#" className="hover:text-white transition-colors">Privacy</Link></li>
-                <li><Link href="#" className="hover:text-white transition-colors">Guidelines</Link></li>
+              <h4 className="text-xs font-semibold uppercase tracking-widest text-[#555] mb-4">Legal</h4>
+              <ul className="space-y-3 text-sm text-[#666]">
+                <li><Link href="/terms" className="hover:text-white transition-colors">Terms of Service</Link></li>
+                <li><Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link></li>
+                <li><Link href="/guidelines" className="hover:text-white transition-colors">Community Guidelines</Link></li>
               </ul>
             </div>
           </div>
           
-          <div className="flex flex-col sm:flex-row items-center justify-between pt-8 border-t border-[#1a1a1a]">
-            <div className="flex items-center gap-2 mb-4 sm:mb-0">
-              <div className="w-8 h-8 rounded-lg bg-[#8B5CF6] flex items-center justify-center">
-                <MessageSquare className="w-5 h-5" />
-              </div>
-              <span className="text-xl font-bold">SerikaCord</span>
-            </div>
-            <p className="text-sm text-[#666666]">
-              © 2026 SerikaCord. All rights reserved.
+          <div className="flex flex-col sm:flex-row items-center justify-between pt-8 border-t border-white/[0.06]">
+            <Link href="/" className="mb-4 sm:mb-0">
+              <Logo size="sm" />
+            </Link>
+            <p className="text-xs text-[#444]">
+              © 2026 Serika Company. All rights reserved.
             </p>
           </div>
         </div>

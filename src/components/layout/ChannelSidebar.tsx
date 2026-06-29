@@ -79,15 +79,47 @@ export function ChannelSidebar({
   const { currentServer, channels, currentChannel, setCurrentChannel, leaveServer, deleteChannel, updateChannel } = useServer();
   const { user } = useAuth();
   const [activeVoiceChannelName, setActiveVoiceChannelName] = useState<string | undefined>(undefined);
+  const [voiceParticipants, setVoiceParticipants] = useState<import("@/lib/services/voiceService").VoiceParticipant[]>([]);
+
+  useEffect(() => {
+    if (user?.id) {
+      voiceService.setUserId(user.id);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    // Sync initial state
+    setVoiceParticipants(voiceService.currentParticipants);
+    if (voiceService.connected) {
+      const roomId = voiceService.currentRoomId;
+      if (roomId) {
+        const ch = channels.find(c => `channel-${c.id}` === roomId);
+        setActiveVoiceChannelName(ch?.name);
+      }
+    }
+
+    const unsub = voiceService.subscribe((event) => {
+      if (event.type === "participants_changed") {
+        setVoiceParticipants(event.participants);
+      } else if (event.type === "connected") {
+        setVoiceParticipants(voiceService.currentParticipants);
+        const roomId = voiceService.currentRoomId;
+        if (roomId) {
+          const ch = channels.find(c => `channel-${c.id}` === roomId);
+          setActiveVoiceChannelName(ch?.name);
+        }
+      } else if (event.type === "disconnected") {
+        setVoiceParticipants([]);
+        setActiveVoiceChannelName(undefined);
+      }
+    });
+    return unsub;
+  }, [channels]);
 
   const handleVoiceChannelClick = async (channel: typeof channels[0]) => {
-    if (voiceService.currentRoomId === channel.id) {
-      await voiceService.leaveChannel();
-      setActiveVoiceChannelName(undefined);
-    } else {
-      await voiceService.joinChannel(channel.id);
-      setActiveVoiceChannelName(channel.name);
-    }
+    // Just navigate to the voice channel page
+    // The VoiceChannelView will handle joining
+    setCurrentChannel(channel);
   };
 
   // Context menu state
@@ -527,33 +559,69 @@ export function ChannelSidebar({
                 />
               </button>
             </div>
-            {!collapsedCategories.has('voice') && voiceChannels.map((channel) => (
-              <div key={channel.id} className="relative">
-                <button
-                  onClick={() => handleVoiceChannelClick(channel)}
-                  onContextMenu={(e) => handleContextMenu(e, channel)}
-                  className={cn(
-                    "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] transition-all group",
-                    voiceService.currentRoomId === channel.id && "bg-[var(--bg-active)] text-[var(--app-accent)]"
+            {!collapsedCategories.has('voice') && voiceChannels.map((channel) => {
+              const isActive = voiceService.currentRoomId === `channel-${channel.id}`;
+              const channelParticipants = isActive ? voiceParticipants : [];
+              return (
+                <div key={channel.id} className="mb-0.5">
+                  <button
+                    onClick={() => handleVoiceChannelClick(channel)}
+                    onContextMenu={(e) => handleContextMenu(e, channel)}
+                    className={cn(
+                      "w-full px-2 py-1 mx-2 rounded flex items-center gap-1.5 transition-all group",
+                      isActive
+                        ? "text-green-400 hover:bg-[var(--bg-sidebar-elevated)]"
+                        : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)]"
+                    )}
+                    style={{ width: "calc(100% - 16px)" }}
+                  >
+                    <Volume2 className={cn(
+                      "w-4 h-4 flex-shrink-0",
+                      isActive ? "text-green-400" : "text-[var(--text-muted)]"
+                    )} />
+                    <span className="truncate text-sm flex-1 text-left">{channel.name}</span>
+                    {isActive && (
+                      <span className="flex items-center gap-1 shrink-0">
+                        <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
+                        {channelParticipants.length > 0 && (
+                          <span className="text-[10px] text-green-400">{channelParticipants.length}</span>
+                        )}
+                      </span>
+                    )}
+                  </button>
+                  {/* Participants — Discord style */}
+                  {channelParticipants.length > 0 && (
+                    <div className="ml-6 mr-2 space-y-0.5 mb-1">
+                      {channelParticipants.map((p) => (
+                        <div
+                          key={p.userId}
+                          className="flex items-center gap-1.5 px-1.5 py-0.5 rounded group/vp"
+                        >
+                          <Avatar className="w-5 h-5 shrink-0">
+                            <AvatarImage src={p.avatar} />
+                            <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-[9px]">
+                              {(p.displayName || p.username).charAt(0).toUpperCase()}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="text-xs text-[var(--text-secondary)] truncate flex-1">
+                            {p.displayName || p.username}
+                          </span>
+                          {!p.audio && (
+                            <MicOff className="w-3 h-3 text-red-400 shrink-0" />
+                          )}
+                        </div>
+                      ))}
+                    </div>
                   )}
-                  style={{ width: "calc(100% - 16px)" }}
-                >
-                  {getChannelIcon(channel.type)}
-                  <span className="truncate text-sm">{channel.name}</span>
-                  {voiceService.currentRoomId === channel.id && (
-                    <span className="ml-auto flex items-center gap-1">
-                      <span className="inline-block w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse" />
-                    </span>
-                  )}
-                </button>
-              </div>
-            ))}
+                </div>
+              );
+            })}
           </div>
         </div>
       </ScrollArea>
 
-      {/* Voice Bar */}
-      <VoiceBar channelName={activeVoiceChannelName} />
+      {/* Voice Bar - hide when viewing a voice channel (full controls shown in main area) */}
+      {currentChannel?.type !== "voice" && <VoiceBar channelName={activeVoiceChannelName} />}
 
       {/* User Panel */}
       <UserPanel user={user} />

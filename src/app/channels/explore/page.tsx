@@ -32,7 +32,6 @@ interface Server {
   memberCount: number;
   onlineCount?: number;
   isPartnered?: boolean;
-  isVerified?: boolean;
   category?: string;
   tags?: string[];
 }
@@ -47,69 +46,32 @@ const categories = [
   { id: "entertainment", name: "Entertainment", icon: Film },
 ];
 
-// Mock featured servers - replace with actual API call
-const mockFeaturedServers: Server[] = [
-  {
-    id: "1",
-    name: "Serika Official",
-    description: "The official Serika community server. Get help, share feedback, and chat with the team!",
-    memberCount: 15420,
-    onlineCount: 3421,
-    isPartnered: true,
-    isVerified: true,
-    category: "tech",
-    tags: ["official", "community", "support"],
-  },
-  {
-    id: "2", 
-    name: "Dev Hub",
-    description: "A community for developers of all skill levels. Share projects, get help, and collaborate!",
-    memberCount: 8320,
-    onlineCount: 1240,
-    isPartnered: true,
-    category: "tech",
-    tags: ["programming", "developers", "coding"],
-  },
-  {
-    id: "3",
-    name: "Lofi & Chill",
-    description: "24/7 lofi beats and chill vibes. Perfect for studying, working, or relaxing.",
-    memberCount: 45000,
-    onlineCount: 8200,
-    category: "music",
-    tags: ["music", "lofi", "chill"],
-  },
-  {
-    id: "4",
-    name: "Digital Artists",
-    description: "Share your art, get feedback, and connect with other digital artists.",
-    memberCount: 12500,
-    onlineCount: 2100,
-    category: "art",
-    tags: ["art", "digital", "creative"],
-  },
-];
-
 export default function ExplorePage() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
-  const [servers, setServers] = useState<Server[]>(mockFeaturedServers);
-  const [isLoading, setIsLoading] = useState(false);
+  const [servers, setServers] = useState<Server[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [joiningServerId, setJoiningServerId] = useState<string | null>(null);
 
-  // Filter servers based on search and category
-  const filteredServers = servers.filter((server) => {
-    const matchesSearch = 
-      server.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      server.description?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      server.tags?.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    const matchesCategory = 
-      selectedCategory === "all" || server.category === selectedCategory;
-    
-    return matchesSearch && matchesCategory;
-  });
+  const [debouncedSearch, setDebouncedSearch] = useState("");
+
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedSearch(searchQuery), 300);
+    return () => clearTimeout(timer);
+  }, [searchQuery]);
+
+  useEffect(() => {
+    setIsLoading(true);
+    const params = new URLSearchParams();
+    if (selectedCategory !== "all") params.set("category", selectedCategory);
+    if (debouncedSearch) params.set("search", debouncedSearch);
+    fetch(`/api/servers/discoverable?${params.toString()}`)
+      .then((r) => r.json())
+      .then((data) => setServers(data.servers ?? []))
+      .catch(() => setServers([]))
+      .finally(() => setIsLoading(false));
+  }, [selectedCategory, debouncedSearch]);
 
   const handleJoinServer = async (serverId: string) => {
     setJoiningServerId(serverId);
@@ -190,14 +152,14 @@ export default function ExplorePage() {
           </div>
 
           {/* Featured Section */}
-          {selectedCategory === "all" && !searchQuery && (
+          {selectedCategory === "all" && !debouncedSearch && (
             <div className="mb-8">
               <div className="flex items-center gap-2 mb-4">
                 <TrendingUp className="w-5 h-5 text-[#8B5CF6]" />
                 <h2 className="text-lg font-bold text-white">Featured Communities</h2>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                {servers.filter(s => s.isPartnered || s.isVerified).slice(0, 2).map((server) => (
+                {servers.filter(s => s.isPartnered).slice(0, 2).map((server) => (
                   <div
                     key={server.id}
                     className="group relative bg-[#111111] rounded-xl overflow-hidden hover:ring-2 hover:ring-[#8B5CF6] transition-all cursor-pointer"
@@ -225,7 +187,6 @@ export default function ExplorePage() {
                         <div className="flex items-center gap-2 mb-1">
                           <h3 className="text-white font-bold text-lg">{server.name}</h3>
                           {server.isPartnered && <ServerBadge type="partnered" size="sm" />}
-                          {server.isVerified && <ServerBadge type="verified" size="sm" />}
                         </div>
                         <p className="text-[#b5bac1] text-sm line-clamp-2 mb-3">
                           {server.description}
@@ -267,7 +228,7 @@ export default function ExplorePage() {
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
               </div>
-            ) : filteredServers.length === 0 ? (
+            ) : servers.length === 0 ? (
               <div className="text-center py-12">
                 <Search className="w-12 h-12 text-[#555555] mx-auto mb-3" />
                 <h3 className="text-lg font-bold text-white mb-2">No communities found</h3>
@@ -277,7 +238,7 @@ export default function ExplorePage() {
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                {filteredServers.map((server) => (
+                {servers.map((server) => (
                   <div
                     key={server.id}
                     className="group bg-[#111111] rounded-xl p-4 hover:bg-[#1a1a1a] transition-all cursor-pointer"

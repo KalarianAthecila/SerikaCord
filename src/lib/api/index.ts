@@ -7,7 +7,7 @@ import { authenticateRequest, invalidateUserCache } from '@/lib/services/auth';
 import { checkRateLimit, getClientIP } from '@/lib/security';
 import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection } from '@/lib/models';
 import { authRoutes } from './auth';
-import { serverRoutes, inviteRoutes } from './servers';
+import { serverRoutes, inviteRoutes, partnerRoutes } from './servers';
 import { channelRoutes } from './channels';
 import { uploadRoutes } from './uploads';
 import { dmRoutes } from './dms';
@@ -300,6 +300,147 @@ const userRoutes = new Elysia({ prefix: '/users' })
       });
 
     return servers;
+  })
+  .get('/@me/mentions', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    try {
+      const { ServerMember, Message, Channel } = await import('@/lib/models');
+
+      // Get all servers the user is a member of
+      const memberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
+      const serverIds = memberships.map(m => m.serverId);
+
+      if (serverIds.length === 0) {
+        return { servers: [] };
+      }
+
+      // Get all channels in those servers
+      const channels = await Channel.find({ serverId: { $in: serverIds } }).select('_id serverId').lean();
+      const channelIds = channels.map(c => c._id);
+
+      // Find recent messages (last 7 days) that mention the user
+      const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+      const mentionedMessages = await Message.find({
+        channelId: { $in: channelIds },
+        isDeleted: false,
+        createdAt: { $gte: sevenDaysAgo },
+        $or: [
+          { mentionedUserIds: user._id },
+          { mentionEveryone: true },
+        ],
+      })
+        .select('channelId')
+        .lean();
+
+      // Map channel -> serverId
+      const channelToServer = new Map(channels.map(c => [c._id.toString(), c.serverId.toString()]));
+
+      // Collect server IDs that have mentions
+      const serversWithMentions = new Set<string>();
+      for (const msg of mentionedMessages) {
+        const serverId = channelToServer.get(msg.channelId.toString());
+        if (serverId) serversWithMentions.add(serverId);
+      }
+
+      return {
+        servers: Array.from(serversWithMentions).map(id => ({ id })),
+      };
+    } catch (error) {
+      console.error('Failed to fetch mentions:', error);
+      return { servers: [] };
+    }
+  })
+  .get('/@me/emojis', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    try {
+      const { ServerMember, ServerEmoji, Server } = await import('@/lib/models');
+
+      // Get all servers the user is a member of
+      const memberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
+      const serverIds = memberships.map(m => m.serverId);
+
+      if (serverIds.length === 0) {
+        return { emojis: [] };
+      }
+
+      // Get all emojis from all servers the user is in
+      const emojis = await ServerEmoji.find({
+        serverId: { $in: serverIds },
+        available: true,
+      }).lean();
+
+      // Get server names for grouping
+      const servers = await Server.find({ _id: { $in: serverIds } }).select('name').lean();
+      const serverNameMap = new Map(servers.map(s => [s._id.toString(), s.name]));
+
+      return {
+        emojis: emojis.map(e => ({
+          id: e._id.toString(),
+          name: e.name,
+          url: e.imageUrl,
+          animated: e.animated,
+          serverId: e.serverId.toString(),
+          serverName: serverNameMap.get(e.serverId.toString()) || 'Unknown',
+        })),
+      };
+    } catch (error) {
+      console.error('Failed to fetch user emojis:', error);
+      return { emojis: [] };
+    }
+  })
+  .get('/@me/stickers', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    try {
+      const { ServerMember, ServerSticker, Server } = await import('@/lib/models');
+
+      // Get all servers the user is a member of
+      const memberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
+      const serverIds = memberships.map(m => m.serverId);
+
+      if (serverIds.length === 0) {
+        return { stickers: [] };
+      }
+
+      // Get all stickers from all servers the user is in
+      const stickers = await ServerSticker.find({
+        serverId: { $in: serverIds },
+        available: true,
+      }).sort({ createdAt: -1 }).lean();
+
+      // Get server names for grouping
+      const servers = await Server.find({ _id: { $in: serverIds } }).select('name').lean();
+      const serverNameMap = new Map(servers.map(s => [s._id.toString(), s.name]));
+
+      return {
+        stickers: stickers.map(s => ({
+          id: s._id.toString(),
+          name: s.name,
+          description: s.description,
+          imageUrl: s.imageUrl,
+          tags: s.tags || [],
+          serverId: s.serverId.toString(),
+          serverName: serverNameMap.get(s.serverId.toString()) || 'Unknown',
+        })),
+      };
+    } catch (error) {
+      console.error('Failed to fetch user stickers:', error);
+      return { stickers: [] };
+    }
   })
   .put('/me', async ({ headers, cookie, body, set }) => {
     const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -1189,6 +1330,7 @@ export const api = new Elysia({ prefix: '/api' })
   .use(friendsRoutes)
   .use(serverRoutes)
   .use(inviteRoutes)
+  .use(partnerRoutes)
   .use(channelRoutes)
   .use(dmRoutes)
   .use(voiceRoutes)

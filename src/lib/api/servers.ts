@@ -25,6 +25,24 @@ const DEFAULT_PERMISSIONS = {
   admin: '8',
 };
 
+// Permission bits
+const PERM_ADMINISTRATOR = 1n << 3n;
+const PERM_MANAGE_ROLES = 1n << 28n;
+
+// Check if user can manage roles in a server (owner or has Manage Roles / Administrator)
+async function canManageRoles(server: { ownerId: Types.ObjectId; _id: Types.ObjectId }, userId: Types.ObjectId): Promise<boolean> {
+  if (server.ownerId.equals(userId)) return true;
+  const member = await ServerMember.findOne({ serverId: server._id, userId }).populate('roles', 'permissions');
+  if (!member) return false;
+  const roles = member.roles as unknown as { permissions: string }[];
+  for (const role of roles) {
+    const perms = BigInt(role.permissions || '0');
+    if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
+    if ((perms & PERM_MANAGE_ROLES) === PERM_MANAGE_ROLES) return true;
+  }
+  return false;
+}
+
 interface PopulatedRole {
   _id: Types.ObjectId;
   name: string;
@@ -725,9 +743,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (!(await canManageRoles(server, user._id))) {
       set.status = 403;
-      return { error: 'Only the server owner can assign roles' };
+      return { error: 'You need Manage Roles permission to assign roles' };
     }
 
     const member = await ServerMember.findOne({
@@ -990,10 +1008,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    // Only owner can create roles for now
-    if (!server.ownerId.equals(user._id)) {
+    if (!(await canManageRoles(server, user._id))) {
       set.status = 403;
-      return { error: 'Only the server owner can create roles' };
+      return { error: 'You need Manage Roles permission to create roles' };
     }
 
     // Get highest position
@@ -1047,9 +1064,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (!(await canManageRoles(server, user._id))) {
       set.status = 403;
-      return { error: 'Only the server owner can edit roles' };
+      return { error: 'You need Manage Roles permission to edit roles' };
     }
 
     const role = await Role.findOne({ _id: params.roleId, serverId: params.serverId });
@@ -1107,9 +1124,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (!(await canManageRoles(server, user._id))) {
       set.status = 403;
-      return { error: 'Only the server owner can reorder roles' };
+      return { error: 'You need Manage Roles permission to reorder roles' };
     }
 
     const orderedRoleIds = body.orderedRoleIds || [];
@@ -1184,9 +1201,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (!(await canManageRoles(server, user._id))) {
       set.status = 403;
-      return { error: 'Only the server owner can delete roles' };
+      return { error: 'You need Manage Roles permission to delete roles' };
     }
 
     const role = await Role.findOne({ _id: params.roleId, serverId: params.serverId });
@@ -1527,6 +1544,129 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     params: t.Object({
       serverId: t.String(),
       stickerId: t.String(),
+    }),
+  })
+  // Get soundboard sounds
+  .get('/:serverId/soundboard', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const membership = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: user._id,
+    });
+
+    if (!membership) {
+      set.status = 403;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const server = await Server.findById(params.serverId).select('soundboardSounds');
+    return { sounds: server?.soundboardSounds || [] };
+  })
+  // Upload soundboard sound
+  .post('/:serverId/soundboard', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'Only the server owner can add soundboard sounds' };
+    }
+
+    const { name, url, emoji } = body as { name: string; url: string; emoji?: string };
+
+    if (!name || !url) {
+      set.status = 400;
+      return { error: 'Name and URL are required' };
+    }
+
+    if (server.soundboardSounds.length >= 20) {
+      set.status = 400;
+      return { error: 'Maximum of 20 soundboard sounds reached' };
+    }
+
+    server.soundboardSounds.push({
+      name: name.substring(0, 32),
+      url,
+      emoji: emoji || '🔊',
+      uploadedBy: user._id,
+    });
+
+    await server.save();
+
+    return {
+      sound: server.soundboardSounds[server.soundboardSounds.length - 1],
+    };
+  }, {
+    body: t.Object({
+      name: t.String({ minLength: 1, maxLength: 32 }),
+      url: t.String(),
+      emoji: t.Optional(t.String()),
+    }),
+  })
+  // Delete soundboard sound
+  .delete('/:serverId/soundboard/:soundId', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'Only the server owner can delete soundboard sounds' };
+    }
+
+    const idx = server.soundboardSounds.findIndex(
+      (s: any) => s._id.toString() === params.soundId
+    );
+    if (idx === -1) {
+      set.status = 404;
+      return { error: 'Sound not found' };
+    }
+
+    server.soundboardSounds.splice(idx, 1);
+    await server.save();
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+      soundId: t.String(),
     }),
   })
   // Get server invites
@@ -1890,6 +2030,76 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
   }, {
     params: t.Object({
       serverId: t.String(),
+    }),
+  });
+
+// Public partnered servers list (no auth required)
+export const partnerRoutes = new Elysia({ prefix: '/servers' })
+  .get('/partnered', async ({ set }) => {
+    try {
+      const servers = await Server.find({ isPartnered: true })
+        .select('name icon description memberCount vanityUrlCode')
+        .sort({ partneredAt: 1 })
+        .limit(20)
+        .lean();
+
+      return {
+        servers: servers.map((s: any) => ({
+          id: s._id.toString(),
+          name: s.name,
+          icon: s.icon ?? null,
+          description: s.description ?? null,
+          memberCount: s.memberCount ?? 0,
+          vanityUrlCode: s.vanityUrlCode ?? null,
+        })),
+      };
+    } catch {
+      set.status = 500;
+      return { error: 'Failed to fetch partnered servers' };
+    }
+  })
+  .get('/discoverable', async ({ query, set }) => {
+    try {
+      const filter: Record<string, any> = { isDiscoverable: true };
+      if (query.category && query.category !== 'all') {
+        filter.discoveryCategories = query.category;
+      }
+      if (query.search) {
+        filter.$or = [
+          { name: { $regex: query.search, $options: 'i' } },
+          { description: { $regex: query.search, $options: 'i' } },
+        ];
+      }
+
+      const servers = await Server.find(filter)
+        .select('name icon banner description memberCount onlineCount isPartnered discoveryCategories vanityUrlCode')
+        .sort({ memberCount: -1 })
+        .limit(50)
+        .lean();
+
+      return {
+        servers: servers.map((s: any) => ({
+          id: s._id.toString(),
+          name: s.name,
+          icon: s.icon ?? null,
+          banner: s.banner ?? null,
+          description: s.description ?? s.discoveryDescription ?? null,
+          memberCount: s.memberCount ?? 0,
+          onlineCount: s.onlineCount ?? 0,
+          isPartnered: s.isPartnered ?? false,
+          category: s.discoveryCategories?.[0] ?? null,
+          tags: s.discoveryCategories ?? [],
+          vanityUrlCode: s.vanityUrlCode ?? null,
+        })),
+      };
+    } catch {
+      set.status = 500;
+      return { error: 'Failed to fetch discoverable servers' };
+    }
+  }, {
+    query: t.Object({
+      category: t.Optional(t.String()),
+      search: t.Optional(t.String()),
     }),
   });
 

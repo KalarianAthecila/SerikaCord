@@ -229,7 +229,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
           )}
         </div>
 
-        {/* Voice Bar (above bottom nav when in call) */}
+        {/* Voice Bar (above bottom nav when in call, but not on voice channel page) */}
         <VoiceBar className="fixed bottom-14 left-0 right-0 z-40 md:hidden" />
 
         {/* Bottom Navigation */}
@@ -269,10 +269,10 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
       <AnimatePresence mode="wait" initial={false}>
         <motion.main
           key={contentKey}
-          initial={{ opacity: 0, y: 12, filter: "blur(6px)" }}
-          animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
-          exit={{ opacity: 0, y: -12, filter: "blur(4px)" }}
-          transition={{ duration: 0.2, ease: "easeOut" }}
+          initial={{ opacity: 0, x: 6 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: -6 }}
+          transition={{ duration: 0.12, ease: "easeOut" }}
           className="flex-1 flex min-w-0 min-h-0 overflow-hidden"
         >
           {children}

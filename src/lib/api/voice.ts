@@ -107,6 +107,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
       userId,
       username: user.username,
       displayName: user.displayName || user.username,
+      avatar: user.avatar || undefined,
       audio: body.audio ?? true,
       video: body.video ?? false,
       deafened: false,
@@ -232,10 +233,10 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
         }
         roomConns.get(userId)!.add(controller);
 
-        // Send current room state
+        // Send current room state (include self so client can identify itself)
         const room = roomState.get(roomId);
         const participants = room ? Array.from(room.values()) : [];
-        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'voice:state', participants, roomId })}
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'voice:state', participants, roomId, self: userId })}
 
 `));
 
@@ -320,12 +321,15 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
 
     if (body.audio !== undefined) participant.audio = body.audio;
     if (body.deafened !== undefined) participant.deafened = body.deafened;
+    if (body.video !== undefined) participant.video = body.video;
 
     broadcastToRoom(params.roomId, {
       type: 'voice:state_update',
       userId: user._id.toString(),
       audio: participant.audio,
       deafened: participant.deafened,
+      video: participant.video,
+      screenShare: body.screenShare,
     });
 
     return { success: true };
@@ -334,5 +338,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     body: t.Object({
       audio: t.Optional(t.Boolean()),
       deafened: t.Optional(t.Boolean()),
+      video: t.Optional(t.Boolean()),
+      screenShare: t.Optional(t.Boolean()),
     }),
   });

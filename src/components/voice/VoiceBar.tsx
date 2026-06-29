@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useCallback } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Mic, MicOff, Headphones, PhoneOff, Volume2, VolumeX } from "lucide-react";
+import { Mic, MicOff, Headphones, PhoneOff, Volume2, VolumeX, Video, VideoOff, Monitor, MonitorOff } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
 
@@ -16,22 +16,46 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
+  const [isVideoOn, setIsVideoOn] = useState(false);
+  const [isScreenSharing, setIsScreenSharing] = useState(false);
   const [participants, setParticipants] = useState<VoiceParticipant[]>([]);
   const [currentChannel, setCurrentChannel] = useState<string | null>(null);
 
   useEffect(() => {
+    // Sync from service on mount
+    setIsConnected(voiceService.connected);
+    setIsMuted(voiceService.muted);
+    setIsDeafened(voiceService.deafened);
+    setIsVideoOn(voiceService.videoOn);
+    setIsScreenSharing(voiceService.screenSharing);
+    setParticipants(voiceService.currentParticipants);
+    setCurrentChannel(voiceService.currentRoomId);
+
     const unsub = voiceService.subscribe((event) => {
       if (event.type === "connected") {
         setIsConnected(true);
         setCurrentChannel(voiceService.currentRoomId);
+        setIsMuted(voiceService.muted);
+        setIsDeafened(voiceService.deafened);
       } else if (event.type === "disconnected") {
         setIsConnected(false);
         setCurrentChannel(null);
         setIsMuted(false);
         setIsDeafened(false);
+        setIsVideoOn(false);
+        setIsScreenSharing(false);
         setParticipants([]);
       } else if (event.type === "participants_changed") {
         setParticipants(event.participants);
+      } else if (event.type === "video_toggled") {
+        setIsVideoOn(event.enabled);
+      } else if (event.type === "screen_share_toggled") {
+        setIsScreenSharing(event.enabled);
+      } else if (event.type === "mute_toggled") {
+        setIsMuted(event.muted);
+      } else if (event.type === "deafen_toggled") {
+        setIsDeafened(event.deafened);
+        if (event.deafened) setIsMuted(true);
       }
     });
     return unsub;
@@ -47,6 +71,21 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
     setIsDeafened(deafened);
     if (deafened) setIsMuted(true);
   }, []);
+
+  const handleVideo = useCallback(async () => {
+    const videoOn = await voiceService.toggleVideo();
+    setIsVideoOn(videoOn);
+  }, []);
+
+  const handleScreenShare = useCallback(async () => {
+    if (isScreenSharing) {
+      voiceService.stopScreenShare();
+      setIsScreenSharing(false);
+    } else {
+      const sharing = await voiceService.startScreenShare();
+      setIsScreenSharing(sharing);
+    }
+  }, [isScreenSharing]);
 
   const handleDisconnect = useCallback(async () => {
     await voiceService.leaveChannel();
@@ -136,6 +175,32 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
               )}
             >
               <Headphones className="w-4 h-4" />
+            </button>
+
+            <button
+              onClick={handleVideo}
+              title={isVideoOn ? "Turn Off Camera" : "Turn On Camera"}
+              className={cn(
+                "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
+                isVideoOn
+                  ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                  : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
+              )}
+            >
+              {isVideoOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
+            </button>
+
+            <button
+              onClick={handleScreenShare}
+              title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
+              className={cn(
+                "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
+                isScreenSharing
+                  ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                  : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
+              )}
+            >
+              {isScreenSharing ? <MonitorOff className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
             </button>
 
             <div className="flex-1" />

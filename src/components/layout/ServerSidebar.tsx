@@ -6,7 +6,9 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
 import { Plus, Compass, Download, MessageSquare } from "lucide-react";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+import { motion } from "framer-motion";
 
 interface ServerSidebarProps {
   onCreateServer: () => void;
@@ -30,6 +32,25 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
   const router = useRouter();
   const { servers, currentServer, setCurrentServer } = useServer();
   const isNative = isNativeApp();
+  const [mentionServers, setMentionServers] = useState<Set<string>>(new Set());
+
+  // Fetch servers with mention indicators
+  useEffect(() => {
+    const fetchMentions = async () => {
+      try {
+        const res = await fetch('/api/users/@me/mentions');
+        if (res.ok) {
+          const data = await res.json();
+          setMentionServers(new Set((data.servers || []).map((s: { id: string }) => s.id)));
+        }
+      } catch {
+        // best-effort
+      }
+    };
+    fetchMentions();
+    const interval = setInterval(fetchMentions, 30000);
+    return () => clearInterval(interval);
+  }, []);
 
   const handleServerClick = (server: typeof servers[0]) => {
     setCurrentServer(server);
@@ -74,14 +95,19 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
         {/* Server List */}
         <div className="flex-1 w-full overflow-y-auto scrollbar-hide">
           <div className="flex flex-col items-center gap-2">
-            {servers.map((server) => (
+            {servers.map((server) => {
+              const hasMention = mentionServers.has(server.id);
+              const isActive = currentServer?.id === server.id;
+              return (
               <Tooltip key={server.id}>
                 <TooltipTrigger asChild>
-                  <button
+                  <motion.button
                     onClick={() => handleServerClick(server)}
+                    whileTap={{ scale: 0.88 }}
+                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
                     className={cn(
-                      "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[var(--bg-sidebar-elevated)] transition-all duration-200 hover:rounded-[16px] group overflow-hidden",
-                      currentServer?.id === server.id && "rounded-[16px]"
+                      "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[var(--bg-sidebar-elevated)] transition-[border-radius] duration-200 hover:rounded-[16px] group overflow-hidden",
+                      isActive && "rounded-[16px]"
                     )}
                   >
                     {server.icon ? (
@@ -100,16 +126,21 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                     <div
                       className={cn(
                         "absolute left-0 w-1 bg-[var(--text-primary)] rounded-r-full transition-all duration-200",
-                        currentServer?.id === server.id ? "h-10" : "h-0 group-hover:h-5"
+                        isActive ? "h-10" : "h-0 group-hover:h-5"
                       )}
                     />
-                  </button>
+                    {/* Purple mention dot */}
+                    {hasMention && !isActive && (
+                      <span className="absolute bottom-0 right-0 w-4 h-4 rounded-full bg-[#8B5CF6] border-[3px] border-[var(--app-bg)]" />
+                    )}
+                  </motion.button>
                 </TooltipTrigger>
                 <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
                   {server.name}
                 </TooltipContent>
               </Tooltip>
-            ))}
+              );
+            })}
           </div>
         </div>
 

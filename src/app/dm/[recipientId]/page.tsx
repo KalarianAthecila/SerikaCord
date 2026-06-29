@@ -32,6 +32,9 @@ import { LinkEmbed } from "@/components/chat/LinkEmbed";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { Skeleton, UserProfileSkeleton, MessageSkeleton } from "@/components/ui/skeleton";
 import { buildGalleryFromMessages, findGalleryIndex } from "@/lib/chat/media";
+import { voiceService } from "@/lib/services/voiceService";
+import { VoiceBar } from "@/components/voice/VoiceBar";
+import { VideoGrid } from "@/components/voice/VideoGrid";
 
 interface User {
   id: string;
@@ -66,6 +69,13 @@ interface Message {
     animated?: boolean;
     url: string;
   }>;
+  sticker?: {
+    id: string;
+    name: string;
+    imageUrl: string;
+    serverId?: string;
+    serverName?: string;
+  };
 }
 
 const statusColors = {
@@ -93,6 +103,21 @@ export default function DMConversationPage() {
   const eventSourceRef = useRef<EventSource | null>(null);
   const [showEmojiPicker, setShowEmojiPicker] = useState(false);
   const [showGifPicker, setShowGifPicker] = useState(false);
+  const [availableServerEmojis, setAvailableServerEmojis] = useState<Array<{
+    id: string;
+    name: string;
+    url: string;
+    serverId?: string;
+    serverName?: string;
+    animated?: boolean;
+  }>>([]);
+  const [availableServerStickers, setAvailableServerStickers] = useState<Array<{
+    id: string;
+    name: string;
+    imageUrl: string;
+    serverId?: string;
+    serverName?: string;
+  }>>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [standaloneMedia, setStandaloneMedia] = useState<{ src: string; alt?: string } | null>(null);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -124,8 +149,49 @@ export default function DMConversationPage() {
     clearContext();
   }, [clearContext]);
 
-  const handleEmojiSelect = useCallback((emoji: string) => {
-    setNewMessage((prev) => prev + emoji);
+  // Fetch all server emojis the user has access to (for DM emoji picker)
+  useEffect(() => {
+    if (user?.id) {
+      voiceService.setUserId(user.id);
+    }
+  }, [user?.id]);
+
+  useEffect(() => {
+    const fetchAllEmojis = async () => {
+      try {
+        const res = await fetch('/api/users/@me/emojis');
+        if (res.ok) {
+          const data = await res.json();
+          setAvailableServerEmojis(data.emojis || []);
+        }
+      } catch {
+        // best-effort
+      }
+    };
+    fetchAllEmojis();
+  }, []);
+
+  // Fetch all server stickers the user has access to (for DM sticker picker)
+  useEffect(() => {
+    const fetchAllStickers = async () => {
+      try {
+        const res = await fetch('/api/users/@me/stickers');
+        if (res.ok) {
+          const data = await res.json();
+          setAvailableServerStickers(data.stickers || []);
+        }
+      } catch {
+        // best-effort
+      }
+    };
+    fetchAllStickers();
+  }, []);
+
+  const handleEmojiSelect = useCallback((emoji: string, isCustom?: boolean, emojiData?: { id: string; name: string; animated?: boolean }) => {
+    const emojiString = isCustom && emojiData
+      ? `<${emojiData.animated ? "a" : ""}:${emojiData.name}:${emojiData.id}>`
+      : emoji;
+    setNewMessage((prev) => prev + emojiString);
     setShowEmojiPicker(false);
   }, []);
 
@@ -305,8 +371,9 @@ export default function DMConversationPage() {
   }, [addTypingUser, recipientId, scrollToBottom, user]);
 
   // Send message
-  const sendMessage = async () => {
-    if (!newMessage.trim() || isSending) return;
+  const sendMessage = async (sticker?: { id: string; name: string; imageUrl: string; serverId?: string; serverName?: string }) => {
+    const isStickerSend = !!sticker;
+    if ((!newMessage.trim() && !isStickerSend) || isSending) return;
 
     setIsSending(true);
     const messageContent = newMessage.trim();
@@ -329,15 +396,20 @@ export default function DMConversationPage() {
       },
       channelId: recipientId,
       createdAt: new Date().toISOString(),
+      sticker,
     };
     setMessages((prev) => [...prev, optimisticMessage]);
     scrollToBottom();
 
     try {
+      const body: Record<string, unknown> = {};
+      if (messageContent) body.content = messageContent;
+      if (sticker) body.sticker = sticker;
+
       const response = await fetch(`/api/dms/${recipientId}/messages`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: messageContent }),
+        body: JSON.stringify(body),
       });
 
       if (response.ok) {
@@ -349,15 +421,20 @@ export default function DMConversationPage() {
       } else {
         // Remove optimistic message on error
         setMessages((prev) => prev.filter((m) => m.id !== tempId));
-        setNewMessage(messageContent);
+        if (messageContent) setNewMessage(messageContent);
       }
     } catch (error) {
       console.error("Failed to send message:", error);
       setMessages((prev) => prev.filter((m) => m.id !== tempId));
-      setNewMessage(messageContent);
+      if (messageContent) setNewMessage(messageContent);
     } finally {
       setIsSending(false);
     }
+  };
+
+  const handleStickerSelect = (sticker: { id: string; name: string; imageUrl: string; serverId?: string; serverName?: string }) => {
+    setShowEmojiPicker(false);
+    void sendMessage(sticker);
   };
 
   // Handle key press
@@ -504,10 +581,18 @@ export default function DMConversationPage() {
           </div>
 
           <div className="flex items-center gap-1 sm:gap-2">
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block">
+            <button
+              onClick={() => void voiceService.joinChannel(`dm:${recipientId}`)}
+              className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block"
+              title="Start Voice Call"
+            >
               <Phone className="w-5 h-5" />
             </button>
-            <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block">
+            <button
+              onClick={() => void voiceService.joinChannel(`dm:${recipientId}`, true)}
+              className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block"
+              title="Start Video Call"
+            >
               <Video className="w-5 h-5" />
             </button>
             <button className="p-2 text-[#888888] hover:text-white transition-colors rounded-md hover:bg-[#111111] hidden sm:block">
@@ -605,6 +690,7 @@ export default function DMConversationPage() {
                                 serverEmojis={message.customEmojis}
                                 mentionUsers={mentionUsers}
                                 currentUserId={user?.id}
+                                sticker={message.sticker}
                                 className="chat-message-body text-[#dcddde]"
                                 onMediaClick={({ src, alt }) => openMediaViewer(src, alt, message.id)}
                               />
@@ -753,11 +839,17 @@ export default function DMConversationPage() {
                     </button>
                   </PopoverTrigger>
                   <PopoverContent side="top" align="end" className="w-auto p-0 border-none bg-transparent animate-scale-in">
-                    <CustomEmojiPicker onEmojiSelect={handleEmojiSelect} />
+                    <CustomEmojiPicker
+                      onEmojiSelect={handleEmojiSelect}
+                      onStickerSelect={handleStickerSelect}
+                      allowServerEmojisInDMs
+                      availableServerEmojis={availableServerEmojis}
+                      availableServerStickers={availableServerStickers}
+                    />
                   </PopoverContent>
                 </Popover>
                 <button
-                  onClick={sendMessage}
+                  onClick={() => sendMessage()}
                   disabled={!newMessage.trim() || isSending}
                   className={cn(
                     "p-2 sm:p-1.5 rounded-lg transition-all active:scale-95",
@@ -775,6 +867,12 @@ export default function DMConversationPage() {
               </div>
             </div>
           </div>
+
+          {/* Video Grid for DM calls */}
+          <VideoGrid />
+
+          {/* Voice Bar for DM calls */}
+          <VoiceBar channelName={recipient?.displayName || recipient?.username || "DM Call"} />
         </div>
       </div>
 

@@ -25,12 +25,14 @@ interface StickerItem {
   description?: string;
   tags?: string[];
   imageUrl: string;
+  serverId?: string;
+  serverName?: string;
 }
 
 interface EmojiPickerProps {
   onEmojiSelect: (emoji: string, isCustom?: boolean, emojiData?: CustomEmoji) => void;
   onGifSelect?: (gifUrl: string) => void;
-  onStickerSelect?: (stickerUrl: string, sticker?: StickerItem) => void;
+  onStickerSelect?: (sticker: StickerItem) => void;
   serverEmojis?: CustomEmoji[];
   recentEmojis?: string[];
   favoriteEmojis?: string[];
@@ -38,6 +40,8 @@ interface EmojiPickerProps {
   className?: string;
   allowServerEmojisInDMs?: boolean;
   availableServerEmojis?: CustomEmoji[]; // All server emojis the user has access to
+  allowServerStickersInDMs?: boolean;
+  availableServerStickers?: StickerItem[]; // All server stickers the user has access to
   serverId?: string;
   initialTab?: TabType;
 }
@@ -129,6 +133,8 @@ export function CustomEmojiPicker({
   className,
   allowServerEmojisInDMs = false,
   availableServerEmojis = [],
+  allowServerStickersInDMs = false,
+  availableServerStickers = [],
   serverId,
   initialTab = "emoji",
 }: EmojiPickerProps) {
@@ -144,13 +150,16 @@ export function CustomEmojiPicker({
     setActiveTab(initialTab);
   }, [initialTab]);
 
-  // Combined emojis for DMs - use all server emojis user has access to
+  // Combined emojis - use all server emojis user has access to (cross-server)
   const allCustomEmojis = useMemo(() => {
-    if (allowServerEmojisInDMs && availableServerEmojis.length > 0) {
-      return availableServerEmojis;
+    if (availableServerEmojis.length > 0) {
+      // Merge: show all available server emojis, but prioritize current server's
+      const currentServerIds = new Set(serverEmojis.map(e => e.id));
+      const others = availableServerEmojis.filter(e => !currentServerIds.has(e.id));
+      return [...serverEmojis, ...others];
     }
     return serverEmojis;
-  }, [allowServerEmojisInDMs, availableServerEmojis, serverEmojis]);
+  }, [availableServerEmojis, serverEmojis]);
 
   // Filter emojis based on search
   const filteredCategories = useMemo(() => {
@@ -237,7 +246,18 @@ export function CustomEmojiPicker({
   }, [handleScroll]);
 
   useEffect(() => {
-    if (activeTab !== "stickers" || !serverId) {
+    if (activeTab !== "stickers") {
+      setStickers([]);
+      return;
+    }
+
+    // Use cross-server stickers if available
+    if (availableServerStickers.length > 0) {
+      setStickers(availableServerStickers);
+      return;
+    }
+
+    if (!serverId) {
       setStickers([]);
       return;
     }
@@ -256,6 +276,8 @@ export function CustomEmojiPicker({
           description: sticker.description,
           tags: sticker.tags || [],
           imageUrl: sticker.imageUrl || sticker.url,
+          serverId,
+          serverName,
         })));
       } catch {
         if (active) {
@@ -272,7 +294,7 @@ export function CustomEmojiPicker({
     return () => {
       active = false;
     };
-  }, [activeTab, serverId]);
+  }, [activeTab, serverId, availableServerStickers, serverName]);
 
   // Register section ref
   const setSectionRef = useCallback((id: string) => (el: HTMLDivElement | null) => {
@@ -337,39 +359,55 @@ export function CustomEmojiPicker({
         <div className="flex-1 min-h-[400px] flex flex-col">
           <div className="p-3 border-b border-[#2a2a40]">
             <p className="text-xs uppercase tracking-wider text-[#8888aa]">
-              {serverId ? "Server Stickers" : "Stickers"}
+              {serverId || availableServerStickers.length > 0 ? "Server Stickers" : "Stickers"}
             </p>
           </div>
           <div className="p-3 h-[340px] overflow-y-auto">
             {isLoadingStickers ? (
-              <div className="grid grid-cols-4 gap-2">
-                {Array.from({ length: 8 }).map((_, idx) => (
-                  <div key={idx} className="h-20 rounded-md bg-[#2a2a40] animate-pulse" />
+              <div className="grid grid-cols-5 gap-2">
+                {Array.from({ length: 10 }).map((_, idx) => (
+                  <div key={idx} className="h-16 rounded-md bg-[#2a2a40] animate-pulse" />
                 ))}
               </div>
             ) : stickers.length > 0 ? (
-              <div className="grid grid-cols-4 gap-2">
-                {stickers.map((sticker) => (
-                  <button
-                    key={sticker.id}
-                    onClick={() => onStickerSelect?.(sticker.imageUrl, sticker)}
-                    className="group rounded-md border border-[#2a2a40] hover:border-[#8B5CF6] transition-colors p-1"
-                    title={sticker.name}
-                  >
-                    <img
-                      src={sticker.imageUrl}
-                      alt={sticker.name}
-                      className="w-full h-16 object-contain group-hover:scale-105 transition-transform"
-                      loading="lazy"
-                    />
-                  </button>
+              <div className="space-y-4">
+                {Object.entries(
+                  stickers.reduce((acc, sticker) => {
+                    const group = sticker.serverName || (sticker.serverId ? "Server" : "Stickers");
+                    if (!acc[group]) acc[group] = [];
+                    acc[group].push(sticker);
+                    return acc;
+                  }, {} as Record<string, StickerItem[]>)
+                ).map(([serverName, serverStickers]) => (
+                  <div key={serverName}>
+                    <p className="text-xs uppercase tracking-wider text-[#8888aa] mb-2 sticky top-0 bg-[#1a1a2e] py-1">
+                      {serverName}
+                    </p>
+                    <div className="grid grid-cols-5 gap-2">
+                      {serverStickers.map((sticker) => (
+                        <button
+                          key={sticker.id}
+                          onClick={() => onStickerSelect?.(sticker)}
+                          className="group rounded-md border border-[#2a2a40] hover:border-[#8B5CF6] transition-colors p-1"
+                          title={sticker.name}
+                        >
+                          <img
+                            src={sticker.imageUrl}
+                            alt={sticker.name}
+                            className="w-full h-14 object-contain group-hover:scale-105 transition-transform"
+                            loading="lazy"
+                          />
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                 ))}
               </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center">
                 <Sticker className="w-8 h-8 text-[#8888aa] mb-3" />
                 <p className="text-[#8888aa] text-sm">
-                  {serverId ? "No stickers uploaded yet" : "Open a server channel to use stickers"}
+                  {serverId || availableServerStickers.length > 0 ? "No stickers uploaded yet" : "Open a server channel to use stickers"}
                 </p>
               </div>
             )}
@@ -471,7 +509,7 @@ export function CustomEmojiPicker({
                 {filteredCustomEmojis.length > 0 && (
                   <div>
                     <h3 className="text-xs font-semibold text-[#8888aa] mb-2 flex items-center gap-1.5 uppercase tracking-wide sticky top-0 bg-[#1a1a2e] py-1 z-10">
-                      {allowServerEmojisInDMs ? "Your Servers" : serverName}
+                      {availableServerEmojis.length > 0 ? "Your Servers" : serverName}
                     </h3>
                     <div className="grid grid-cols-8 gap-0.5">
                       {filteredCustomEmojis.map((emoji) => (

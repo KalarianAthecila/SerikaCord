@@ -110,17 +110,12 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
     const secret = getJWTSecret();
     const { payload } = await jose.jwtVerify(token, secret);
     
-    console.log('✅ Local JWT verification succeeded');
     return {
       valid: true,
       payload: payload as unknown as JWTPayload,
     };
   } catch (localError) {
-    console.log('⚠️ Local JWT verification failed, trying accounts API...');
-    console.log('   Accounts URL:', config.ACCOUNTS_API_URL);
-    console.log('   Service key set:', !!config.ACCOUNTS_SERVICE_KEY);
-    
-    // Local verification failed - try accounts.serika.dev internal verify
+    // Local verification failed - try accounts API fallback
     try {
       const verifyResponse = await fetch(`${config.ACCOUNTS_API_URL}/internal/verify`, {
         method: 'POST',
@@ -132,7 +127,6 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
       });
       
       const data = await verifyResponse.json();
-      console.log('   Accounts API response:', JSON.stringify(data));
       
       if (data.valid && data.user) {
         // Decode the token payload for consistent interface

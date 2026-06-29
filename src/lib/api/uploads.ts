@@ -537,4 +537,43 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     body: t.Object({
       file: t.File(),
     }),
+  })
+  // Upload audio (for soundboard)
+  .post('/audio', async ({ headers, cookie, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const file = body.file as File;
+
+    if (!file.type.startsWith('audio/')) {
+      set.status = 400;
+      return { error: 'File must be an audio file' };
+    }
+
+    if (file.size > 2 * 1024 * 1024) {
+      set.status = 400;
+      return { error: 'Audio file must be less than 2MB' };
+    }
+
+    try {
+      const result = await storage.uploadFromFormData(file, 'audio', {
+        userId: user._id.toString(),
+      });
+
+      return {
+        url: result.url,
+      };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to upload audio';
+      console.error('Audio upload error:', error);
+      set.status = 500;
+      return { error: message };
+    }
+  }, {
+    body: t.Object({
+      file: t.File(),
+    }),
   });

@@ -5,7 +5,6 @@ let isConnected = false;
 
 export async function connectDB(): Promise<typeof mongoose> {
   if (isConnected) {
-    console.log('📊 Using existing MongoDB connection');
     return mongoose;
   }
 
