@@ -74,10 +74,14 @@ export function SwipeableRow({ children, actions, disabled = false, className }:
 
   const isOpen = actions.length > 0 && offset <= -maxOffset;
 
+  // Only clip while the row is displaced. A permanent overflow-hidden would
+  // also clip hover toolbars/popovers that children position outside the row.
+  const isDisplaced = offset !== 0;
+
   return (
-    <div className={cn("relative overflow-hidden", className)}>
+    <div className={cn("relative", isDisplaced && "overflow-hidden", className)}>
       {/* Action buttons behind the row */}
-      {actions.length > 0 && (
+      {actions.length > 0 && isDisplaced && (
         <div className="absolute inset-y-0 right-0 flex" aria-hidden={!isOpen}>
           {actions.map((action) => {
             return (
@@ -117,7 +121,13 @@ export function SwipeableRow({ children, actions, disabled = false, className }:
             close();
           }
         }}
-        className={cn("relative bg-[var(--bg-app)]", !isDragging && "transition-transform duration-200 ease-out")}
+        className={cn(
+          "relative",
+          // Opaque background only while sliding, so the buttons stay hidden
+          // behind the row; when idle it must not mask hover highlights.
+          isDisplaced && "bg-[var(--bg-app)]",
+          !isDragging && "transition-transform duration-200 ease-out"
+        )}
         style={{ transform: `translateX(${offset}px)`, touchAction: "pan-y" }}
       >
         {children}

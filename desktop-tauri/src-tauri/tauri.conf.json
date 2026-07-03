@@ -1,0 +1,36 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "SerikaCord",
+  "version": "0.1.0",
+  "identifier": "dev.serika.serikacord",
+  "build": {
+    "frontendDist": "https://waifu.ws"
+  },
+  "app": {
+    "windows": [],
+    "security": {
+      "csp": null
+    }
+  },
+  "plugins": {
+    "deep-link": {
+      "desktop": {
+        "schemes": ["serikacord"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "category": "SocialNetworking",
+    "copyright": "Copyright © 2026 SerikaCord",
+    "shortDescription": "Chat with friends and communities",
+    "longDescription": "SerikaCord — chat, voice and video with friends and communities.",
+    "icon": ["icons/icon.png", "icons/icon.ico"],
+    "linux": {
+      "deb": {
+        "section": "net"
+      }
+    }
+  }
+}

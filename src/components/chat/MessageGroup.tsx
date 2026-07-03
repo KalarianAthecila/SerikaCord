@@ -1,0 +1,271 @@
+"use client";
+
+import { Pencil, Pin, Reply, Smile, Trash2 } from "lucide-react";
+import { cn } from "@/lib/utils";
+import { SwipeableRow, type SwipeAction } from "@/components/ui/swipe-actions";
+import { MessageContent } from "@/components/chat/MessageContent";
+import { LinkEmbed } from "@/components/chat/LinkEmbed";
+import { MessageAttachments } from "@/components/chat/MessageAttachments";
+import { MessageReactions } from "@/components/chat/MessageReactions";
+import { MessageHoverActions, type PickerEmoji } from "@/components/chat/MessageHoverActions";
+import { MessageEditForm } from "@/components/chat/MessageEditForm";
+import { GroupAvatar, GroupHeader } from "@/components/chat/MessageGroupHeader";
+import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
+import type { ChatMessage, MessageGroupData } from "@/lib/chat/types";
+
+interface MentionUser {
+  id: string;
+  username?: string;
+  displayName?: string;
+}
+
+interface MentionRole {
+  id: string;
+  name: string;
+  color?: string;
+}
+
+export interface MessageGroupProps<M extends ChatMessage> {
+  group: MessageGroupData<M>;
+  currentUserId?: string;
+  serverId?: string;
+  serverName?: string;
+  /** Enables swipe actions on the entire row (mobile). */
+  swipeEnabled?: boolean;
+  mentionUsers?: MentionUser[];
+  mentionRoles?: MentionRole[];
+  /** Map of userId -> highest role color for role-colored usernames. */
+  userRoleColorMap?: Record<string, string>;
+  /** Fallback emoji set when a message carries no customEmojis of its own. */
+  serverEmojis?: PickerEmoji[];
+  availableServerEmojis?: PickerEmoji[];
+
+  editingMessageId?: string;
+  editContent: string;
+  onEditContentChange: (value: string) => void;
+  onEditKeyDown: (e: React.KeyboardEvent) => void;
+  onEditCancel: () => void;
+  onEditSave: () => void;
+
+  reactionPickerMessageId?: string | null;
+  onReactionPickerChange: (messageId: string, open: boolean) => void;
+
+  onContextMenu: (e: React.MouseEvent, message: M) => void;
+  onReply: (message: M) => void;
+  onCopy: (content: string) => void;
+  onPinToggle: (message: M) => void;
+  onEdit: (message: M) => void;
+  onDelete: (message: M) => void;
+  onAddReaction: (messageId: string, emoji: string) => void;
+  onToggleReaction: (messageId: string, emoji: string, hasReacted: boolean) => void;
+  onOpenReactionPicker: (messageId: string) => void;
+  onMediaClick: (src: string, alt: string | undefined, messageId: string) => void;
+  onJumpToMessage?: (messageId: string) => void;
+}
+
+/**
+ * One author group of messages, Discord style: the first row carries the
+ * avatar and header, follow-up rows reuse the gutter. Each row (including the
+ * avatar/username/timestamp area) is swipeable on touch devices.
+ */
+export function MessageGroup<M extends ChatMessage>({
+  group,
+  currentUserId,
+  serverId,
+  serverName,
+  swipeEnabled = false,
+  mentionUsers,
+  mentionRoles,
+  userRoleColorMap,
+  serverEmojis,
+  availableServerEmojis,
+  editingMessageId,
+  editContent,
+  onEditContentChange,
+  onEditKeyDown,
+  onEditCancel,
+  onEditSave,
+  reactionPickerMessageId,
+  onReactionPickerChange,
+  onContextMenu,
+  onReply,
+  onCopy,
+  onPinToggle,
+  onEdit,
+  onDelete,
+  onAddReaction,
+  onToggleReaction,
+  onOpenReactionPicker,
+  onMediaClick,
+  onJumpToMessage,
+}: MessageGroupProps<M>) {
+  const buildSwipeActions = (message: M): SwipeAction[] => {
+    if (!swipeEnabled) return [];
+    const actions: SwipeAction[] = [
+      {
+        label: "Reply",
+        icon: <Reply className="w-5 h-5" />,
+        onAction: () => onReply(message),
+        className: "bg-[#8B5CF6]",
+      },
+      {
+        label: "React",
+        icon: <Smile className="w-5 h-5" />,
+        onAction: () => onOpenReactionPicker(message.id),
+        className: "bg-[#6366f1]",
+      },
+    ];
+    if (message.authorId === currentUserId) {
+      actions.push(
+        {
+          label: "Edit",
+          icon: <Pencil className="w-5 h-5" />,
+          onAction: () => onEdit(message),
+          className: "bg-[#3b82f6]",
+        },
+        {
+          label: "Delete",
+          icon: <Trash2 className="w-5 h-5" />,
+          onAction: () => onDelete(message),
+          className: "bg-red-500",
+        }
+      );
+    }
+    return actions;
+  };
+
+  return (
+    <div className="chat-message-row group py-0.5 hover:bg-[var(--app-surface-alt)]/80 message-hover transition-colors">
+      {group.messages.map((message, index) => {
+        const isFirst = index === 0;
+        const isEditing = editingMessageId === message.id;
+        const pickerOpen = reactionPickerMessageId === message.id;
+
+        return (
+          // The swipe wrapper spans the whole row — gutter, avatar, header and
+          // body — so the gesture works anywhere on the message.
+          <SwipeableRow key={message.id} actions={buildSwipeActions(message)}>
+            <div
+              id={`message-${message.id}`}
+              className="flex gap-4 relative group/message"
+              onContextMenu={(e) => onContextMenu(e, message)}
+            >
+              <div className="w-10 flex-shrink-0">
+                {isFirst && <GroupAvatar author={group.author} serverId={serverId} />}
+              </div>
+
+              <div className="flex-1 min-w-0">
+                {isFirst && (
+                  <GroupHeader author={group.author} timestamp={group.timestamp} serverId={serverId} roleColor={userRoleColorMap?.[group.author.id]} />
+                )}
+
+                {isEditing ? (
+                  <MessageEditForm
+                    value={editContent}
+                    onChange={onEditContentChange}
+                    onKeyDown={onEditKeyDown}
+                    onCancel={onEditCancel}
+                    onSave={onEditSave}
+                  />
+                ) : (
+                  <>
+                    {message.referencedMessage && (
+                      <div
+                        onClick={() => onJumpToMessage?.(message.referencedMessage!.id)}
+                        className={cn(
+                          "mb-1 text-xs text-[var(--app-muted)] flex items-center gap-1 max-w-full",
+                          onJumpToMessage && "hover:text-[var(--text-primary)] transition-colors cursor-pointer"
+                        )}
+                      >
+                        <Reply className="w-3.5 h-3.5 flex-shrink-0" />
+                        <span className="truncate">
+                          Replying to{" "}
+                          {message.referencedMessage.author?.id ? (
+                            <MemberProfilePopup
+                              member={{
+                                id: message.referencedMessage.author.id,
+                                username: message.referencedMessage.author.username || "unknown",
+                                displayName: message.referencedMessage.author.displayName,
+                                avatar: message.referencedMessage.author.avatar,
+                              }}
+                              serverId={serverId}
+                              side="right"
+                              align="start"
+                            >
+                              <span
+                                onClick={(e) => e.stopPropagation()}
+                                className="font-medium text-[var(--app-accent)] hover:underline cursor-pointer inline"
+                              >
+                                {message.referencedMessage.author.displayName ||
+                                  message.referencedMessage.author.username}
+                              </span>
+                            </MemberProfilePopup>
+                          ) : (
+                            "message"
+                          )}
+                          : {message.referencedMessage.content || "(attachment)"}
+                        </span>
+                      </div>
+                    )}
+
+                    <MessageContent
+                      content={message.content}
+                      serverEmojis={message.customEmojis?.length ? message.customEmojis : serverEmojis}
+                      mentionUsers={mentionUsers}
+                      mentionRoles={mentionRoles}
+                      currentUserId={currentUserId}
+                      edited={message.edited}
+                      sticker={message.sticker}
+                      className="chat-message-body text-[var(--app-text)]"
+                      onMediaClick={({ src, alt }) => onMediaClick(src, alt, message.id)}
+                      messageId={message.id}
+                    />
+
+                    {message.pinned && (
+                      <div className="mt-1 text-[11px] text-[var(--app-muted)] inline-flex items-center gap-1">
+                        <Pin className="w-3 h-3" />
+                        Pinned message
+                      </div>
+                    )}
+
+                    <LinkEmbed content={message.content} />
+
+                    <MessageAttachments
+                      attachments={message.attachments}
+                      messageId={message.id}
+                      onMediaClick={onMediaClick}
+                    />
+
+                    <MessageReactions
+                      reactions={message.reactions}
+                      messageId={message.id}
+                      currentUserId={currentUserId}
+                      onToggle={onToggleReaction}
+                      onOpenPicker={onOpenReactionPicker}
+                    />
+
+                    <MessageHoverActions
+                      message={message}
+                      isOwn={message.authorId === currentUserId}
+                      reactionPickerOpen={pickerOpen}
+                      onReactionPickerChange={(open) => onReactionPickerChange(message.id, open)}
+                      onAddReaction={onAddReaction}
+                      onReply={onReply}
+                      onCopy={onCopy}
+                      onPinToggle={onPinToggle}
+                      onEdit={onEdit}
+                      onDelete={onDelete}
+                      serverEmojis={serverEmojis}
+                      availableServerEmojis={availableServerEmojis}
+                      serverName={serverName}
+                    />
+                  </>
+                )}
+              </div>
+            </div>
+          </SwipeableRow>
+        );
+      })}
+    </div>
+  );
+}

@@ -420,14 +420,16 @@ export function CustomEmojiPicker({
 
       {/* Content based on tab */}
       {activeTab === "gifs" ? (
-        <div className="flex-1 min-h-0 h-[440px]">
+        // flex-none: flex-1's 0% basis can't resolve against this auto-height
+        // column, which made the GIF list grow unboundedly with no scroll
+        <div className="flex-none h-[440px] max-h-[60dvh] min-h-0">
           <GifPicker
             onGifSelect={(gif) => onGifSelect?.(gif.url)}
             className="w-full h-full rounded-none border-none bg-[#1a1a2e]"
           />
         </div>
       ) : activeTab === "stickers" ? (
-        <div className="flex-1 min-h-0 h-[440px] flex flex-col">
+        <div className="flex-none h-[440px] max-h-[60dvh] min-h-0 flex flex-col">
           <div className="p-3 border-b border-[#2a2a40]">
             <p className="text-xs uppercase tracking-wider text-[#8888aa]">
               {serverId || availableServerStickers.length > 0 ? "Server Stickers" : "Stickers"}
@@ -535,7 +537,7 @@ export function CustomEmojiPicker({
             {/* Emoji Grid - Single scrollable list with sections */}
             <div 
               ref={scrollRef}
-              className="flex-1 h-[440px] overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent"
+              className="flex-1 h-[440px] max-h-[60dvh] overflow-y-auto overflow-x-hidden scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent"
             >
               <div className="p-3 space-y-4">
                 {/* Recently Used Section */}

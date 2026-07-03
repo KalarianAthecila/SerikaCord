@@ -1,0 +1,87 @@
+"use client";
+
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
+import { StaffPill } from "@/components/chat/StaffPill";
+import { formatMessageTimestamp } from "@/lib/chat/messages";
+import { useTheme } from "@/contexts/ThemeContext";
+import type { MessageAuthor } from "@/lib/chat/types";
+
+interface GroupAvatarProps {
+  author: MessageAuthor;
+  serverId?: string;
+}
+
+/** The 40px avatar in the message gutter, wrapped in a profile popup when possible. */
+export function GroupAvatar({ author, serverId }: GroupAvatarProps) {
+  const initial = (author.displayName || author.username || "?").charAt(0).toUpperCase();
+  const avatar = (
+    <Avatar className="w-10 h-10 mt-0.5">
+      <AvatarImage src={author.avatar} loading="lazy" alt="" />
+      <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">{initial}</AvatarFallback>
+    </Avatar>
+  );
+
+  if (!author.id || author.id === "unknown") return avatar;
+
+  return (
+    <MemberProfilePopup
+      member={{
+        id: author.id,
+        username: author.username || "unknown",
+        displayName: author.displayName,
+        avatar: author.avatar,
+      }}
+      serverId={serverId}
+      side="right"
+      align="start"
+    >
+      <button
+        className="block rounded-full focus-visible:outline-2 focus-visible:outline-[#8B5CF6] cursor-pointer hover:opacity-90 transition-opacity"
+        aria-label={`View profile of ${author.displayName || author.username}`}
+      >
+        {avatar}
+      </button>
+    </MemberProfilePopup>
+  );
+}
+
+interface GroupHeaderProps {
+  author: MessageAuthor;
+  timestamp: string;
+  serverId?: string;
+  roleColor?: string;
+}
+
+/** Author name + staff pill + timestamp row above the first message of a group. */
+export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHeaderProps) {
+  const { settings } = useTheme();
+  const name = author.displayName || author.username || "Unknown";
+  const effectiveColor = settings.showRoleColors && roleColor ? roleColor : undefined;
+
+  return (
+    <div className="flex items-baseline gap-2 mb-1">
+      {author.id && author.id !== "unknown" ? (
+        <MemberProfilePopup
+          member={{
+            id: author.id,
+            username: author.username || "unknown",
+            displayName: author.displayName,
+            avatar: author.avatar,
+          }}
+          serverId={serverId}
+          side="right"
+          align="start"
+        >
+          <button className="font-medium hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded" style={effectiveColor ? { color: effectiveColor } : undefined}>
+            {name}
+          </button>
+        </MemberProfilePopup>
+      ) : (
+        <span className="font-medium text-[var(--text-primary)]" style={effectiveColor ? { color: effectiveColor } : undefined}>{name}</span>
+      )}
+      <StaffPill badges={author.badges} />
+      <span className="text-xs text-[var(--text-muted)]">{formatMessageTimestamp(timestamp)}</span>
+    </div>
+  );
+}

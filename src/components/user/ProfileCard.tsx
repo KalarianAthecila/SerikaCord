@@ -9,6 +9,7 @@ import {
   Copy,
   Check,
   CalendarDays,
+  Crown,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
@@ -97,10 +98,10 @@ export function ProfileCard({
 
   const handleAddFriend = async () => {
     try {
-      const response = await fetch(`/api/friends/request`, {
+      const response = await fetch(`/api/friends/add`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ userId: user.id }),
+        body: JSON.stringify({ username: user.username }),
       });
       if (response.ok) {
         setFriendRequestSent(true);
@@ -181,7 +182,14 @@ export function ProfileCard({
             <h3 className="text-xl font-bold text-white leading-tight truncate">{displayName}</h3>
             {showOwnerCrown && user.isOwner && (
               <span title="Server Owner" className="shrink-0 text-[#F59E0B]">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M5 16L3 5l5.5 5L12 4l3.5 6L21 5l-2 11H5zm14 3c0 .6-.4 1-1 1H6c-.6 0-1-.4-1-1v-1h14v1z"/></svg>
+                <Crown className="w-4 h-4" />
+              </span>
+            )}
+            {user.isPremium && (
+              <span title="Premium" className="shrink-0">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                  <path d="M12 2L14.5 8.5L21 9.5L16.5 14L17.5 21L12 17.5L6.5 21L7.5 14L3 9.5L9.5 8.5L12 2Z" fill="#F59E0B" stroke="#F59E0B" strokeWidth="1" strokeLinejoin="round"/>
+                </svg>
               </span>
             )}
           </div>
@@ -198,8 +206,15 @@ export function ProfileCard({
             )}
           </button>
           {user.customStatus && (
-            <p className="text-sm text-[#c8c8d8] mt-1.5">{user.customStatus}</p>
+            <p className="text-sm text-[#c8c8d8] mt-1.5 italic">{user.customStatus}</p>
           )}
+          <div className="flex items-center gap-1.5 mt-1.5">
+            <span
+              className="w-2 h-2 rounded-full shrink-0"
+              style={{ backgroundColor: STATUS_COLORS[status] }}
+            />
+            <span className="text-xs text-[#9a9aad]">{STATUS_LABELS[status]}</span>
+          </div>
         </div>
 
         {/* Badges */}

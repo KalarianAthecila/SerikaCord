@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo } from "react";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { cn } from "@/lib/utils";
+import { usePolling } from "@/hooks/usePolling";
 
 interface MemberRole {
   id: string;
@@ -77,27 +78,9 @@ export function MemberSidebar() {
     }
   }, [currentServer]);
 
-  useEffect(() => {
-    void fetchMembers();
-  }, [fetchMembers]);
-
-  useEffect(() => {
-    if (!currentServer) return;
-
-    const poll = window.setInterval(() => {
-      void fetchMembers();
-    }, 30000);
-
-    const handleWindowFocus = () => {
-      void fetchMembers();
-    };
-
-    window.addEventListener("focus", handleWindowFocus);
-    return () => {
-      window.clearInterval(poll);
-      window.removeEventListener("focus", handleWindowFocus);
-    };
-  }, [currentServer, fetchMembers]);
+  // Visibility-aware poll: refresh immediately, pause when tab is hidden,
+  // and refetch the moment the tab regains focus.
+  usePolling(() => void fetchMembers(), 30000, !!currentServer, currentServer?.id);
 
   const groupedOnlineMembers = useMemo(() => {
     const onlineMembers = sortMembersByName(members.filter((member) => member.status !== "offline"));

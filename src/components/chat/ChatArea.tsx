@@ -6,25 +6,10 @@ import { useServer } from "@/contexts/ServerContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
-import { Textarea } from "@/components/ui/textarea";
-import { Button } from "@/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 import {
   Dialog,
   DialogContent,
   DialogDescription,
-  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
@@ -36,98 +21,29 @@ import {
   Search,
   Inbox,
   HelpCircle,
-  Smile,
   ChevronLeft,
-  MoreHorizontal,
-  Pencil,
-  Trash2,
-  Copy,
-  Reply,
-  X,
-  FileText,
   Loader2,
-  Plus,
   ArrowDown,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
-import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
-import { LinkEmbed } from "@/components/chat/LinkEmbed";
-import { MessageContent } from "@/components/chat/MessageContent";
 import { MessageBar, type MessageBarHandle } from "@/components/chat/MessageBar";
-import { VideoMediaPlayer, AudioMediaPlayer } from "@/components/chat/MediaPlayer";
-import { StaffPill } from "@/components/chat/StaffPill";
-import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
+import { MessageGroup } from "@/components/chat/MessageGroup";
+import { MessageContextMenu } from "@/components/chat/MessageContextMenu";
+import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
+import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { MessageSkeleton } from "@/components/ui/skeleton";
 import { ImageLightbox } from "@/components/ui/image-lightbox";
 import { buildGalleryFromMessages, findGalleryIndex } from "@/lib/chat/media";
 import { incrementUnread, clearUnread, playNotificationSound, isChannelMuted, toggleChannelMute, subscribeChannelMutes } from "@/lib/services/notificationUX";
 import { useMentions, type MentionData } from "@/hooks/useMentions";
+import { useChatStream, useTypingSignal } from "@/hooks/useChatStream";
+import { useMessageActions } from "@/hooks/useMessageActions";
+import { useIsMobile } from "@/hooks/useIsMobile";
+import { groupMessages, formatMessageTimestamp } from "@/lib/chat/messages";
+import type { ChatMessage } from "@/lib/chat/types";
 
-interface Message {
-  id: string;
-  content: string;
-  type?: "default" | "reply" | "system";
-  authorId: string;
-  author: {
-    id: string;
-    username: string;
-    displayName: string;
-    avatar?: string;
-    badges?: string[];
-  };
-  channelId: string;
-  createdAt: string;
-  updatedAt: string;
-  edited?: boolean;
-  pinned?: boolean;
-  referencedMessageId?: string;
-  referencedMessage?: {
-    id: string;
-    content: string;
-    author?: {
-      id: string;
-      username: string;
-      displayName: string;
-      avatar?: string;
-    };
-    createdAt?: string;
-  };
-  attachments?: Array<{
-    id: string;
-    url: string;
-    filename: string;
-    contentType: string;
-    size?: number;
-  }>;
-  reactions?: Array<{
-    emoji: {
-      id?: string;
-      name: string;
-      animated?: boolean;
-      url?: string;
-    };
-    count: number;
-    userIds: string[];
-  }>;
-  customEmojis?: Array<{
-    id: string;
-    name: string;
-    animated?: boolean;
-    url: string;
-  }>;
-  sticker?: {
-    id: string;
-    name: string;
-    imageUrl: string;
-    serverId?: string;
-    serverName?: string;
-  };
-  mentionEveryone?: boolean;
-  mentionedUserIds?: string[];
-  mentionedRoleIds?: string[];
-  mentionedChannelIds?: string[];
-}
+type Message = ChatMessage;
 
 interface MentionUser {
   id: string;
@@ -200,10 +116,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const [newMessage, setNewMessage] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [isSending, setIsSending] = useState(false);
-  const [isMobile, setIsMobile] = useState(false);
+  const isMobile = useIsMobile();
   const messageBarRef = useRef<MessageBarHandle>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollContainerRef = useRef<HTMLDivElement | null>(null);
   const scrollViewportRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
@@ -215,28 +130,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const prevScrollHeightRef = useRef(0);
   const MAX_LOADED_MESSAGES = 50;
   const PAGE_SIZE = 20;
-  const eventSourceRef = useRef<EventSource | null>(null);
-  const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
-  const reconnectAttempts = useRef(0);
-  const typingTimeoutsRef = useRef<Record<string, NodeJS.Timeout>>({});
-  const lastTypingSentAtRef = useRef(0);
-
-  // Edit state
-  const [editingMessage, setEditingMessage] = useState<Message | null>(null);
-  const [editContent, setEditContent] = useState("");
-
-  // Delete confirmation
-  const [deleteConfirmMessage, setDeleteConfirmMessage] = useState<Message | null>(null);
-
-  // Right-click context menu
-  const [contextMenu, setContextMenu] = useState<{ message: Message; x: number; y: number } | null>(null);
-
-  // Emoji picker
-  const [showEmojiPicker, setShowEmojiPicker] = useState(false);
-  const [composerPickerTab, setComposerPickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
-
-  // Reaction picker
-  const [reactionPickerMessage, setReactionPickerMessage] = useState<string | null>(null);
 
   // Server emojis and stickers
   const [serverEmojis, setServerEmojis] = useState<Array<{
@@ -264,13 +157,10 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const [mentionUsers, setMentionUsers] = useState<MentionUser[]>([]);
   const [mentionRoles, setMentionRoles] = useState<MentionRole[]>([]);
   const [currentUserRoleIds, setCurrentUserRoleIds] = useState<string[]>([]);
+  const [userRoleColorMap, setUserRoleColorMap] = useState<Record<string, string>>({});
   const [mentionSuggestions, setMentionSuggestions] = useState<MentionSuggestion[]>([]);
   const [activeMentionIndex, setActiveMentionIndex] = useState(0);
   const mentionRangeRef = useRef<{ start: number; end: number } | null>(null);
-
-  // Typing indicator
-  const [typingUsers, setTypingUsers] = useState<string[]>([]);
-  const [replyToMessage, setReplyToMessage] = useState<Message | null>(null);
 
   // Header utilities
   const [channelMuted, setChannelMuted] = useState(false);
@@ -286,14 +176,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const [searchResults, setSearchResults] = useState<Message[]>([]);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
   const [standaloneMedia, setStandaloneMedia] = useState<{ src: string; alt?: string } | null>(null);
-
-  // Detect mobile
-  useEffect(() => {
-    const checkMobile = () => setIsMobile(window.innerWidth < 768);
-    checkMobile();
-    window.addEventListener("resize", checkMobile);
-    return () => window.removeEventListener("resize", checkMobile);
-  }, []);
 
   // Fetch server emojis
   useEffect(() => {
@@ -377,12 +259,13 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMentionUsers([]);
         setMentionRoles([]);
         setCurrentUserRoleIds([]);
+        setUserRoleColorMap({});
         return;
       }
 
       try {
         const [membersResponse, rolesResponse] = await Promise.all([
-          fetch(`/api/servers/${currentServer.id}/members`),
+          fetch(`/api/servers/${currentServer.id}/members?limit=1000`),
           fetch(`/api/servers/${currentServer.id}/roles`),
         ]);
 
@@ -393,6 +276,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             username: string;
             displayName: string;
             roles?: Array<{ id: string }>;
+            highestRole?: { color?: string } | null;
           }>;
 
           setMentionUsers(
@@ -403,11 +287,21 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             }))
           );
 
+          const colorMap: Record<string, string> = {};
+          for (const member of members) {
+            const highestRole = member.highestRole;
+            if (highestRole?.color && highestRole.color !== '#000000') {
+              colorMap[member.id] = highestRole.color;
+            }
+          }
+          setUserRoleColorMap(colorMap);
+
           const self = members.find((member) => member.id === user?.id);
           setCurrentUserRoleIds((self?.roles || []).map((role) => role.id));
         } else {
           setMentionUsers([]);
           setCurrentUserRoleIds([]);
+          setUserRoleColorMap({});
         }
 
         if (rolesResponse.ok) {
@@ -428,6 +322,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMentionUsers([]);
         setMentionRoles([]);
         setCurrentUserRoleIds([]);
+        setUserRoleColorMap({});
       }
     };
 
@@ -443,7 +338,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     activeMessageFetchChannelRef.current = requestedChannelId;
 
     setIsLoading(true);
-    setTypingUsers([]);
     setHasMoreOlder(false);
     setNewMessagesCount(0);
     isAtBottomRef.current = true;
@@ -549,6 +443,47 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     }
   }, [currentChannel]);
 
+  // Shared per-message actions (edit/delete/pin/reactions/reply/context menu)
+  const emojiLookup = useMemo(
+    () => [...serverEmojis, ...allServerEmojis],
+    [serverEmojis, allServerEmojis]
+  );
+  const actions = useMessageActions<Message>({
+    apiBase: currentChannel ? `/api/channels/${currentChannel.id}` : null,
+    setMessages,
+    userId: user?.id,
+    emojiLookup,
+    onPinsChanged: fetchPinnedMessages,
+  });
+  const {
+    editingMessage,
+    editContent,
+    setEditContent,
+    startEditing,
+    cancelEditing,
+    submitEdit,
+    handleEditKeyDown,
+    deleteConfirmMessage,
+    setDeleteConfirmMessage,
+    confirmDelete,
+    contextMenu,
+    setContextMenu,
+    openContextMenu,
+    reactionPickerMessage,
+    setReactionPickerMessage,
+    replyToMessage,
+    setReplyToMessage,
+    copyMessage,
+    togglePin,
+    applyReactionEvent,
+    addReaction,
+    toggleReaction,
+  } = actions;
+
+  const { signalTyping, resetTyping } = useTypingSignal(
+    currentChannel ? `/api/channels/${currentChannel.id}/typing` : null
+  );
+
   const runMessageSearch = useCallback(async (query: string) => {
     if (!currentChannel || query.trim().length < 2) {
       setSearchResults([]);
@@ -581,7 +516,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     setMentionSuggestions([]);
     setActiveMentionIndex(0);
     void fetchPinnedMessages();
-  }, [currentChannel, fetchPinnedMessages]);
+  }, [currentChannel, fetchPinnedMessages, setReplyToMessage]);
 
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -595,7 +530,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       const caretPosition =
         explicitCaretPosition ?? messageBarRef.current?.getComposer()?.getCaret() ?? draft.length;
       const beforeCursor = draft.slice(0, caretPosition);
-      const mentionMatch = beforeCursor.match(/(^|\s)@([^\s@]{0,40})$/);
+      const mentionMatch = beforeCursor.match(/(^|[\s\n])@([^\s@]{0,40})$/m);
 
       if (!mentionMatch) {
         // Emoji autocomplete: `:query` with 2+ chars (avoids firing on plain colons)
@@ -650,17 +585,17 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
       const userSuggestions = mentionUsers
         .filter((entry) => {
-          const username = entry.username.toLowerCase();
-          const displayName = entry.displayName.toLowerCase();
+          const username = (entry.username || "").toLowerCase();
+          const displayName = (entry.displayName || "").toLowerCase();
           return query.length === 0 || username.includes(query) || displayName.includes(query);
         })
-        .sort((a, b) => a.displayName.localeCompare(b.displayName))
+        .sort((a, b) => (a.displayName || "").localeCompare(b.displayName || ""))
         .slice(0, 8)
         .map((entry) => ({
           id: entry.id,
           kind: "user" as const,
-          label: entry.displayName,
-          description: `@${entry.username}`,
+          label: entry.displayName || entry.username || entry.id,
+          description: `@${entry.username || ""}`,
         }));
 
       const roleSuggestions = mentionRoles
@@ -698,43 +633,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     [mentionRoles, mentionUsers, allServerEmojis]
   );
 
-  const addTypingUser = useCallback(
-    (username: string) => {
-      if (!username || username === user?.username) return;
-      setTypingUsers((prev) => (prev.includes(username) ? prev : [...prev, username]));
-
-      if (typingTimeoutsRef.current[username]) {
-        clearTimeout(typingTimeoutsRef.current[username]);
-      }
-
-      typingTimeoutsRef.current[username] = setTimeout(() => {
-        setTypingUsers((prev) => prev.filter((u) => u !== username));
-        delete typingTimeoutsRef.current[username];
-      }, 3500);
-    },
-    [user?.username]
-  );
-
-  const sendTypingStatus = useCallback(async (content?: string) => {
-    const draft = content ?? newMessage;
-    if (!currentChannel || !draft.trim()) return;
-
-    const now = Date.now();
-    if (now - lastTypingSentAtRef.current < 2000) {
-      return;
-    }
-    lastTypingSentAtRef.current = now;
-
-    try {
-      await fetch(`/api/channels/${currentChannel.id}/typing`, {
-        method: "POST",
-        keepalive: true,
-      });
-    } catch {
-      // Best-effort signal only.
-    }
-  }, [currentChannel, newMessage]);
-
   const insertMentionFromSuggestion = useCallback(
     (suggestion: MentionSuggestion) => {
       const activeRange = mentionRangeRef.current;
@@ -765,92 +663,16 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         composer.replaceRange(activeRange.start, activeRange.end, `${mentionToken} `);
       }
 
-      void sendTypingStatus(composer.getText());
+      signalTyping(composer.getText());
     },
-    [sendTypingStatus]
+    [signalTyping]
   );
 
-  const applyReactionEvent = useCallback(
-    (messageId: string, emoji: string, userId: string, isAdd: boolean) => {
-      setMessages((prev) =>
-        prev.map((msg) => {
-          if (msg.id !== messageId) return msg;
-
-          const reactions = msg.reactions || [];
-          const reactionIndex = reactions.findIndex(
-            (reaction) => reaction.emoji.id === emoji || reaction.emoji.name === emoji
-          );
-
-          if (reactionIndex === -1) {
-            if (!isAdd) return msg;
-            // Parse custom emoji format <:name:id> or <a:name:id>
-            const customMatch = emoji.match(/^<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>$/);
-            let emojiObj: { name: string; id?: string; animated?: boolean; url?: string };
-            if (customMatch) {
-              const [, animated, name, id] = customMatch;
-              // Try to find url from serverEmojis or allServerEmojis
-              const found = serverEmojis.find(e => e.id === id) || allServerEmojis.find(e => e.id === id);
-              emojiObj = { name, id, animated: Boolean(animated), url: found?.url };
-            } else {
-              emojiObj = { name: emoji };
-            }
-            return {
-              ...msg,
-              reactions: [...reactions, { emoji: emojiObj, count: 1, userIds: [userId] }],
-            };
-          }
-
-          const targetReaction = reactions[reactionIndex];
-          const alreadyReacted = targetReaction.userIds.includes(userId);
-          if (isAdd && alreadyReacted) return msg;
-          if (!isAdd && !alreadyReacted) return msg;
-
-          const nextReactions = reactions
-            .map((reaction, index) => {
-              if (index !== reactionIndex) return reaction;
-              const nextUserIds = isAdd
-                ? [...reaction.userIds, userId]
-                : reaction.userIds.filter((id) => id !== userId);
-              return {
-                ...reaction,
-                userIds: nextUserIds,
-                count: nextUserIds.length,
-              };
-            })
-            .filter((reaction) => reaction.count > 0);
-
-          return {
-            ...msg,
-            reactions: nextReactions,
-          };
-        })
-      );
-    },
-    [serverEmojis, allServerEmojis]
-  );
-
-  // SSE connection with reconnection logic
-  const connectSSE = useCallback(() => {
-    if (!currentChannel) return;
-
-    // Clean up existing connection
-    if (eventSourceRef.current) {
-      eventSourceRef.current.close();
-    }
-
-    const eventSource = new EventSource(`/api/channels/${currentChannel.id}/stream`, {
-      withCredentials: true,
-    });
-
-    eventSource.onopen = () => {
-      reconnectAttempts.current = 0;
-    };
-
-    eventSource.onmessage = (event) => {
-      try {
-        const data = JSON.parse(event.data);
-        if (data.type === "connected" || data.type === "ping") return;
-
+  // Real-time updates over SSE (connection + typing handled by the hook)
+  const { typingStatusText } = useChatStream({
+    url: currentChannel ? `/api/channels/${currentChannel.id}/stream` : null,
+    currentUsername: user?.username,
+    onEvent: (data) => {
         if (data.type === "message") {
           const incomingAuthorIdRaw = data.message.authorId;
           const incomingAuthorId =
@@ -994,11 +816,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           return;
         }
 
-        if (data.type === "typing") {
-          addTypingUser(data.username);
-          return;
-        }
-
         if (data.type === "pin_update") {
           setMessages((prev) =>
             prev.map((m) =>
@@ -1007,31 +824,8 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           );
           void fetchPinnedMessages();
         }
-      } catch (error) {
-        console.error("Failed to parse SSE data:", error);
-      }
-    };
-
-    eventSource.onerror = () => {
-      eventSource.close();
-
-      // Reconnect with exponential backoff
-      const backoffMs = Math.min(1000 * Math.pow(2, reconnectAttempts.current), 30000);
-      reconnectAttempts.current++;
-
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-
-      reconnectTimeoutRef.current = setTimeout(() => {
-        if (currentChannel) {
-          connectSSE();
-        }
-      }, backoffMs);
-    };
-
-    eventSourceRef.current = eventSource;
-  }, [addTypingUser, applyReactionEvent, currentChannel, fetchPinnedMessages, user?.id]);
+    },
+  });
 
   // Clear unread badge when tab becomes visible
   useEffect(() => {
@@ -1043,21 +837,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     document.addEventListener("visibilitychange", handleVisibility);
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, []);
-
-  useEffect(() => {
-    connectSSE();
-
-    return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
-      if (reconnectTimeoutRef.current) {
-        clearTimeout(reconnectTimeoutRef.current);
-      }
-      Object.values(typingTimeoutsRef.current).forEach((timeout) => clearTimeout(timeout));
-      typingTimeoutsRef.current = {};
-    };
-  }, [connectSSE]);
 
   // Auto-scroll to bottom only when user is already at bottom
   useEffect(() => {
@@ -1155,7 +934,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       setMentionSuggestions([]);
       setActiveMentionIndex(0);
     }
-    lastTypingSentAtRef.current = 0;
+    resetTyping();
     setIsSending(true);
 
     let tempId: string | null = null;
@@ -1273,87 +1052,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     }
   };
 
-  // Optimistic edit: apply immediately, roll back to the previous content if
-  // the server rejects the change.
-  const handleEditMessage = async () => {
-    if (!editingMessage || !editContent.trim()) return;
-
-    const messageId = editingMessage.id;
-    const channelId = editingMessage.channelId;
-    const nextContent = editContent;
-    const previous = messages.find((m) => m.id === messageId);
-    if (!previous) return;
-
-    setMessages((prev) =>
-      prev.map((m) => (m.id === messageId ? { ...m, content: nextContent, edited: true } : m))
-    );
-    setEditingMessage(null);
-    setEditContent("");
-
-    try {
-      const response = await fetch(`/api/channels/${channelId}/messages/${messageId}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ content: nextContent }),
-      });
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        setMessages((prev) => prev.map((m) => (m.id === messageId ? previous : m)));
-        toast.error(data?.error || "Failed to edit message");
-      }
-    } catch {
-      setMessages((prev) => prev.map((m) => (m.id === messageId ? previous : m)));
-      toast.error("Failed to edit message. Check your connection.");
-    }
-  };
-
-  // Optimistic delete: remove immediately, restore in place on failure.
-  const handleDeleteMessage = async () => {
-    if (!deleteConfirmMessage) return;
-
-    const messageId = deleteConfirmMessage.id;
-    const channelId = deleteConfirmMessage.channelId;
-    const previousMessages = messages;
-
-    setMessages((prev) => prev.filter((m) => m.id !== messageId));
-    setDeleteConfirmMessage(null);
-
-    try {
-      const response = await fetch(
-        `/api/channels/${channelId}/messages/${messageId}`,
-        { method: "DELETE" }
-      );
-
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        setMessages(previousMessages);
-        toast.error(data?.error || "Failed to delete message");
-      }
-    } catch {
-      setMessages(previousMessages);
-      toast.error("Failed to delete message. Check your connection.");
-    }
-  };
-
-  const handleCopyMessage = (content: string) => {
-    navigator.clipboard.writeText(content);
-    toast.success("Copied to clipboard");
-  };
-
-  // Close context menu on outside click
-  useEffect(() => {
-    if (!contextMenu) return;
-    const handleClick = () => setContextMenu(null);
-    const handleScroll = () => setContextMenu(null);
-    window.addEventListener("click", handleClick);
-    window.addEventListener("scroll", handleScroll, true);
-    return () => {
-      window.removeEventListener("click", handleClick);
-      window.removeEventListener("scroll", handleScroll, true);
-    };
-  }, [contextMenu]);
-
   const toggleChannelNotifications = () => {
     if (!currentChannel) return;
     const next = toggleChannelMute(currentChannel.id);
@@ -1368,30 +1066,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       if (channelId === currentChannel.id) setChannelMuted(muted);
     });
   }, [currentChannel]);
-
-  const handlePinToggle = async (message: Message) => {
-    if (!currentChannel) return;
-
-    try {
-      const endpoint = `/api/channels/${currentChannel.id}/messages/${message.id}/pin`;
-      const response = await fetch(endpoint, {
-        method: message.pinned ? "DELETE" : "PUT",
-      });
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        toast.error(data?.error || "Failed to update pin");
-        return;
-      }
-
-      setMessages((prev) =>
-        prev.map((m) => (m.id === message.id ? { ...m, pinned: !message.pinned } : m))
-      );
-      void fetchPinnedMessages();
-      toast.success(message.pinned ? "Message unpinned" : "Message pinned");
-    } catch {
-      toast.error("Failed to update pin");
-    }
-  };
 
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (mentionSuggestions.length > 0) {
@@ -1428,22 +1102,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     }
   };
 
-  const handleEditKeyDown = (e: React.KeyboardEvent) => {
-    if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault();
-      handleEditMessage();
-    }
-    if (e.key === "Escape") {
-      setEditingMessage(null);
-      setEditContent("");
-    }
-  };
-
   const handleComposerChange = (value: string, caret: number) => {
     setNewMessage(value);
-    if (value.trim()) {
-      void sendTypingStatus(value);
-    }
+    signalTyping(value);
     updateMentionSuggestions(value, caret);
   };
 
@@ -1463,140 +1124,22 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     } else if (composer) {
       composer.insertTextAtCaret(emoji);
     }
-    void sendTypingStatus(messageBarRef.current?.getComposer()?.getText() ?? "");
-    setShowEmojiPicker(false);
+    signalTyping(messageBarRef.current?.getComposer()?.getText() ?? "");
     messageBarRef.current?.getComposer()?.focus();
   };
 
   const handleGifSelect = (gifUrl: string) => {
-    setShowEmojiPicker(false);
-    setComposerPickerTab("emoji");
     void handleSendMessage(gifUrl);
   };
 
   const handleStickerSelect = (sticker: { id: string; name: string; imageUrl: string; serverId?: string; serverName?: string }) => {
-    setShowEmojiPicker(false);
-    setComposerPickerTab("emoji");
     void handleSendMessage(undefined, sticker);
   };
 
-  // Optimistic reactions: apply immediately via the same reducer the SSE
-  // stream uses, and apply the inverse if the server rejects the change.
-  const handleAddReaction = async (messageId: string, emoji: string) => {
-    if (!currentChannel || !user?.id) return;
-    setReactionPickerMessage(null);
-
-    applyReactionEvent(messageId, emoji, user.id, true);
-    try {
-      const encodedEmoji = encodeURIComponent(emoji);
-      const response = await fetch(
-        `/api/channels/${currentChannel.id}/messages/${messageId}/reactions?emoji=${encodedEmoji}`,
-        { method: "PUT" }
-      );
-      if (!response.ok) {
-        applyReactionEvent(messageId, emoji, user.id, false);
-        const data = await response.json().catch(() => null);
-        toast.error(data?.error || "Failed to add reaction");
-      }
-    } catch {
-      applyReactionEvent(messageId, emoji, user.id, false);
-      toast.error("Failed to add reaction. Check your connection.");
-    }
-  };
-
-  const handleRemoveReaction = async (messageId: string, emoji: string) => {
-    if (!currentChannel || !user?.id) return;
-
-    applyReactionEvent(messageId, emoji, user.id, false);
-    try {
-      const encodedEmoji = encodeURIComponent(emoji);
-      const response = await fetch(
-        `/api/channels/${currentChannel.id}/messages/${messageId}/reactions?emoji=${encodedEmoji}`,
-        { method: "DELETE" }
-      );
-      if (!response.ok) {
-        applyReactionEvent(messageId, emoji, user.id, true);
-        const data = await response.json().catch(() => null);
-        toast.error(data?.error || "Failed to remove reaction");
-      }
-    } catch {
-      applyReactionEvent(messageId, emoji, user.id, true);
-      toast.error("Failed to remove reaction. Check your connection.");
-    }
-  };
-
-  const handleReactionClick = (messageId: string, emoji: string, hasReacted: boolean) => {
-    if (hasReacted) {
-      handleRemoveReaction(messageId, emoji);
-    } else {
-      handleAddReaction(messageId, emoji);
-    }
-  };
-
-  const formatTimestamp = (timestamp: string) => {
-    const date = new Date(timestamp);
-    const now = new Date();
-    const isToday = date.toDateString() === now.toDateString();
-
-    if (isToday) {
-      return `Today at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
-    }
-
-    const yesterday = new Date(now);
-    yesterday.setDate(yesterday.getDate() - 1);
-    if (date.toDateString() === yesterday.toDateString()) {
-      return `Yesterday at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
-    }
-
-    return (
-      date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" }) +
-      ` at ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`
-    );
-  };
-
-  const formatFileSize = (bytes?: number) => {
-    if (!bytes) return "";
-    if (bytes < 1024) return bytes + " B";
-    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB";
-    return (bytes / (1024 * 1024)).toFixed(1) + " MB";
-  };
+  const formatTimestamp = formatMessageTimestamp;
 
   // Group messages by author and time proximity (deduplicate by ID first)
-  const groupedMessages = useMemo(
-    () => {
-      const seen = new Set<string>();
-      const deduped = messages.filter((m) => {
-        const key = String(m.id);
-        if (seen.has(key)) return false;
-        seen.add(key);
-        return true;
-      });
-      return deduped.reduce((groups, message, index) => {
-        const prevMessage = deduped[index - 1];
-        const isGrouped =
-          prevMessage &&
-          prevMessage.authorId === message.authorId &&
-          new Date(message.createdAt).getTime() - new Date(prevMessage.createdAt).getTime() < 5 * 60 * 1000;
-
-        if (isGrouped) {
-          groups[groups.length - 1].messages.push(message);
-        } else {
-          groups.push({ author: message.author, messages: [message] });
-        }
-
-        return groups;
-      }, [] as Array<{ author: Message["author"]; messages: Message[] }>);
-    },
-    [messages]
-  );
-
-  const typingStatusText = useMemo(() => {
-    if (typingUsers.length === 0) return "";
-    if (typingUsers.length === 1) return `${typingUsers[0]} is typing`;
-    if (typingUsers.length === 2) return `${typingUsers[0]} and ${typingUsers[1]} are typing`;
-    if (typingUsers.length === 3) return `${typingUsers[0]}, ${typingUsers[1]} and ${typingUsers[2]} are typing`;
-    return `${typingUsers[0]}, ${typingUsers[1]} and ${typingUsers.length - 2} others are typing`;
-  }, [typingUsers]);
+  const groupedMessages = useMemo(() => groupMessages(messages), [messages]);
 
   const mediaGallery = useMemo(() => buildGalleryFromMessages(messages), [messages]);
 
@@ -1619,13 +1162,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       setStandaloneMedia({ src, alt });
     },
     []
-  );
-
-  const handleMessageMediaClick = useCallback(
-    ({ src, alt, messageId }: { src: string; alt?: string; messageId?: string }) => {
-      openMediaViewer(src, alt, messageId);
-    },
-    [openMediaViewer]
   );
 
   useEffect(() => {
@@ -1839,351 +1375,45 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           ) : groupedMessages.length === 0 ? (
             <div className="text-center text-[var(--text-muted)] py-8">No messages yet. Be the first to say something!</div>
           ) : (
-            groupedMessages.map((group, groupIndex) => (
-              <div
-                key={groupIndex}
-                className="chat-message-row group py-0.5 hover:bg-[var(--app-surface-alt)]/80 message-hover transition-colors"
-              >
-                <div className="flex gap-4">
-                  <div className="w-10 flex-shrink-0">
-                    {group.author?.id && group.author.id !== "unknown" ? (
-                      <MemberProfilePopup
-                        member={{
-                          id: group.author.id,
-                          username: group.author.username || "unknown",
-                          displayName: group.author.displayName,
-                          avatar: group.author.avatar,
-                        }}
-                        serverId={currentServer?.id}
-                        side="right"
-                        align="start"
-                      >
-                        <button className="block rounded-full focus-visible:outline-2 focus-visible:outline-[#8B5CF6]" aria-label={`View profile of ${group.author.displayName || group.author.username}`}>
-                          <Avatar className="w-10 h-10 mt-0.5 cursor-pointer hover:opacity-90 transition-opacity">
-                            <AvatarImage src={group.author?.avatar} alt="" />
-                            <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
-                              {group.author?.displayName?.charAt(0).toUpperCase() || "?"}
-                            </AvatarFallback>
-                          </Avatar>
-                        </button>
-                      </MemberProfilePopup>
-                    ) : (
-                      <Avatar className="w-10 h-10 mt-0.5">
-                        <AvatarImage src={group.author?.avatar} alt="" />
-                        <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
-                          {group.author?.displayName?.charAt(0).toUpperCase() || "?"}
-                        </AvatarFallback>
-                      </Avatar>
-                    )}
-                  </div>
-
-                  <div className="flex-1 min-w-0">
-                    <div className="flex items-baseline gap-2 mb-1">
-                      {group.author?.id && group.author.id !== "unknown" ? (
-                        <MemberProfilePopup
-                          member={{
-                            id: group.author.id,
-                            username: group.author.username || "unknown",
-                            displayName: group.author.displayName,
-                            avatar: group.author.avatar,
-                          }}
-                          serverId={currentServer?.id}
-                          side="right"
-                          align="start"
-                        >
-                          <button className="font-medium text-[var(--text-primary)] hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded">
-                            {group.author?.displayName || "Unknown"}
-                          </button>
-                        </MemberProfilePopup>
-                      ) : (
-                        <span className="font-medium text-[var(--text-primary)]">
-                          {group.author?.displayName || "Unknown"}
-                        </span>
-                      )}
-                      <StaffPill badges={group.author?.badges} />
-                      <span className="text-xs text-[var(--text-muted)]">{formatTimestamp(group.messages[0].createdAt)}</span>
-                    </div>
-
-                    {group.messages.map((message, msgIndex) => (
-                      <div
-                        key={`${groupIndex}-${message.id}-${msgIndex}`}
-                        id={`message-${message.id}`}
-                        className="group/message relative"
-                        onContextMenu={(e) => {
-                          e.preventDefault();
-                          setContextMenu({ message, x: e.clientX, y: e.clientY });
-                        }}
-                      >
-                        {editingMessage?.id === message.id ? (
-                          <div className="bg-[var(--bg-card)] rounded-md p-2 mb-1 border border-[var(--border-subtle)]">
-                            <Textarea
-                              value={editContent}
-                              onChange={(e) => setEditContent(e.target.value)}
-                              onKeyDown={handleEditKeyDown}
-                              className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] min-h-[40px] mb-2"
-                              autoFocus
-                            />
-                            <div className="flex items-center gap-2 text-xs">
-                              <span className="text-[#888888]">
-                                escape to{" "}
-                                <button
-                                  onClick={() => {
-                                    setEditingMessage(null);
-                                    setEditContent("");
-                                  }}
-                                  className="text-[#8B5CF6] hover:underline"
-                                >
-                                  cancel
-                                </button>{" "}
-                                • enter to{" "}
-                                <button onClick={handleEditMessage} className="text-[#8B5CF6] hover:underline">
-                                  save
-                                </button>
-                              </span>
-                            </div>
-                          </div>
-                        ) : (
-                          <>
-                            {message.referencedMessage && (
-                              <div
-                                onClick={() =>
-                                  document
-                                    .getElementById(`message-${message.referencedMessage?.id}`)
-                                    ?.scrollIntoView({ behavior: "smooth", block: "center" })
-                                }
-                                className="mb-1 text-xs text-[var(--app-muted)] hover:text-[var(--text-primary)] transition-colors flex items-center gap-1 max-w-full cursor-pointer"
-                              >
-                                <Reply className="w-3.5 h-3.5" />
-                                <span className="truncate">
-                                  Replying to{" "}
-                                  {message.referencedMessage.author?.id ? (
-                                    <MemberProfilePopup
-                                      member={{
-                                        id: message.referencedMessage.author.id,
-                                        username: message.referencedMessage.author.username || "unknown",
-                                        displayName: message.referencedMessage.author.displayName,
-                                        avatar: message.referencedMessage.author.avatar,
-                                      }}
-                                      serverId={currentServer?.id}
-                                      side="right"
-                                      align="start"
-                                    >
-                                      <span
-                                        onClick={(e) => e.stopPropagation()}
-                                        className="font-medium text-[var(--app-accent)] hover:underline cursor-pointer inline"
-                                      >
-                                        {message.referencedMessage.author?.displayName || message.referencedMessage.author?.username || "message"}
-                                      </span>
-                                    </MemberProfilePopup>
-                                  ) : (
-                                    message.referencedMessage.author?.displayName || message.referencedMessage.author?.username || "message"
-                                  )}
-                                  :{" "}
-                                  {message.referencedMessage.content || "(attachment)"}
-                                </span>
-                              </div>
-                            )}
-
-                            <MessageContent
-                              content={message.content}
-                              serverEmojis={message.customEmojis?.length ? message.customEmojis : serverEmojis}
-                              mentionUsers={mentionUsers}
-                              mentionRoles={mentionRoles}
-                              currentUserId={user?.id}
-                              edited={message.edited}
-                              sticker={message.sticker}
-                              className="chat-message-body text-[var(--app-text)]"
-                              onMediaClick={handleMessageMediaClick}
-                              messageId={message.id}
-                            />
-
-                            {message.pinned && (
-                              <div className="mt-1 text-[11px] text-[var(--app-muted)] inline-flex items-center gap-1">
-                                <Pin className="w-3 h-3" />
-                                Pinned message
-                              </div>
-                            )}
-
-                            {/* Link Embeds */}
-                            <LinkEmbed content={message.content} />
-
-                            {/* Attachments */}
-                            {message.attachments?.map((attachment) => (
-                              <div key={attachment.id} className="mt-2">
-                                {attachment.contentType.startsWith("image/") ? (
-                                  <img
-                                    src={attachment.url}
-                                    alt={attachment.filename}
-                                    className="chat-media cursor-pointer hover:opacity-90 max-w-sm max-h-[350px] object-contain rounded-md"
-                                    onClick={() => openMediaViewer(attachment.url, attachment.filename, message.id)}
-                                  />
-                                ) : attachment.contentType.startsWith("video/") ? (
-                                  <VideoMediaPlayer
-                                    src={attachment.url}
-                                    filename={attachment.filename}
-                                    contentType={attachment.contentType}
-                                    className="max-w-sm rounded-lg overflow-hidden"
-                                  />
-                                ) : attachment.contentType.startsWith("audio/") ? (
-                                  <AudioMediaPlayer
-                                    src={attachment.url}
-                                    filename={attachment.filename}
-                                    contentType={attachment.contentType}
-                                    className="w-full max-w-sm"
-                                  />
-                                ) : (
-                                  <a
-                                    href={attachment.url}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                    className="flex items-center gap-2 p-3 bg-[var(--app-surface-alt)] rounded-md hover:brightness-110 max-w-sm transition"
-                                  >
-                                    <FileText className="w-8 h-8 text-[#8B5CF6]" />
-                                    <div className="min-w-0">
-                                      <div className="text-[#8B5CF6] hover:underline truncate">{attachment.filename}</div>
-                                      <div className="text-xs text-[var(--app-muted)]">{formatFileSize(attachment.size)}</div>
-                                    </div>
-                                  </a>
-                                )}
-                              </div>
-                            ))}
-
-                            {/* Reactions Display */}
-                            {message.reactions && message.reactions.length > 0 && (
-                              <div className="flex flex-wrap gap-1 mt-1">
-                                {message.reactions.map((reaction) => {
-                                  const hasReacted = reaction.userIds.includes(user?.id || "");
-                                  const isCustomEmoji = Boolean(reaction.emoji.id && reaction.emoji.url);
-                                  // For custom emojis, pass the full format to the API; for unicode, pass the name
-                                  const emojiIdentifier = reaction.emoji.id
-                                    ? `<${reaction.emoji.animated ? "a" : ""}:${reaction.emoji.name}:${reaction.emoji.id}>`
-                                    : reaction.emoji.name;
-                                  return (
-                                    <button
-                                      key={reaction.emoji.id || reaction.emoji.name}
-                                      onClick={() => handleReactionClick(message.id, emojiIdentifier, hasReacted)}
-                                      className={cn(
-                                        "flex items-center gap-1 px-2 py-0.5 rounded-full text-sm transition-colors",
-                                        hasReacted
-                                          ? "bg-[#8B5CF6]/20 border border-[#8B5CF6] text-[var(--text-primary)]"
-                                          : "bg-[var(--app-surface-alt)] border border-[var(--app-border)] text-[var(--app-muted)] hover:brightness-110"
-                                      )}
-                                    >
-                                      {isCustomEmoji ? (
-                                        <img
-                                          src={reaction.emoji.url}
-                                          alt={reaction.emoji.name}
-                                          className="w-4 h-4 object-contain"
-                                        />
-                                      ) : (
-                                        <span>{reaction.emoji.name}</span>
-                                      )}
-                                      <span className={hasReacted ? "text-[var(--text-primary)]" : "text-[var(--app-muted)]"}>{reaction.count}</span>
-                                    </button>
-                                  );
-                                })}
-                                <button
-                                  onClick={() => setReactionPickerMessage(message.id)}
-                                  className="flex items-center justify-center w-7 h-7 rounded-full bg-[var(--app-surface-alt)] border border-[var(--app-border)] text-[var(--app-muted)] hover:brightness-110 hover:text-[var(--text-primary)] transition-colors"
-                                >
-                                  <Plus className="w-4 h-4" />
-                                </button>
-                              </div>
-                            )}
-
-                            {/* Message Actions */}
-                            <div className="absolute -top-3 right-0 opacity-0 group-hover/message:opacity-100 transition-opacity z-10">
-                              <div className="flex items-center bg-[var(--app-surface-alt)] border border-[var(--app-border)] rounded-md shadow-lg">
-                                <Popover
-                                  open={reactionPickerMessage === message.id}
-                                  onOpenChange={(open) => setReactionPickerMessage(open ? message.id : null)}
-                                >
-                                  <PopoverTrigger asChild>
-                                    <button
-                                      className="p-1.5 hover:bg-black/20 rounded-l-md transition-colors"
-                                      title="Add Reaction"
-                                    >
-                                      <Smile className="w-4 h-4 text-[var(--app-muted)]" />
-                                    </button>
-                                  </PopoverTrigger>
-                                  <PopoverContent className="w-[440px] max-w-[calc(100vw-1rem)] p-0 border-none" side="top" align="end">
-                                    <CustomEmojiPicker
-                                      onEmojiSelect={(emoji, isCustom, emojiData) => {
-                                        const emojiStr = isCustom && emojiData
-                                          ? `<${emojiData.animated ? "a" : ""}:${emojiData.name}:${emojiData.id}>`
-                                          : emoji;
-                                        void handleAddReaction(message.id, emojiStr);
-                                      }}
-                                      serverEmojis={serverEmojis}
-                                      serverName={currentServer?.name}
-                                      availableServerEmojis={allServerEmojis}
-                                    />
-                                  </PopoverContent>
-                                </Popover>
-                                <button
-                                  onClick={() => setReplyToMessage(message)}
-                                  className="p-1.5 hover:bg-black/20 transition-colors"
-                                  title="Reply"
-                                >
-                                  <Reply className="w-4 h-4 text-[var(--app-muted)]" />
-                                </button>
-                                <DropdownMenu>
-                                  <DropdownMenuTrigger asChild>
-                                    <button className="p-1.5 hover:bg-black/20 rounded-r-md transition-colors">
-                                      <MoreHorizontal className="w-4 h-4 text-[var(--app-muted)]" />
-                                    </button>
-                                  </DropdownMenuTrigger>
-                                  <DropdownMenuContent
-                                    align="end"
-                                    className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] min-w-[160px]"
-                                  >
-                                    <DropdownMenuItem
-                                      onClick={() => handleCopyMessage(message.content)}
-                                      className="hover:bg-[var(--bg-hover)] cursor-pointer"
-                                    >
-                                      <Copy className="w-4 h-4 mr-2" />
-                                      Copy Text
-                                    </DropdownMenuItem>
-                                    <DropdownMenuItem
-                                      onClick={() => handlePinToggle(message)}
-                                      className="hover:bg-[var(--bg-hover)] cursor-pointer"
-                                    >
-                                      <Pin className="w-4 h-4 mr-2" />
-                                      {message.pinned ? "Unpin Message" : "Pin Message"}
-                                    </DropdownMenuItem>
-                                    {message.authorId === user?.id && (
-                                      <>
-                                        <DropdownMenuSeparator className="bg-[#2a2a2a]" />
-                                        <DropdownMenuItem
-                                          onClick={() => {
-                                            setEditingMessage(message);
-                                            setEditContent(message.content);
-                                          }}
-                                          className="hover:bg-[var(--bg-hover)] cursor-pointer"
-                                        >
-                                          <Pencil className="w-4 h-4 mr-2" />
-                                          Edit Message
-                                        </DropdownMenuItem>
-                                        <DropdownMenuItem
-                                          onClick={() => setDeleteConfirmMessage(message)}
-                                          className="hover:bg-red-500/20 text-red-400 cursor-pointer"
-                                        >
-                                          <Trash2 className="w-4 h-4 mr-2" />
-                                          Delete Message
-                                        </DropdownMenuItem>
-                                      </>
-                                    )}
-                                  </DropdownMenuContent>
-                                </DropdownMenu>
-                              </div>
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
+            groupedMessages.map((group) => (
+              <MessageGroup
+                key={`group-${group.messages[0].id}`}
+                group={group}
+                currentUserId={user?.id}
+                serverId={currentServer?.id}
+                serverName={currentServer?.name}
+                swipeEnabled={isMobile}
+                mentionUsers={mentionUsers}
+                mentionRoles={mentionRoles}
+                userRoleColorMap={userRoleColorMap}
+                serverEmojis={serverEmojis}
+                availableServerEmojis={allServerEmojis}
+                editingMessageId={editingMessage?.id}
+                editContent={editContent}
+                onEditContentChange={setEditContent}
+                onEditKeyDown={handleEditKeyDown}
+                onEditCancel={cancelEditing}
+                onEditSave={() => void submitEdit()}
+                reactionPickerMessageId={reactionPickerMessage}
+                onReactionPickerChange={(messageId, open) =>
+                  setReactionPickerMessage(open ? messageId : null)
+                }
+                onContextMenu={openContextMenu}
+                onReply={setReplyToMessage}
+                onCopy={copyMessage}
+                onPinToggle={(message) => void togglePin(message)}
+                onEdit={startEditing}
+                onDelete={setDeleteConfirmMessage}
+                onAddReaction={(messageId, emoji) => void addReaction(messageId, emoji)}
+                onToggleReaction={toggleReaction}
+                onOpenReactionPicker={setReactionPickerMessage}
+                onMediaClick={openMediaViewer}
+                onJumpToMessage={(messageId) =>
+                  document
+                    .getElementById(`message-${messageId}`)
+                    ?.scrollIntoView({ behavior: "smooth", block: "center" })
+                }
+              />
             ))
           )}
           <div ref={messagesEndRef} />
@@ -2191,20 +1421,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       </ScrollArea>
       </div>
 
-      {/* Typing Indicator */}
-      <div className={cn(
-        "px-4 overflow-hidden transition-all duration-200",
-        typingStatusText ? "py-1.5 max-h-8 opacity-100" : "py-0 max-h-0 opacity-0"
-      )}>
-        <span className="inline-flex items-center gap-2 text-xs text-[var(--app-muted)]">
-          <span className="flex gap-0.5 items-center">
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:0ms]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:150ms]" />
-            <span className="h-1.5 w-1.5 rounded-full bg-[var(--app-accent)] animate-bounce [animation-delay:300ms]" />
-          </span>
-          <span className="font-medium">{typingStatusText}</span>
-        </span>
-      </div>
+      <TypingIndicator text={typingStatusText} />
 
       <MessageBar
         ref={messageBarRef}
@@ -2242,28 +1459,11 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         }}
       />
 
-      {/* Delete Confirmation Dialog */}
-      <Dialog open={!!deleteConfirmMessage} onOpenChange={() => setDeleteConfirmMessage(null)}>
-        <DialogContent className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)]">
-          <DialogHeader>
-            <DialogTitle>Delete Message</DialogTitle>
-            <DialogDescription className="text-[var(--text-secondary)]">
-              Are you sure you want to delete this message? This action cannot be undone.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="bg-[var(--bg-sidebar-elevated)] p-3 rounded-md text-[var(--text-secondary)] text-sm max-h-32 overflow-y-auto">
-            {deleteConfirmMessage?.content}
-          </div>
-          <DialogFooter>
-            <Button variant="ghost" onClick={() => setDeleteConfirmMessage(null)} className="text-[var(--text-primary)] hover:bg-[var(--bg-hover)]">
-              Cancel
-            </Button>
-            <Button onClick={handleDeleteMessage} className="bg-red-500 hover:bg-red-600 text-white">
-              Delete
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
+      <DeleteMessageDialog
+        message={deleteConfirmMessage}
+        onCancel={() => setDeleteConfirmMessage(null)}
+        onConfirm={() => void confirmDelete()}
+      />
 
       <Dialog open={showPins} onOpenChange={setShowPins}>
         <DialogContent className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] max-w-2xl">
@@ -2314,7 +1514,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             {allMentions.length === 0 ? (
               <div className="flex flex-col items-center justify-center py-12 text-center">
                 <Inbox className="w-12 h-12 text-[var(--text-muted)] mb-3" />
-                <p className="text-sm text-[var(--text-secondary)]">No unread mentions. You're all caught up!</p>
+                <p className="text-sm text-[var(--text-secondary)]">No unread mentions. You&apos;re all caught up!</p>
               </div>
             ) : (
               allMentions.map((item: MentionData) => (
@@ -2381,71 +1581,17 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         </DialogContent>
       </Dialog>
 
-      {/* Right-click context menu */}
-      {contextMenu && (
-        <div
-          className="fixed z-50 min-w-[180px] py-1 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-md shadow-xl"
-          style={{ left: contextMenu.x, top: contextMenu.y }}
-          onClick={(e) => e.stopPropagation()}
-        >
-          <button
-            onClick={() => {
-              setReplyToMessage(contextMenu.message);
-              setContextMenu(null);
-            }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
-          >
-            <Reply className="w-4 h-4" />
-            Reply
-          </button>
-          <button
-            onClick={() => {
-              handleCopyMessage(contextMenu.message.content);
-              setContextMenu(null);
-            }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
-          >
-            <Copy className="w-4 h-4" />
-            Copy Text
-          </button>
-          <button
-            onClick={() => {
-              void handlePinToggle(contextMenu.message);
-              setContextMenu(null);
-            }}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
-          >
-            <Pin className="w-4 h-4" />
-            {contextMenu.message.pinned ? "Unpin Message" : "Pin Message"}
-          </button>
-          {contextMenu.message.authorId === user?.id && (
-            <>
-              <div className="h-px bg-[var(--border-subtle)] my-1" />
-              <button
-                onClick={() => {
-                  setEditingMessage(contextMenu.message);
-                  setEditContent(contextMenu.message.content);
-                  setContextMenu(null);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
-              >
-                <Pencil className="w-4 h-4" />
-                Edit Message
-              </button>
-              <button
-                onClick={() => {
-                  setDeleteConfirmMessage(contextMenu.message);
-                  setContextMenu(null);
-                }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/20 transition-colors"
-              >
-                <Trash2 className="w-4 h-4" />
-                Delete Message
-              </button>
-            </>
-          )}
-        </div>
-      )}
+      <MessageContextMenu
+        menu={contextMenu}
+        isOwn={(message) => message.authorId === user?.id}
+        onClose={() => setContextMenu(null)}
+        onReply={setReplyToMessage}
+        onAddReaction={(message) => setReactionPickerMessage(message.id)}
+        onCopy={copyMessage}
+        onPinToggle={(message) => void togglePin(message)}
+        onEdit={startEditing}
+        onDelete={setDeleteConfirmMessage}
+      />
     </div>
   );
 }

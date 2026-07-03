@@ -46,6 +46,7 @@ import { UserProfilePopup } from "@/components/user/UserProfilePopup";
 import { VoiceBar } from "@/components/voice/VoiceBar";
 import { isChannelMuted, toggleChannelMute } from "@/lib/services/notificationUX";
 import { useMentions } from "@/hooks/useMentions";
+import { usePolling } from "@/hooks/usePolling";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
 import { toast } from "sonner";
 
@@ -249,10 +250,11 @@ export function ChannelSidebar({
   };
 
   // Poll voice channel participants for channels we're not connected to
-  useEffect(() => {
+  // (visibility-aware: pauses in background tabs, refreshes on focus)
+  const fetchVoiceStates = useCallback(async () => {
     if (!currentServer) return;
     const voiceChannelIds = voiceChannels.map(ch => ch.id);
-    const fetchVoiceStates = async () => {
+    {
       const results = new Map<string, VoiceParticipant[]>();
       await Promise.all(voiceChannelIds.map(async (chId) => {
         const roomId = `channel-${chId}`;
@@ -270,11 +272,9 @@ export function ChannelSidebar({
         }
       }));
       setExternalVoiceParticipants(results);
-    };
-    void fetchVoiceStates();
-    const interval = setInterval(fetchVoiceStates, 5000);
-    return () => clearInterval(interval);
-  }, [currentServer?.id, voiceChannels]);
+    }
+  }, [currentServer, voiceChannels]);
+  usePolling(() => void fetchVoiceStates(), 5000, !!currentServer, currentServer?.id);
 
   // Fetch DM channels when no server is selected
   const fetchDMChannels = useCallback(async () => {
@@ -282,7 +282,13 @@ export function ChannelSidebar({
       const response = await fetch("/api/dms");
       if (response.ok) {
         const data = await response.json();
-        setDmChannels(data.channels || []);
+        const channels = (data.channels || []) as DMChannel[];
+        channels.sort((a, b) => {
+          const aTime = a.updatedAt ? new Date(a.updatedAt).getTime() : 0;
+          const bTime = b.updatedAt ? new Date(b.updatedAt).getTime() : 0;
+          return bTime - aTime;
+        });
+        setDmChannels(channels);
       }
     } catch (error) {
       console.error("Failed to fetch DM channels:", error);

@@ -1,0 +1,14 @@
+{
+  "name": "serikacord-desktop",
+  "version": "0.1.0",
+  "description": "SerikaCord native desktop app (Tauri)",
+  "private": true,
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build",
+    "tauri": "tauri"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2"
+  }
+}

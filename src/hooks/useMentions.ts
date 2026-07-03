@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { usePolling } from "./usePolling";
 
 export interface MentionData {
   id: string;
@@ -70,14 +71,13 @@ export function useMentions(serverId?: string) {
     }
   }, [serverId]);
 
+  // Visibility-aware poll: pauses in background tabs, refreshes on focus
+  usePolling(() => void fetchMentions(), POLL_INTERVAL);
   useEffect(() => {
-    void fetchMentions();
-    const interval = setInterval(() => void fetchMentions(), POLL_INTERVAL);
     return () => {
-      clearInterval(interval);
       if (abortRef.current) abortRef.current.abort();
     };
-  }, [fetchMentions]);
+  }, []);
 
   // Recompute unread state when readVersion changes (after markChannelRead)
   const unreadMentions = (() => {
@@ -85,7 +85,7 @@ export function useMentions(serverId?: string) {
       const readTs = getChannelReadTimestamp(m.channelId);
       return new Date(m.createdAt).getTime() > readTs;
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+     
   })();
 
   // Per-channel unread counts

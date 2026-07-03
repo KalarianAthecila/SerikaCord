@@ -1,14 +1,22 @@
 import { Elysia, t } from 'elysia';
 import { config } from '../config';
-import { 
-  verifyEmail, 
-  requestPasswordReset, 
-  resetPassword, 
+import {
+  verifyEmail,
+  resetPassword,
   deleteSession,
   verifyToken,
   handleDiscordOAuth,
   authenticateRequest,
 } from '../services/auth';
+import {
+  accountsRegister,
+  accountsLogin,
+  accountsRefresh,
+  accountsVerifyEmail,
+  accountsResendVerification,
+  accountsForgotPassword,
+  accountsResetPassword,
+} from '../services/accountsClient';
 
 export const authRoutes = new Elysia({ prefix: '/auth' })
   // Register - proxies to accounts.serika.dev
@@ -28,19 +36,10 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }
 
     try {
-      // Proxy to accounts API
-      const accountsResponse = await fetch(`${config.ACCOUNTS_API_URL}/api/auth/register`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ email, username, password, displayName }),
-      });
+      const { ok, status, data } = await accountsRegister({ email, username, password, displayName });
 
-      const data = await accountsResponse.json();
-
-      if (!accountsResponse.ok) {
-        set.status = accountsResponse.status;
+      if (!ok) {
+        set.status = status;
         return { error: data.error || 'Registration failed' };
       }
 
@@ -69,26 +68,16 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     const { email, password } = body;
 
     try {
-      // Proxy to accounts API
-      const accountsResponse = await fetch(`${config.ACCOUNTS_API_URL}/api/auth/login`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'User-Agent': headers['user-agent'] || 'SerikaCord/1.0',
-          'X-Forwarded-For': headers['x-forwarded-for'] || headers['x-real-ip'] || '',
-        },
-        body: JSON.stringify({ 
-          email, 
-          password,
-          rememberMe: true,
-          productId: 'serikacord',
-        }),
-      });
+      const { ok, status, data } = await accountsLogin(
+        { email, password },
+        {
+          userAgent: headers['user-agent'],
+          ip: headers['x-forwarded-for'] || headers['x-real-ip'],
+        }
+      );
 
-      const data = await accountsResponse.json();
-
-      if (!accountsResponse.ok) {
-        set.status = accountsResponse.status;
+      if (!ok) {
+        set.status = status;
         return { error: data.error || 'Authentication failed' };
       }
 
@@ -155,18 +144,10 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }
 
     try {
-      const accountsResponse = await fetch(`${config.ACCOUNTS_API_URL}/api/auth/refresh`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Cookie': `refresh_token=${refreshToken}`,
-        },
-      });
+      const { ok, status, data } = await accountsRefresh(refreshToken);
 
-      const data = await accountsResponse.json();
-
-      if (!accountsResponse.ok) {
-        set.status = accountsResponse.status;
+      if (!ok) {
+        set.status = status;
         return { error: data.error || 'Failed to refresh token' };
       }
 
@@ -186,25 +167,54 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }
   })
 
-  // Verify email
+  // Verify email — accounts service owns verification; fall back to legacy
+  // local tokens for accounts created before the accounts migration.
   .get('/verify/:token', async ({ params, set }) => {
-    const result = await verifyEmail(params.token);
+    try {
+      const { ok } = await accountsVerifyEmail(params.token);
+      if (ok) {
+        return { success: true, message: 'Email verified successfully' };
+      }
+    } catch (error) {
+      console.error('Accounts verify proxy error:', error);
+    }
 
+    const result = await verifyEmail(params.token);
     if (!result.success) {
       set.status = 400;
       return { error: result.error };
     }
-
     return { success: true, message: 'Email verified successfully' };
   })
 
-  // Request password reset
-  .post('/forgot-password', async ({ body }) => {
-    await requestPasswordReset(body.email);
+  // Resend verification email (handled by the accounts service)
+  .post('/resend-verification', async ({ body }) => {
+    try {
+      await accountsResendVerification(body.email);
+    } catch (error) {
+      console.error('Resend verification proxy error:', error);
+    }
+    // Always the same response to prevent email enumeration
+    return {
+      success: true,
+      message: 'If an account exists, a verification email has been sent.',
+    };
+  }, {
+    body: t.Object({
+      email: t.String({ format: 'email' }),
+    }),
+  })
 
+  // Request password reset — passwords live in the accounts service
+  .post('/forgot-password', async ({ body }) => {
+    try {
+      await accountsForgotPassword(body.email);
+    } catch (error) {
+      console.error('Forgot password proxy error:', error);
+    }
     // Always return success to prevent email enumeration
-    return { 
-      success: true, 
+    return {
+      success: true,
       message: 'If an account exists with that email, a reset link has been sent.',
     };
   }, {
@@ -213,15 +223,23 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }),
   })
 
-  // Reset password
+  // Reset password — proxy to accounts first (source of truth for
+  // credentials), fall back to legacy local reset tokens.
   .post('/reset-password', async ({ body, set }) => {
-    const result = await resetPassword(body.token, body.password);
+    try {
+      const { ok } = await accountsResetPassword(body.token, body.password);
+      if (ok) {
+        return { success: true, message: 'Password reset successfully' };
+      }
+    } catch (error) {
+      console.error('Reset password proxy error:', error);
+    }
 
+    const result = await resetPassword(body.token, body.password);
     if (!result.success) {
       set.status = 400;
       return { error: result.error };
     }
-
     return { success: true, message: 'Password reset successfully' };
   }, {
     body: t.Object({

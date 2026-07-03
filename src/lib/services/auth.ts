@@ -1,6 +1,7 @@
 import { config } from '../config';
 import { User, type IUser } from '../models';
 import { cache } from '../db';
+import { accountsInternalVerify } from './accountsClient';
 import * as jose from 'jose';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
@@ -117,17 +118,8 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
   } catch (localError) {
     // Local verification failed - try accounts API fallback
     try {
-      const verifyResponse = await fetch(`${config.ACCOUNTS_API_URL}/internal/verify`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'x-service-key': config.ACCOUNTS_SERVICE_KEY,
-        },
-        body: JSON.stringify({ token, checkBan: true }),
-      });
-      
-      const data = await verifyResponse.json();
-      
+      const { data } = await accountsInternalVerify(token);
+
       if (data.valid && data.user) {
         // Decode the token payload for consistent interface
         const parts = token.split('.');

@@ -493,7 +493,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (!server.ownerId.equals(user._id) && !(await canManageRoles(server, user._id))) {
       set.status = 403;
       return { error: 'You do not have permission to edit this server' };
     }
@@ -1059,6 +1059,64 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }),
     body: t.Object({
       roleIds: t.Array(t.String()),
+    }),
+  })
+  // Get single server member profile
+  .get('/:serverId/members/:memberUserId', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.memberUserId)) {
+      set.status = 400;
+      return { error: 'Invalid member user ID' };
+    }
+
+    const membership = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: user._id,
+    });
+    if (!membership) {
+      set.status = 403;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const member = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: params.memberUserId,
+    })
+      .populate('userId', 'username displayName avatar status customStatus isPremium badges bio banner presenceLastHeartbeatAt')
+      .populate('roles', 'name color position permissions hoist mentionable managed isDefault');
+
+    if (!member) {
+      set.status = 404;
+      return { error: 'Member not found' };
+    }
+
+    const server = await Server.findById(params.serverId).select('ownerId');
+
+    const normalized = normalizeMemberDto(member as unknown as {
+      _id: Types.ObjectId;
+      userId?: PopulatedMemberUser | null;
+      roles?: PopulatedRole[];
+      joinedAt?: Date;
+    });
+
+    const userData = member.userId as unknown as { bio?: string; banner?: string; badges?: string[] } | null;
+
+    return {
+      ...normalized,
+      bio: userData?.bio || null,
+      banner: userData?.banner || null,
+      badges: userData?.badges || [],
+      isOwner: server ? server.ownerId.equals(member.userId as unknown as Types.ObjectId) : false,
+    };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+      memberUserId: t.String(),
     }),
   })
   // Leave server

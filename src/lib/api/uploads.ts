@@ -4,6 +4,7 @@ import { storage } from '@/lib/services/storage';
 import { checkRateLimit, getClientIP } from '@/lib/security';
 import { config } from '@/lib/config';
 import { Server, ServerMember, User } from '@/lib/models';
+import { accountsSyncProfile } from '@/lib/services/accountsClient';
 
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -84,9 +85,10 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
         userId: user._id.toString(),
       });
 
-      // Update user
+      // Update user, mirroring the change to the accounts service
       user.avatar = result.url;
       await user.save();
+      void accountsSyncProfile(user.email, { avatar: result.url });
 
       return {
         success: true,
@@ -161,9 +163,10 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
         userId: user._id.toString(),
       });
 
-      // Update user
+      // Update user, mirroring the change to the accounts service
       user.banner = result.url;
       await user.save();
+      void accountsSyncProfile(user.email, { banner: result.url });
 
       return {
         success: true,

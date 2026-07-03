@@ -11,6 +11,7 @@ import { Loader2, Mic, MicOff, Video, VideoOff, Volume2, PhoneOff, Users, Monito
 import { toast } from "sonner";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
 import { cn } from "@/lib/utils";
+import { usePolling } from "@/hooks/usePolling";
 
 interface SoundboardSound {
   _id: string;
@@ -118,23 +119,19 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
   }, [syncFromService]);
 
   // Poll participants when not connected so users can see who's in VC
-  useEffect(() => {
-    if (isConnected) return;
-    const fetchParticipants = async () => {
-      try {
-        const res = await fetch(`/api/voice/state/${roomId}`);
-        if (res.ok) {
-          const data = await res.json();
-          setParticipants(data.participants || []);
-        }
-      } catch {
-        // best-effort
+  // (visibility-aware: pauses in background tabs, refreshes on focus)
+  const fetchIdleParticipants = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/voice/state/${roomId}`);
+      if (res.ok) {
+        const data = await res.json();
+        setParticipants(data.participants || []);
       }
-    };
-    void fetchParticipants();
-    const interval = setInterval(fetchParticipants, 5000);
-    return () => clearInterval(interval);
-  }, [isConnected, roomId]);
+    } catch {
+      // best-effort
+    }
+  }, [roomId]);
+  usePolling(() => void fetchIdleParticipants(), 5000, !isConnected, roomId);
 
   // Attach local video stream
   useEffect(() => {

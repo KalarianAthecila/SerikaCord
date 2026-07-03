@@ -42,10 +42,34 @@ export function MemberProfilePopup({
 
     const fetchProfile = async () => {
       try {
-        const response = await fetch(`/api/users/${member.id}`);
-        if (response.ok && !cancelled) {
-          const data = await response.json();
-          setFullProfile((prev) => ({ ...prev, ...data }));
+        if (serverId) {
+          const [userRes, memberRes] = await Promise.all([
+            fetch(`/api/users/${member.id}`),
+            fetch(`/api/servers/${serverId}/members/${member.id}`),
+          ]);
+          if (cancelled) return;
+          const merged: Partial<ProfileCardUser> = {};
+          if (userRes.ok) {
+            const userData = await userRes.json();
+            Object.assign(merged, userData);
+          }
+          if (memberRes.ok) {
+            const memberData = await memberRes.json();
+            merged.roles = (memberData.roles || []).map((r: { id: string; name: string; color?: string }) => ({
+              id: r.id,
+              name: r.name,
+              color: r.color,
+            }));
+            merged.joinedAt = memberData.joinedAt;
+            if (memberData.isOwner) merged.isOwner = true;
+          }
+          setFullProfile((prev) => ({ ...prev, ...merged }));
+        } else {
+          const response = await fetch(`/api/users/${member.id}`);
+          if (response.ok && !cancelled) {
+            const data = await response.json();
+            setFullProfile((prev) => ({ ...prev, ...data }));
+          }
         }
       } catch {
         // Keep whatever partial data we already have
@@ -56,7 +80,7 @@ export function MemberProfilePopup({
     return () => {
       cancelled = true;
     };
-  }, [open, member.id]);
+  }, [open, member.id, serverId]);
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
