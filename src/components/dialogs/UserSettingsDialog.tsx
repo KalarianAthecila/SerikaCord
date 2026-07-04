@@ -42,7 +42,7 @@ import {
   FlaskConical,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { getBadgesByPriority, type BadgeId } from "@/lib/constants/badges";
+import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
 import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
 import { toast } from "sonner";
 
@@ -163,9 +163,17 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     displayName?: string;
     email?: string;
     avatar?: string;
+    banner?: string;
+    bio?: string;
     badges: string[];
     isBanned: boolean;
     banReason?: string;
+    isStaff?: boolean;
+    staffRole?: string;
+    isVerified?: boolean;
+    isPremium?: boolean;
+    premiumSince?: string;
+    createdAt?: string;
     stats?: { servers: number; messages: number };
   } | null>(null);
   const [selectedServer, setSelectedServer] = useState<{
@@ -448,6 +456,18 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     }
   };
 
+  const selectUserDetail = async (userId: string) => {
+    try {
+      const response = await fetch(`/api/admin/users/${userId}`);
+      if (response.ok) {
+        const data = await response.json();
+        setSelectedUser(data);
+      }
+    } catch {
+      // Keep whatever partial data we already have
+    }
+  };
+
   const searchAdminServers = async () => {
     if (!adminServerSearch.trim()) return;
     setIsLoadingAdmin(true);
@@ -650,29 +670,26 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     }
   };
 
-  const handleUpdateBadges = async () => {
-    if (!selectedUser) {
-      toast.info("Select a user first");
-      return;
-    }
-    const initialBadges = (selectedUser.badges || []).join(", ");
-    const input = prompt("Enter comma-separated badges", initialBadges);
-    if (input === null) return;
-
-    const badges = input
-      .split(",")
-      .map((badge) => badge.trim())
-      .filter(Boolean);
+  const handleToggleBadge = async (badgeId: string) => {
+    if (!selectedUser) return;
+    const currentBadges = selectedUser.badges || [];
+    const newBadges = currentBadges.includes(badgeId)
+      ? currentBadges.filter((b) => b !== badgeId)
+      : [...currentBadges, badgeId];
 
     try {
       const response = await fetch(`/api/admin/users/${selectedUser.id}/badges`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ badges }),
+        body: JSON.stringify({ badges: newBadges }),
       });
       if (response.ok) {
+        const updatedBadges = newBadges;
+        setSelectedUser({ ...selectedUser, badges: updatedBadges });
+        setAdminUsers((prev) =>
+          prev.map((u) => (u.id === selectedUser.id ? { ...u, badges: updatedBadges } : u))
+        );
         toast.success("Badges updated");
-        void searchAdminUsers();
       } else {
         const data = await response.json().catch(() => null);
         toast.error(data?.error || "Failed to update badges");
@@ -1689,8 +1706,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     <ShieldCheck className="w-6 h-6 text-[#8B5CF6]" />
                     User Management
                   </h2>
+
+                  {/* Search bar */}
                   <div className="bg-[var(--bg-app)] rounded-lg p-4 mb-4">
-                    <div className="flex gap-4 mb-4">
+                    <div className="flex gap-4">
                       <Input
                         value={adminUserSearch}
                         onChange={(e) => setAdminUserSearch(e.target.value)}
@@ -1707,127 +1726,232 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         Search
                       </button>
                     </div>
-                    <p className="text-[var(--text-muted)] text-sm">
-                      Search for users to view their profile, edit badges, or take moderation actions.
-                    </p>
                   </div>
 
-                  {/* Search Results */}
+                  {/* Two-column layout: user list + detail panel */}
                   {adminUsers.length > 0 && (
-                    <div className="bg-[var(--bg-app)] rounded-lg p-4 mb-4">
-                      <h3 className="text-white font-semibold mb-3">Search Results</h3>
-                      <div className="space-y-2">
-                        {adminUsers.map((u) => (
-                          <div
-                            key={u.id}
-                            className={cn(
-                              "flex items-center justify-between p-3 rounded-lg border",
-                              selectedUser?.id === u.id
-                                ? "bg-[#8B5CF6]/10 border-[#8B5CF6]/40"
-                                : "bg-[var(--bg-card)] border-transparent"
-                            )}
-                          >
-                            <div className="flex items-center gap-3">
-                              <Avatar className="w-10 h-10">
-                                <AvatarImage src={u.avatar} />
-                                <AvatarFallback className="bg-[#8B5CF6] text-white">
-                                  {u.displayName?.charAt(0) || u.username.charAt(0)}
-                                </AvatarFallback>
-                              </Avatar>
-                              <div>
-                                <p className="text-white font-medium">{u.displayName || u.username}</p>
-                                <p className="text-sm text-[var(--text-muted)]">@{u.username} • {u.email}</p>
-                              </div>
-                              {u.isBanned && (
-                                <span className="px-2 py-0.5 bg-red-500/20 text-red-400 text-xs rounded">Banned</span>
-                              )}
-                              {u.isStaff && (
-                                <span className="px-2 py-0.5 bg-[#8B5CF6]/20 text-[#8B5CF6] text-xs rounded">Staff</span>
-                              )}
-                            </div>
-                            <div className="flex items-center gap-2">
+                    <div className="flex gap-4 min-h-[400px]">
+                      {/* Left: User list */}
+                      <div className="w-[280px] flex-shrink-0 bg-[var(--bg-app)] rounded-lg overflow-hidden">
+                        <div className="px-3 py-2 border-b border-[var(--border-subtle)]">
+                          <p className="text-white font-semibold text-sm">Results ({adminUsers.length})</p>
+                        </div>
+                        <ScrollArea className="h-[500px]">
+                          <div className="p-1.5 space-y-1">
+                            {adminUsers.map((u) => (
                               <button
-                                onClick={() => setSelectedUser(u)}
+                                key={u.id}
+                                onClick={() => {
+                                  setSelectedUser(u);
+                                  void selectUserDetail(u.id);
+                                }}
                                 className={cn(
-                                  "px-3 py-1.5 rounded text-sm",
+                                  "w-full flex items-center gap-2.5 p-2 rounded-lg transition-colors text-left",
                                   selectedUser?.id === u.id
-                                    ? "bg-[#8B5CF6] text-white"
-                                    : "bg-[var(--border-subtle)] text-[#cccccc] hover:bg-[#2a2a2a]"
+                                    ? "bg-[#8B5CF6]/15 ring-1 ring-[#8B5CF6]/40"
+                                    : "hover:bg-[var(--bg-card)]"
                                 )}
                               >
-                                {selectedUser?.id === u.id ? "Selected" : "Select"}
+                                <Avatar className="w-8 h-8 flex-shrink-0">
+                                  <AvatarImage src={u.avatar} />
+                                  <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
+                                    {u.displayName?.charAt(0) || u.username.charAt(0)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm text-white font-medium truncate">{u.displayName || u.username}</p>
+                                  <p className="text-xs text-[var(--text-muted)] truncate">@{u.username}</p>
+                                </div>
+                                <div className="flex flex-col items-end gap-0.5">
+                                  {u.isBanned && (
+                                    <span className="px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[10px] rounded">Banned</span>
+                                  )}
+                                  {u.isStaff && (
+                                    <span className="px-1.5 py-0.5 bg-[#8B5CF6]/20 text-[#8B5CF6] text-[10px] rounded">Staff</span>
+                                  )}
+                                </div>
                               </button>
-                              {u.isBanned ? (
-                                <button
-                                  onClick={() => handleUnbanUser(u.id)}
-                                  className="px-3 py-1.5 bg-green-500/20 text-green-400 hover:bg-green-500/30 rounded text-sm"
-                                >
-                                  Unban
-                                </button>
-                              ) : (
-                                <button
-                                  onClick={() => handleBanUser(u.id, "Administrative action")}
-                                  className="px-3 py-1.5 bg-red-500/20 text-red-400 hover:bg-red-500/30 rounded text-sm"
-                                >
-                                  Ban
-                                </button>
+                            ))}
+                          </div>
+                        </ScrollArea>
+                      </div>
+
+                      {/* Right: Detail panel */}
+                      <div className="flex-1 bg-[var(--bg-app)] rounded-lg overflow-hidden">
+                        {selectedUser ? (
+                          <ScrollArea className="h-[500px]">
+                            <div className="p-4 space-y-4">
+                              {/* User header */}
+                              <div className="flex items-center gap-3 pb-3 border-b border-[var(--border-subtle)]">
+                                <Avatar className="w-12 h-12">
+                                  <AvatarImage src={selectedUser.avatar} />
+                                  <AvatarFallback className="bg-[#8B5CF6] text-white">
+                                    {selectedUser.displayName?.charAt(0) || selectedUser.username.charAt(0)}
+                                  </AvatarFallback>
+                                </Avatar>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-white font-semibold">{selectedUser.displayName || selectedUser.username}</p>
+                                  <p className="text-sm text-[var(--text-muted)]">@{selectedUser.username} • {selectedUser.email}</p>
+                                </div>
+                              </div>
+
+                              {/* Quick stats */}
+                              {selectedUser.stats && (
+                                <div className="grid grid-cols-2 gap-2">
+                                  <div className="bg-[var(--bg-card)] rounded-lg p-3">
+                                    <p className="text-xs text-[var(--text-muted)] uppercase font-semibold">Servers</p>
+                                    <p className="text-lg text-white font-bold">{selectedUser.stats.servers}</p>
+                                  </div>
+                                  <div className="bg-[var(--bg-card)] rounded-lg p-3">
+                                    <p className="text-xs text-[var(--text-muted)] uppercase font-semibold">Messages</p>
+                                    <p className="text-lg text-white font-bold">{selectedUser.stats.messages}</p>
+                                  </div>
+                                </div>
                               )}
+
+                              {/* Account info */}
+                              <div>
+                                <p className="text-xs text-[var(--text-muted)] uppercase font-semibold mb-2">Account</p>
+                                <div className="bg-[var(--bg-card)] rounded-lg p-3 space-y-2">
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-sm text-[var(--text-muted)]">Verified</span>
+                                    <span className={cn("text-sm font-medium", selectedUser.isVerified ? "text-green-400" : "text-[var(--text-muted)]")}>
+                                      {selectedUser.isVerified ? "Yes" : "No"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-sm text-[var(--text-muted)]">Staff</span>
+                                    <span className={cn("text-sm font-medium", selectedUser.isStaff ? "text-[#8B5CF6]" : "text-[var(--text-muted)]")}>
+                                      {selectedUser.isStaff ? selectedUser.staffRole || "Yes" : "No"}
+                                    </span>
+                                  </div>
+                                  <div className="flex items-center justify-between">
+                                    <span className="text-sm text-[var(--text-muted)]">Premium</span>
+                                    <span className={cn("text-sm font-medium", selectedUser.isPremium ? "text-[#F47FFF]" : "text-[var(--text-muted)]")}>
+                                      {selectedUser.isPremium ? "Yes" : "No"}
+                                    </span>
+                                  </div>
+                                  {selectedUser.createdAt && (
+                                    <div className="flex items-center justify-between">
+                                      <span className="text-sm text-[var(--text-muted)]">Joined</span>
+                                      <span className="text-sm text-white">{new Date(selectedUser.createdAt).toLocaleDateString()}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </div>
+
+                              {/* Moderation toggles */}
+                              <div>
+                                <p className="text-xs text-[var(--text-muted)] uppercase font-semibold mb-2">Moderation</p>
+                                <div className="space-y-2">
+                                  <div className="flex items-center justify-between bg-[var(--bg-card)] rounded-lg p-3">
+                                    <div>
+                                      <p className="text-sm text-white font-medium">Banned</p>
+                                      <p className="text-xs text-[var(--text-muted)]">Prevent user from accessing the platform</p>
+                                    </div>
+                                    <ToggleSwitch
+                                      size="sm"
+                                      checked={selectedUser.isBanned}
+                                      onCheckedChange={() => {
+                                        if (selectedUser.isBanned) {
+                                          void handleUnbanUser(selectedUser.id);
+                                        } else {
+                                          void handleBanUser(selectedUser.id, "Administrative action");
+                                        }
+                                      }}
+                                    />
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Badge assignment grid */}
+                              <div>
+                                <p className="text-xs text-[var(--text-muted)] uppercase font-semibold mb-2">Badges ({(selectedUser.badges || []).length})</p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  {Object.values(BADGES).map((badge) => {
+                                    const isAssigned = (selectedUser.badges || []).includes(badge.id);
+                                    const IconComponent = badge.icon;
+                                    return (
+                                      <button
+                                        key={badge.id}
+                                        onClick={() => void handleToggleBadge(badge.id)}
+                                        className={cn(
+                                          "flex items-center gap-2.5 p-2.5 rounded-lg border transition-all text-left",
+                                          isAssigned
+                                            ? "bg-[var(--bg-card)] border-[var(--border-subtle)]"
+                                            : "bg-transparent border-[var(--border-subtle)] opacity-50 hover:opacity-80"
+                                        )}
+                                      >
+                                        <div
+                                          className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
+                                          style={{ backgroundColor: `${badge.color}20` }}
+                                        >
+                                          <IconComponent className="w-4 h-4" style={{ color: badge.color }} />
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                          <p className="text-sm text-white font-medium truncate">{badge.name}</p>
+                                          <p className="text-xs text-[var(--text-muted)] truncate">{badge.description}</p>
+                                        </div>
+                                        <div
+                                          className={cn(
+                                            "w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors",
+                                            isAssigned ? "bg-[#8B5CF6] border-[#8B5CF6]" : "border-[var(--text-muted)]"
+                                          )}
+                                        >
+                                          {isAssigned && <Check className="w-2.5 h-2.5 text-white" />}
+                                        </div>
+                                      </button>
+                                    );
+                                  })}
+                                </div>
+                              </div>
+
+                              {/* Quick actions */}
+                              <div>
+                                <p className="text-xs text-[var(--text-muted)] uppercase font-semibold mb-2">Actions</p>
+                                <div className="grid grid-cols-2 gap-2">
+                                  <button
+                                    onClick={() => {
+                                      setActiveTab("admin-logs");
+                                      setAdminLogFilter("reports");
+                                      void fetchAdminLogs("reports");
+                                    }}
+                                    className="p-3 bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] rounded-lg text-left transition-colors"
+                                  >
+                                    <p className="text-white font-medium text-sm">View Reports</p>
+                                    <p className="text-xs text-[var(--text-muted)]">Open filtered admin logs</p>
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      window.location.href = `/dm/${selectedUser.id}`;
+                                    }}
+                                    className="p-3 bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] rounded-lg text-left transition-colors"
+                                  >
+                                    <p className="text-white font-medium text-sm">Open DM</p>
+                                    <p className="text-xs text-[var(--text-muted)]">Jump to direct message</p>
+                                  </button>
+                                </div>
+                              </div>
+                            </div>
+                          </ScrollArea>
+                        ) : (
+                          <div className="flex items-center justify-center h-full p-8">
+                            <div className="text-center">
+                              <Users className="w-12 h-12 text-[var(--text-muted)] mx-auto mb-3 opacity-50" />
+                              <p className="text-[var(--text-muted)]">Select a user from the list to view details and manage badges</p>
                             </div>
                           </div>
-                        ))}
+                        )}
                       </div>
                     </div>
                   )}
 
-                  <div className="bg-[var(--bg-app)] rounded-lg p-4">
-                    <h3 className="text-white font-semibold mb-3">Quick Actions</h3>
-                    <div className="grid grid-cols-2 gap-3">
-                      <button
-                        onClick={() => {
-                          if (!selectedUser) {
-                            toast.info("Select a user first");
-                            return;
-                          }
-                          void handleBanUser(selectedUser.id, "Administrative action");
-                        }}
-                        className="p-3 bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] rounded-lg text-left transition-colors"
-                      >
-                        <p className="text-white font-medium">Ban User</p>
-                        <p className="text-sm text-[var(--text-muted)]">Permanently ban a user</p>
-                      </button>
-                      <button
-                        onClick={handleUpdateBadges}
-                        className="p-3 bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] rounded-lg text-left transition-colors"
-                      >
-                        <p className="text-white font-medium">Edit Badges</p>
-                        <p className="text-sm text-[var(--text-muted)]">Add or remove badges</p>
-                      </button>
-                      <button
-                        onClick={() => {
-                          setActiveTab("admin-logs");
-                          setAdminLogFilter("reports");
-                          void fetchAdminLogs("reports");
-                        }}
-                        className="p-3 bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] rounded-lg text-left transition-colors"
-                      >
-                        <p className="text-white font-medium">View Reports</p>
-                        <p className="text-sm text-[var(--text-muted)]">Open filtered admin activity logs</p>
-                      </button>
-                      <button
-                        onClick={() => {
-                          if (!selectedUser) {
-                            toast.info("Select a user first");
-                            return;
-                          }
-                          window.location.href = `/dm/${selectedUser.id}`;
-                        }}
-                        className="p-3 bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] rounded-lg text-left transition-colors"
-                      >
-                        <p className="text-white font-medium">Open DM Debug</p>
-                        <p className="text-sm text-[var(--text-muted)]">Jump to a direct message with selected user</p>
-                      </button>
+                  {adminUsers.length === 0 && !isLoadingAdmin && (
+                    <div className="bg-[var(--bg-app)] rounded-lg p-8 text-center">
+                      <Users className="w-12 h-12 text-[var(--text-muted)] mx-auto mb-3 opacity-50" />
+                      <p className="text-[var(--text-muted)]">Search for users to view their profile, edit badges, or take moderation actions.</p>
                     </div>
-                  </div>
+                  )}
                 </div>
               )}
 

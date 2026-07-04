@@ -384,7 +384,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const { hasAccess, error } = await checkChannelAccess(
+    const { hasAccess, channel, error } = await checkChannelAccess(
       user._id.toString(),
       params.channelId
     );
@@ -392,6 +392,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     if (!hasAccess) {
       set.status = 403;
       return { error };
+    }
+
+    // Fetch server ownerId for isOwner flag on authors
+    let serverOwnerId: Types.ObjectId | null = null;
+    if (channel?.serverId) {
+      const server = await Server.findById(channel.serverId).select('ownerId').lean();
+      serverOwnerId = server?.ownerId ?? null;
     }
 
     const limit = Math.min(parseInt(query.limit || '50'), config.MAX_MESSAGES_PER_FETCH);
@@ -492,6 +499,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           avatar: populatedAuthor.avatar,
           status: populatedAuthor.status,
           badges: (populatedAuthor as PopulatedAuthor & { badges?: string[] }).badges || [],
+          isOwner: serverOwnerId ? serverOwnerId.equals(populatedAuthor._id as unknown as Types.ObjectId) : false,
         } : null,
         channelId: msg.channelId.toString(),
         serverId: msg.serverId?.toString(),
@@ -621,6 +629,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     if (!hasAccess || !channel) {
       set.status = 403;
       return { error: error || 'Access denied' };
+    }
+
+    // Fetch server ownerId for isOwner flag
+    let serverOwnerId: Types.ObjectId | null = null;
+    if (channel.serverId) {
+      const server = await Server.findById(channel.serverId).select('ownerId').lean();
+      serverOwnerId = server?.ownerId ?? null;
     }
 
     // Rate limit messages
@@ -797,6 +812,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         avatar: populatedAuthor.avatar,
         status: populatedAuthor.status,
         badges: (populatedAuthor as PopulatedAuthor & { badges?: string[] }).badges || [],
+        isOwner: serverOwnerId ? serverOwnerId.equals(populatedAuthor._id as unknown as Types.ObjectId) : false,
       } : null,
       channelId: message.channelId.toString(),
       serverId: message.serverId?.toString(),

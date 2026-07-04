@@ -131,7 +131,7 @@ function normalizeMemberDto(member: {
   userId?: PopulatedMemberUser | null;
   roles?: PopulatedRole[];
   joinedAt?: Date;
-}) {
+}, ownerId?: Types.ObjectId | null) {
   const memberRoles = (member.roles || [])
     .map((role) => normalizeRoleDto(role))
     .sort((a, b) => b.position - a.position);
@@ -151,6 +151,7 @@ function normalizeMemberDto(member: {
     }),
     customStatus: userData?.customStatus || null,
     isPremium: Boolean(userData?.isPremium),
+    isOwner: ownerId ? ownerId.equals(userData?._id as unknown as Types.ObjectId) : false,
     joinedAt: member.joinedAt || null,
     roles: memberRoles,
     highestRole,
@@ -951,10 +952,13 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       filter._id = { $gt: after };
     }
 
-    const members = await ServerMember.find(filter)
-      .limit(limit)
-      .populate('userId', 'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt')
-      .populate('roles', 'name color position permissions hoist mentionable managed isDefault');
+    const [server, members] = await Promise.all([
+      Server.findById(params.serverId).select('ownerId'),
+      ServerMember.find(filter)
+        .limit(limit)
+        .populate('userId', 'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt')
+        .populate('roles', 'name color position permissions hoist mentionable managed isDefault'),
+    ]);
 
     return {
       members: members.map((member) =>
@@ -963,7 +967,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
           userId?: PopulatedMemberUser | null;
           roles?: PopulatedRole[];
           joinedAt?: Date;
-        })
+        }, server?.ownerId)
       ),
     };
   }, {

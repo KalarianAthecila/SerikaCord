@@ -6,12 +6,6 @@ const nextConfig: NextConfig = {
   // Standalone output for Docker; static export for mobile builds
   output: isMobileBuild ? 'export' : 'standalone',
 
-  // Allow large file uploads through middleware and internal proxy (500MB max for Serika+)
-  ...({
-    middlewareClientMaxBodySize: 500 * 1024 * 1024,
-    proxyClientMaxBodySize: 500 * 1024 * 1024,
-  } as Record<string, unknown>),
-  
   // Skip type checking during build for faster builds
   typescript: {
     ignoreBuildErrors: false,

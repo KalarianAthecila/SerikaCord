@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
+import { Crown } from "lucide-react";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -30,6 +31,7 @@ interface Member {
   status: "online" | "idle" | "dnd" | "offline";
   customStatus?: string | null;
   isPremium?: boolean;
+  isOwner?: boolean;
   joinedAt?: string | null;
   roles: MemberRole[];
   highestRole?: MemberRole | null;
@@ -198,8 +200,11 @@ function MemberItem({ member, serverId }: MemberItemProps) {
           />
         </div>
         <div className="flex-1 min-w-0 text-left">
-          <div className="text-sm font-medium truncate text-[var(--text-primary)]" style={roleColor ? { color: roleColor } : undefined}>
+          <div className="flex items-center gap-1 text-sm font-medium truncate text-[var(--text-primary)]" style={roleColor ? { color: roleColor } : undefined}>
             {member.displayName || member.username || "Unknown"}
+            {member.isOwner && (
+              <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
+            )}
           </div>
         </div>
       </button>

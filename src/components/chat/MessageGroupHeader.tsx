@@ -1,6 +1,7 @@
 "use client";
 
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Crown } from "lucide-react";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { StaffPill } from "@/components/chat/StaffPill";
 import { formatMessageTimestamp } from "@/lib/chat/messages";
@@ -75,8 +76,11 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
           side="right"
           align="start"
         >
-          <button className="font-medium hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded" style={effectiveColor ? { color: effectiveColor } : undefined}>
+          <button className="font-medium hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded flex items-center gap-1" style={effectiveColor ? { color: effectiveColor } : undefined}>
             {name}
+            {author.isOwner && (
+              <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
+            )}
           </button>
         </MemberProfilePopup>
       ) : (

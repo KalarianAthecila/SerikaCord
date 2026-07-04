@@ -10,6 +10,7 @@ export interface MessageAuthor {
   badges?: string[];
   status?: "online" | "idle" | "dnd" | "offline";
   isPremium?: boolean;
+  isOwner?: boolean;
 }
 
 export interface MessageAttachment {
