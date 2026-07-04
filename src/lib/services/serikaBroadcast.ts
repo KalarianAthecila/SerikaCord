@@ -19,7 +19,7 @@ export const SERIKA_BROADCAST_USER: ISerikaBroadcast = {
   id: SERIKA_BROADCAST_ID.toString(),
   username: 'serika',
   displayName: 'Serika',
-  avatar: '/serika-broadcast.svg', // System avatar
+  avatar: '/serika-avatar.png', // System avatar
   isSystem: true,
   isBot: true,
   badges: ['staff', 'admin'],
@@ -40,7 +40,7 @@ export async function ensureSerikaBroadcastUser(): Promise<void> {
           _id: SERIKA_BROADCAST_ID,
           username: 'serika',
           displayName: 'Serika',
-          avatar: '/serika-broadcast.svg',
+          avatar: '/serika-avatar.png',
           isSystem: true,
           isBot: true,
           isVerified: true,
@@ -82,6 +82,10 @@ export async function ensureSerikaBroadcastUser(): Promise<void> {
       }
       if (!existingUser.isSystem) {
         existingUser.isSystem = true;
+        needsUpdate = true;
+      }
+      if (existingUser.avatar !== '/serika-avatar.png') {
+        existingUser.avatar = '/serika-avatar.png';
         needsUpdate = true;
       }
       if (needsUpdate) {

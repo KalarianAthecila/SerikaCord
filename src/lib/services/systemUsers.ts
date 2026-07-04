@@ -25,7 +25,7 @@ const SYSTEM_USER_CONFIGS: Record<string, SystemUserConfig> = {
     id: SYSTEM_USERS.SERIKA_BROADCAST,
     username: 'serika',
     displayName: 'Serika',
-    avatar: '/logo-icon.svg',
+    avatar: '/serika-avatar.png',
     bio: 'Official SerikaCord system account for announcements and updates.',
     badges: ['staff', 'admin', 'verified_bot_developer'],
   },

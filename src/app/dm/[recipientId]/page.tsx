@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Phone, Video, Pin, Users, Loader2, ArrowLeft } from "lucide-react";
+import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { MessageBar, type MessageBarHandle } from "@/components/chat/MessageBar";
@@ -290,22 +290,29 @@ export default function DMConversationPage() {
 
         {/* Message input */}
         <div className="p-2 sm:p-4 pt-0 safe-area-bottom">
-          <MessageBar
-            ref={messageBarRef}
-            placeholder={`Message @${recipientName || "..."}`}
-            ariaLabel={`Message @${recipientName || "..."}`}
-            onSend={() => void chat.sendMessage()}
-            onChange={handleMessageInputChange}
-            onKeyDown={handleKeyPress}
-            onEmojiSelect={chat.handleEmojiSelect}
-            onGifSelect={chat.handleGifSelect}
-            onStickerSelect={chat.handleStickerSelect}
-            isSending={chat.isSending}
-            availableServerEmojis={availableServerEmojis}
-            availableServerStickers={availableServerStickers}
-            replyTo={chat.actions.replyToMessage}
-            onCancelReply={() => chat.actions.setReplyToMessage(null)}
-          />
+          {recipient?.isSystem ? (
+            <div className="flex items-center gap-2 px-4 py-3 bg-[var(--bg-card)]/50 border border-[var(--border-subtle)] rounded-md text-[var(--text-secondary)] text-sm">
+              <Shield className="w-4 h-4 text-blue-400 flex-shrink-0" />
+              <span>this is official and this user is a system user used to inform users about stuff happening on serika</span>
+            </div>
+          ) : (
+            <MessageBar
+              ref={messageBarRef}
+              placeholder={`Message @${recipientName || "..."}`}
+              ariaLabel={`Message @${recipientName || "..."}`}
+              onSend={() => void chat.sendMessage()}
+              onChange={handleMessageInputChange}
+              onKeyDown={handleKeyPress}
+              onEmojiSelect={chat.handleEmojiSelect}
+              onGifSelect={chat.handleGifSelect}
+              onStickerSelect={chat.handleStickerSelect}
+              isSending={chat.isSending}
+              availableServerEmojis={availableServerEmojis}
+              availableServerStickers={availableServerStickers}
+              replyTo={chat.actions.replyToMessage}
+              onCancelReply={() => chat.actions.setReplyToMessage(null)}
+            />
+          )}
 
           {/* Voice call UI for DM calls */}
           <VideoGrid />
