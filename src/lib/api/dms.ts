@@ -237,9 +237,9 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: 'User not found' };
     }
 
-    // Check if friends or can DM
+    // Check if friends or can DM (skip for system users)
     const isFriend = user.friends.some((f: Types.ObjectId | string) => compareIds(f, recipient._id));
-    if (!isFriend && recipient.settings.privacy.directMessages !== 'everyone') {
+    if (!isFriend && !recipient.isSystem && recipient.settings.privacy.directMessages !== 'everyone') {
       set.status = 403;
       return { error: 'You cannot message this user' };
     }
@@ -388,9 +388,9 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: 'You cannot message this user' };
     }
 
-    // Check DM permissions
+    // Check DM permissions (skip for system users)
     const isFriend = user.friends.some((f: Types.ObjectId | string) => compareIds(f, recipient._id));
-    if (!isFriend && recipient.settings.privacy.directMessages !== 'everyone') {
+    if (!isFriend && !recipient.isSystem && recipient.settings.privacy.directMessages !== 'everyone') {
       set.status = 403;
       return { error: 'You cannot message this user' };
     }
