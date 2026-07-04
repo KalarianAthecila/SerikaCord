@@ -92,7 +92,7 @@ function ServerCard({
 
           <div className="min-w-0 flex-1 pt-1">
             <div className="flex items-center gap-1.5">
-              {server.isPartnered && <ServerBadge type="partnered" size="sm" />}
+              {server.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
               <h3 className="text-white font-bold truncate">{server.name}</h3>
             </div>
             <p className="text-[#949ba4] text-sm line-clamp-2 mt-1">

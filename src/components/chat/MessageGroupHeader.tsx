@@ -31,6 +31,7 @@ export function GroupAvatar({ author, serverId }: GroupAvatarProps) {
         username: author.username || "unknown",
         displayName: author.displayName,
         avatar: author.avatar,
+        badges: author.badges,
       }}
       serverId={serverId}
       side="right"
@@ -68,6 +69,7 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
             username: author.username || "unknown",
             displayName: author.displayName,
             avatar: author.avatar,
+            badges: author.badges,
           }}
           serverId={serverId}
           side="right"

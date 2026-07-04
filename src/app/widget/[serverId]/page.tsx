@@ -107,7 +107,7 @@ export default function WidgetPage() {
             </Avatar>
             <div>
               <div className="flex items-center gap-2">
-                {widget.isPartnered && <ServerBadge type="partnered" size="sm" />}
+                {widget.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
                 <h1 className="font-bold text-white text-lg">{widget.name}</h1>
               </div>
               <div className="flex items-center gap-3 text-white/80 text-sm">

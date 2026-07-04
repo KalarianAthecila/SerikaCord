@@ -308,6 +308,7 @@ export function BadgeList({ badges, size = 'md', maxDisplay, className, expandab
 interface ServerBadgeProps {
   type: 'partnered' | 'verified' | 'discoverable';
   size?: 'sm' | 'md';
+  iconOnly?: boolean;
 }
 
 const SERVER_BADGE_CONFIG = {
@@ -328,7 +329,7 @@ const SERVER_BADGE_CONFIG = {
   },
 };
 
-export function ServerBadge({ type, size = 'md' }: ServerBadgeProps) {
+export function ServerBadge({ type, size = 'md', iconOnly = false }: ServerBadgeProps) {
   const config = SERVER_BADGE_CONFIG[type];
   const Icon = config.innerIcon;
   const iconSize = size === 'sm' ? 'xs' : 'sm';
@@ -341,6 +342,7 @@ export function ServerBadge({ type, size = 'md' }: ServerBadgeProps) {
             className={cn(
               "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-semibold",
               size === 'sm' && "text-[10px] px-1.5",
+              iconOnly && "px-0.5 py-0.5",
             )}
             style={{ 
               backgroundColor: `${config.color}20`,
@@ -348,7 +350,7 @@ export function ServerBadge({ type, size = 'md' }: ServerBadgeProps) {
             }}
           >
             <BadgeIcon icon={Icon} color={config.color} size={iconSize} />
-            {config.name}
+            {!iconOnly && config.name}
           </div>
         </TooltipTrigger>
         <TooltipContent 

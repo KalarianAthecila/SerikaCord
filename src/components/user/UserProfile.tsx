@@ -309,7 +309,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
             </div>
             
             {user.isPartnerOwner && (
-              <ServerBadge type="partnered" />
+              <ServerBadge type="partnered" iconOnly />
             )}
           </div>
 

@@ -180,7 +180,7 @@ export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps)
           {/* Name + counts */}
           <div className="flex-1 min-w-0">
             <div className="flex items-center gap-1.5">
-              {data.server.isPartnered && <ServerBadge type="partnered" size="sm" />}
+              {data.server.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
               <span className="font-semibold text-[var(--text-primary)] truncate">
                 {data.server.name}
               </span>

@@ -861,6 +861,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       avatar: targetUser.avatar,
       banner: targetUser.banner,
       bio: targetUser.bio,
+      badges: targetUser.badges || [],
       status: getPublicPresenceStatus(targetUser),
       customStatus: targetUser.customStatus,
       isPremium: targetUser.isPremium,

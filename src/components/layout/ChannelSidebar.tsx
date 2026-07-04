@@ -459,7 +459,7 @@ export function ChannelSidebar({
               </>
             )}
             <span className="relative flex items-center gap-1.5 min-w-0">
-              {currentServer.isPartnered && <ServerBadge type="partnered" size="sm" />}
+              {currentServer.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
               <span className={cn(
                 "font-semibold truncate",
                 currentServer.banner ? "text-white drop-shadow" : "text-[var(--text-primary)]"

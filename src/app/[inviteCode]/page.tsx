@@ -312,7 +312,7 @@ export default function InvitePage() {
                     You&apos;ve been invited to join
                   </p>
                   <div className="flex items-center gap-2">
-                    {invite.server.isPartnered && <ServerBadge type="partnered" size="md" />}
+                    {invite.server.isPartnered && <ServerBadge type="partnered" size="md" iconOnly />}
                     <h1 className="text-2xl font-bold text-[#d5d9e8] leading-tight">
                       {invite.server.name}
                     </h1>
