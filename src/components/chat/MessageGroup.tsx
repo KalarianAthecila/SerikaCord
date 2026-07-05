@@ -19,6 +19,7 @@ interface MentionUser {
   id: string;
   username?: string;
   displayName?: string;
+  avatar?: string;
 }
 
 interface MentionRole {
@@ -127,6 +128,26 @@ function MessageGroupInner<M extends ChatMessage>({
     }
     return Array.from(map.values());
   }, [mentionUsers, group.messages]);
+
+  // Build a userId -> {id, username, displayName, avatar} map for reaction tooltips.
+  // Includes mention users plus all message authors in this group.
+  const reactionUsersMap = useMemo(() => {
+    const map: Record<string, { id: string; username?: string; displayName?: string; avatar?: string }> = {};
+    for (const u of mergedMentionUsers) {
+      map[u.id] = u;
+    }
+    for (const msg of group.messages) {
+      if (msg.author?.id && !map[msg.author.id]) {
+        map[msg.author.id] = {
+          id: msg.author.id,
+          username: msg.author.username,
+          displayName: msg.author.displayName || msg.author.username,
+          avatar: msg.author.avatar,
+        };
+      }
+    }
+    return map;
+  }, [mergedMentionUsers, group.messages]);
 
   const buildSwipeActions = (message: M): SwipeAction[] => {
     if (!swipeEnabled) return [];
@@ -272,6 +293,7 @@ function MessageGroupInner<M extends ChatMessage>({
                       currentUserId={currentUserId}
                       onToggle={onToggleReaction}
                       onOpenPicker={onOpenReactionPicker}
+                      reactionUsers={reactionUsersMap}
                     />
 
                     <MessageHoverActions

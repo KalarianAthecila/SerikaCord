@@ -106,7 +106,8 @@ interface ServerSticker {
 
 interface MentionSuggestion {
   id: string;
-  kind: "user" | "role" | "everyone" | "here" | "emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint";
+  kind: "user" | "role" | "everyone" | "here" | "emoji" | "unicode-emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint";
+  unicodeChar?: string;
   label: string;
   description?: string;
   color?: string;
@@ -205,6 +206,11 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
     const [pickerTab, setPickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
     const [hasText, setHasText] = useState(false);
 
+    // Ref mirror of attachments.length so addFiles doesn't depend on state
+    // (prevents stale closures on mobile where the file picker can suspend the page).
+    const attachmentsCountRef = useRef(0);
+    attachmentsCountRef.current = attachments.length;
+
     // ---- File upload ----
     const addFiles = useCallback((files: File[]) => {
       if (files.length === 0) return;
@@ -227,7 +233,8 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
 
       if (validFiles.length === 0) return;
 
-      const remainingSlots = 10 - attachments.length;
+      const currentCount = attachmentsCountRef.current;
+      const remainingSlots = 10 - currentCount;
       if (validFiles.length > remainingSlots) {
         toast.error("Attachment limit reached", { description: "You can attach up to 10 files per message." });
       }
@@ -248,13 +255,15 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
           : ""
       );
       setAttachmentPreviews((prev) => [...prev, ...newPreviews]);
-    }, [attachments.length]);
+    }, []);
 
     const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-      addFiles(Array.from(e.target.files || []));
+      const files = Array.from(e.target.files || []);
+      // Clear input value immediately so re-selecting the same file works
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+      addFiles(files);
     }, [addFiles]);
 
     // Paste-to-attach (screenshots, copied images)
@@ -720,6 +729,11 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                         {suggestion.kind === "emoji" ? (
                           <>
                             <img src={suggestion.imageUrl} alt="" className="w-5 h-5 object-contain shrink-0" loading="lazy" />
+                            <span className="truncate">:{suggestion.label}:</span>
+                          </>
+                        ) : suggestion.kind === "unicode-emoji" ? (
+                          <>
+                            <span className="text-base shrink-0">{suggestion.unicodeChar}</span>
                             <span className="truncate">:{suggestion.label}:</span>
                           </>
                         ) : (

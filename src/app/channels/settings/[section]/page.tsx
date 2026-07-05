@@ -6,7 +6,9 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Trash2 } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
+import Link from "next/link";
 
 const sectionTitles: Record<string, string> = {
   privacy: "Privacy & Safety",
@@ -140,7 +142,7 @@ export default function MobileSettingsSectionPage() {
   if (isLoading) {
     return (
       <div className="flex items-center justify-center h-full bg-[var(--bg-app)]">
-        <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+        <Loader2 className="w-8 h-8 text-[var(--app-accent)] animate-spin" />
       </div>
     );
   }
@@ -216,6 +218,26 @@ export default function MobileSettingsSectionPage() {
                 className="mt-2 h-10 w-full rounded-md bg-transparent"
               />
             </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
+              <div className="flex items-center justify-between">
+                <label className="text-sm text-[var(--text-secondary)]">Text Color</label>
+                {(settings.appearance?.textColor || "").trim() && (
+                  <button
+                    onClick={() => saveSettings({ appearance: { ...(settings.appearance || {}), textColor: "" } })}
+                    className="text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                  >
+                    Reset to default
+                  </button>
+                )}
+              </div>
+              <p className="text-xs text-[var(--text-muted)] mt-1 mb-2">Override the default text color for the current theme.</p>
+              <input
+                type="color"
+                value={settings.appearance?.textColor || "#d5d9e8"}
+                onChange={(e) => saveSettings({ appearance: { ...(settings.appearance || {}), textColor: e.target.value } })}
+                className="h-10 w-full rounded-md bg-transparent"
+              />
+            </div>
             <ToggleRow label="Compact mode" checked={Boolean(settings.appearance?.compactMode)} onChange={(checked) => saveSettings({ appearance: { ...(settings.appearance || {}), compactMode: checked } })} />
           </div>
         )}
@@ -240,17 +262,24 @@ export default function MobileSettingsSectionPage() {
           <div className="space-y-4">
             <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
               <label className="text-sm text-[var(--text-secondary)]">Language</label>
-              <input
+              <select
                 value={settings.language?.locale || "en-US"}
-                onChange={(e) => setSettings((prev) => ({ ...(prev || {}), language: { ...(prev?.language || {}), locale: e.target.value } }))}
+                onChange={(e) => saveSettings({ language: { locale: e.target.value } })}
                 className="mt-2 w-full h-10 rounded-md bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] px-3 text-[var(--text-primary)]"
-              />
-              <button
-                onClick={() => saveSettings({ language: settings.language })}
-                className="mt-3 px-4 py-2 rounded-md bg-[#8B5CF6] text-white"
               >
-                Save Language
-              </button>
+                <option value="en-US">English (US)</option>
+                <option value="en-GB">English (UK)</option>
+                <option value="es-ES">Español</option>
+                <option value="fr-FR">Français</option>
+                <option value="de-DE">Deutsch</option>
+                <option value="ja-JP">日本語</option>
+                <option value="ko-KR">한국어</option>
+                <option value="zh-CN">中文 (简体)</option>
+                <option value="zh-TW">中文 (繁體)</option>
+                <option value="pt-BR">Português (Brasil)</option>
+                <option value="it-IT">Italiano</option>
+                <option value="ru-RU">Русский</option>
+              </select>
             </div>
           </div>
         )}
@@ -300,7 +329,7 @@ export default function MobileSettingsSectionPage() {
                 setSupportText("");
                 toast.success("Submitted. Thank you.");
               }}
-              className="px-4 py-2 rounded-md bg-[#8B5CF6] text-white"
+              className="px-4 py-2 rounded-md bg-[var(--app-accent)] text-white hover:opacity-90 transition-opacity"
             >
               Submit
             </button>
@@ -310,8 +339,42 @@ export default function MobileSettingsSectionPage() {
         {section === "status" && statusSection}
 
         {section === "account" && (
-          <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 text-[var(--text-secondary)] text-sm">
-            Use the My Account page for profile editing.
+          <div className="space-y-4">
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 flex items-center gap-4">
+              <Avatar className="w-16 h-16">
+                <AvatarImage src={user?.avatar} />
+                <AvatarFallback className="bg-[var(--app-accent)] text-white text-xl font-bold">
+                  {(user?.displayName || user?.username || "U").charAt(0).toUpperCase()}
+                </AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0">
+                <p className="font-semibold text-[var(--text-primary)] truncate">{user?.displayName || user?.username}</p>
+                <p className="text-sm text-[var(--text-muted)] truncate">@{user?.username}</p>
+              </div>
+            </div>
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-3">
+              <div>
+                <label className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Display Name</label>
+                <p className="text-sm text-[var(--text-primary)] mt-0.5">{user?.displayName || "Not set"}</p>
+              </div>
+              <div>
+                <label className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Username</label>
+                <p className="text-sm text-[var(--text-primary)] mt-0.5">@{user?.username}</p>
+              </div>
+              <div>
+                <label className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Email</label>
+                <p className="text-sm text-[var(--text-primary)] mt-0.5">{user?.email || "Not set"}</p>
+              </div>
+              {user?.isPremium && (
+                <div>
+                  <label className="text-xs text-[var(--text-muted)] uppercase tracking-wide">Premium</label>
+                  <p className="text-sm text-[var(--app-accent)] mt-0.5">Active</p>
+                </div>
+              )}
+            </div>
+            <Link href="/channels/profile" className="block w-full text-center py-2.5 rounded-lg bg-[var(--app-accent)] text-white text-sm font-medium hover:opacity-90 transition-opacity">
+              Edit Profile
+            </Link>
           </div>
         )}
 

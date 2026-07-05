@@ -57,6 +57,7 @@ import {
   type SlashCommandParam,
 } from "@/lib/chat/slashCommands";
 import type { ChatMessage } from "@/lib/chat/types";
+import { EMOJI_NAMES } from "@/lib/constants/emojis";
 
 type Message = ChatMessage;
 
@@ -64,6 +65,7 @@ interface MentionUser {
   id: string;
   username: string;
   displayName: string;
+  avatar?: string;
 }
 
 interface MentionRole {
@@ -76,7 +78,8 @@ interface MentionRole {
 
 interface MentionSuggestion {
   id: string;
-  kind: "user" | "role" | "everyone" | "here" | "emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint";
+  kind: "user" | "role" | "everyone" | "here" | "emoji" | "unicode-emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint";
+  unicodeChar?: string;
   label: string;
   description?: string;
   color?: string;
@@ -256,6 +259,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
             id: string;
             username: string;
             displayName: string;
+            avatar?: string;
             roles?: Array<{ id: string }>;
             highestRole?: { color?: string } | null;
           }>;
@@ -265,6 +269,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
               id: member.id,
               username: member.username,
               displayName: member.displayName || member.username,
+              avatar: member.avatar,
             }))
           );
 
@@ -372,6 +377,32 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         playNotificationSound();
       }
 
+      // Auto TTS: speak incoming messages when accessibility.tts is enabled
+      const ttsEnabled = user?.settings?.accessibility?.tts === true;
+      if (ttsEnabled && message.content && typeof window !== "undefined" && "speechSynthesis" in window) {
+        const authorName = message.author?.displayName || message.author?.username || "Someone";
+        // Strip custom emoji tokens, markdown, and HTML entities
+        const cleanContent = message.content
+          .replace(/<(a)?:[a-zA-Z0-9_]+:[a-f0-9]+>/gi, "")
+          .replace(/<@!?[a-f0-9]+>/gi, "")
+          .replace(/<@&[a-f0-9]+>/gi, "")
+          .replace(/<#[a-f0-9]+>/gi, "")
+          .replace(/<t:[^>]+>/gi, "")
+          .replace(/[*_~`#>|]/g, "")
+          .replace(/&amp;/g, "&")
+          .replace(/&lt;/g, "<")
+          .replace(/&gt;/g, ">")
+          .replace(/&quot;/g, '"')
+          .replace(/&#39;/g, "'")
+          .trim();
+        if (cleanContent) {
+          const utterance = new SpeechSynthesisUtterance(`${authorName} said "${cleanContent}"`);
+          utterance.rate = 1;
+          utterance.pitch = 1;
+          window.speechSynthesis.speak(utterance);
+        }
+      }
+
       if (isHidden || isMentioned) {
         const authorName = message.author?.displayName || message.author?.username || "Someone";
         const preview =
@@ -389,7 +420,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         });
       }
     },
-    [user?.id, currentUserRoleIds, refreshMentions]
+    [user?.id, user?.settings, currentUserRoleIds, refreshMentions]
   );
 
   // The whole chat engine (messages, SSE, sends, pins, actions) is shared
@@ -665,7 +696,22 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           const emojiStart = caretPosition - emojiMatch[2].length - 1;
           const seenNames = new Set<string>();
           const emojiSuggestions: MentionSuggestion[] = [];
+          // Unicode emoji suggestions from shortcode map
+          for (const [name, char] of Object.entries(EMOJI_NAMES)) {
+            if (!name.includes(emojiQuery)) continue;
+            if (seenNames.has(name)) continue;
+            seenNames.add(name);
+            emojiSuggestions.push({
+              id: `unicode:${name}`,
+              kind: "unicode-emoji",
+              label: name,
+              unicodeChar: char,
+            });
+            if (emojiSuggestions.length >= 8) break;
+          }
+          // Custom server emoji suggestions
           for (const entry of allServerEmojis) {
+            if (emojiSuggestions.length >= 8) break;
             if (!entry.name.toLowerCase().includes(emojiQuery)) continue;
             if (seenNames.has(entry.name)) continue;
             seenNames.add(entry.name);
@@ -677,7 +723,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
               imageUrl: entry.url,
               animated: entry.animated,
             });
-            if (emojiSuggestions.length >= 8) break;
           }
           if (emojiSuggestions.length > 0) {
             mentionRangeRef.current = { start: emojiStart, end: caretPosition };
@@ -768,7 +813,11 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       setMentionSuggestions([]);
       setActiveMentionIndex(0);
 
-      if (suggestion.kind === "emoji") {
+      if (suggestion.kind === "unicode-emoji") {
+        // Insert the Unicode emoji character directly as text
+        composer.replaceRange(activeRange.start, activeRange.end, suggestion.unicodeChar || "");
+        composer.insertTextAtCaret(" ");
+      } else if (suggestion.kind === "emoji") {
         // Insert as an inline image; the composer serializes it to a token
         composer.replaceRangeWithEmoji(activeRange.start, activeRange.end, {
           id: suggestion.id,
@@ -856,20 +905,41 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setActiveMentionIndex((prev) => (prev - 1 + mentionSuggestions.length) % mentionSuggestions.length);
         return;
       }
-      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
-        e.preventDefault();
-        const selected = mentionSuggestions[activeMentionIndex];
-        if (selected) {
-          insertMentionFromSuggestion(selected);
-        }
-        return;
-      }
       if (e.key === "Escape") {
         e.preventDefault();
         mentionRangeRef.current = null;
         setMentionSuggestions([]);
         setActiveMentionIndex(0);
         return;
+      }
+      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+        const selected = mentionSuggestions[activeMentionIndex];
+        // For command suggestions: if the typed text exactly matches the
+        // selected command name, fall through to handleSend instead of
+        // re-inserting the command.  Also skip param-hint suggestions
+        // (they're informational, not selectable values).
+        if (selected) {
+          if (selected.kind === "param-hint") {
+            e.preventDefault();
+            mentionRangeRef.current = null;
+            setMentionSuggestions([]);
+            setActiveMentionIndex(0);
+            return;
+          }
+          const composer = messageBarRef.current?.getComposer();
+          const currentText = composer?.getText()?.trim() ?? "";
+          if (selected.kind === "command" && currentText === `/${selected.label}`) {
+            // Exact match — dismiss suggestions and send the command
+            mentionRangeRef.current = null;
+            setMentionSuggestions([]);
+            setActiveMentionIndex(0);
+            // Fall through to Enter handler below
+          } else {
+            e.preventDefault();
+            insertMentionFromSuggestion(selected);
+            return;
+          }
+        }
       }
     }
 
@@ -966,7 +1036,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           </button>
           <button
             onClick={onToggleMembers}
-            className={cn("hover:text-[var(--text-primary)] transition-colors", showMembers && "text-[var(--text-primary)]")}
+            className={cn("hover:text-[var(--text-primary)] transition-colors hidden sm:block", showMembers && "text-[var(--text-primary)]")}
           >
             <Users className="w-5 h-5" />
           </button>

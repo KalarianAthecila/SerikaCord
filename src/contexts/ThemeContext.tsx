@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useState, ReactNode 
 export interface ThemeSettings {
   theme: "dark" | "midnight" | "light";
   accentColor: string;
+  textColor: string;
   fontSize: number;
   compactMode: boolean;
   showTimestamps: boolean;
@@ -19,6 +20,7 @@ export interface ThemeSettings {
 const defaultSettings: ThemeSettings = {
   theme: "dark",
   accentColor: "#8B5CF6",
+  textColor: "",
   fontSize: 14,
   compactMode: false,
   showTimestamps: true,
@@ -61,6 +63,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       ...prev,
       theme: coerceTheme(appearance.theme ?? appearance.themeStyle ?? prev.theme),
       accentColor: appearance.accentColor || prev.accentColor,
+      textColor: appearance.textColor ?? prev.textColor,
       fontSize: typeof appearance.fontSize === "number" ? appearance.fontSize : prev.fontSize,
       compactMode: typeof appearance.compactMode === "boolean" ? appearance.compactMode : prev.compactMode,
       showTimestamps: typeof appearance.showTimestamps === "boolean" ? appearance.showTimestamps : prev.showTimestamps,
@@ -138,6 +141,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--app-accent", settings.accentColor);
     root.style.setProperty("--accent", settings.accentColor);
     root.style.setProperty("--accent-hover", settings.accentColor);
+
+    // Custom text color (overrides theme default when set)
+    if (settings.textColor && settings.textColor.trim()) {
+      root.style.setProperty("--app-text", settings.textColor);
+    } else {
+      // Reset to theme default by removing the inline override
+      root.style.removeProperty("--app-text");
+      // Re-apply the theme class to restore defaults from CSS
+    }
     
     // Convert hex to HSL for Tailwind
     const hexToHsl = (hex: string) => {

@@ -218,11 +218,11 @@ export function useSlashCommands({
           const nickname = parsed.args.join(" ") || "";
           try {
             const res = await fetch(
-              `/api/servers/${serverId}/members/@me/nick`,
+              `/api/servers/${serverId}/members/@me`,
               {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ nick: nickname || null }),
+                body: JSON.stringify({ nickname: nickname || null }),
               },
             );
             if (res.ok) {

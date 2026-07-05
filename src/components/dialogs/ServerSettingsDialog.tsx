@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useServer } from "@/contexts/ServerContext";
 import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -193,6 +194,8 @@ interface AuditLogEntry {
 export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialogProps) {
   const { currentServer, fetchServers, channels } = useServer();
   const { user } = useAuth();
+  const { can, isAdmin, loading: permsLoading } = usePermissions(currentServer?.id);
+  const canManageServer = can("MANAGE_SERVER") || isAdmin;
   const [activeTab, setActiveTab] = useState<SettingsTab>("overview");
   const [isSaving, setIsSaving] = useState(false);
   const iconInputRef = useRef<HTMLInputElement>(null);
@@ -1258,6 +1261,29 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   };
 
   if (!open || !currentServer) return null;
+
+  // Permission guard: non-admin users cannot access server settings UI
+  if (!permsLoading && !canManageServer) {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Access denied"
+        className="fixed inset-0 z-50 bg-[#0a0a0a] flex items-center justify-center"
+      >
+        <div className="text-center p-8">
+          <p className="text-lg font-semibold text-white mb-2">Access Denied</p>
+          <p className="text-sm text-[#888] mb-4">You don&apos;t have permission to view server settings.</p>
+          <button
+            onClick={() => onOpenChange(false)}
+            className="px-4 py-2 rounded-lg bg-[var(--app-accent)] text-white text-sm hover:brightness-110 transition"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const isOwner = currentServer.ownerId === user?.id;
 

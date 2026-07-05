@@ -7,7 +7,7 @@ import {
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
-import { EMOJI_CATEGORIES, type EmojiCategory } from "@/lib/constants/emojis";
+import { EMOJI_CATEGORIES, EMOJI_TO_NAME, type EmojiCategory } from "@/lib/constants/emojis";
 import { GifPicker } from "@/components/chat/GifPicker";
 
 interface CustomEmoji {
@@ -193,17 +193,17 @@ export function CustomEmojiPicker({
     return serverEmojis;
   }, [availableServerEmojis, serverEmojis]);
 
-  // Filter emojis based on search
+  // Filter emojis based on search — uses shortcode names for keyword search
   const filteredCategories = useMemo(() => {
     if (!search.trim()) return EMOJI_CATEGORIES;
     
     const query = search.toLowerCase();
     return EMOJI_CATEGORIES.map(category => ({
       ...category,
-      emojis: category.emojis.filter(emoji => 
-        // Simple search - emoji itself contains query
-        emoji.toLowerCase().includes(query)
-      ),
+      emojis: category.emojis.filter(emoji => {
+        const name = EMOJI_TO_NAME[emoji];
+        return name && name.includes(query);
+      }),
     })).filter(category => category.emojis.length > 0);
   }, [search]);
 
@@ -245,14 +245,14 @@ export function CustomEmojiPicker({
     if (!search.trim()) return combined;
     const query = search.toLowerCase();
     return combined.filter((entry) =>
-      entry.kind === "custom" ? entry.name.toLowerCase().includes(query) : entry.emoji.toLowerCase().includes(query)
+      entry.kind === "custom" ? entry.name.toLowerCase().includes(query) : (EMOJI_TO_NAME[entry.emoji]?.includes(query) ?? false)
     );
   }, [search, recentEmojis, recentEntries]);
 
   const filteredFavorites = useMemo(() => {
     if (!search.trim()) return favoriteEmojis;
     const query = search.toLowerCase();
-    return favoriteEmojis.filter(emoji => emoji.toLowerCase().includes(query));
+    return favoriteEmojis.filter(emoji => (EMOJI_TO_NAME[emoji]?.includes(query) ?? false));
   }, [search, favoriteEmojis]);
 
   const handleEmojiClick = useCallback((emoji: string, isCustom = false, emojiData?: CustomEmoji) => {

@@ -163,6 +163,7 @@ export function ChannelSidebar({
   // Drag and Drop state
   const [draggedChannel, setDraggedChannel] = useState<typeof channels[0] | null>(null);
   const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{ targetId: string; position: "before" | "after" } | null>(null);
   const dragCounterRef = useRef(0);
 
   const handleContextMenu = (e: React.MouseEvent, channel: typeof channels[0]) => {
@@ -206,6 +207,7 @@ export function ChannelSidebar({
     }
     setDraggedChannel(null);
     setDragOverTarget(null);
+    setDropIndicator(null);
     dragCounterRef.current = 0;
   };
 
@@ -231,20 +233,18 @@ export function ChannelSidebar({
   const handleDropOnCategory = async (e: React.DragEvent, categoryId: string | null) => {
     e.preventDefault();
     setDragOverTarget(null);
+    setDropIndicator(null);
     dragCounterRef.current = 0;
     if (!draggedChannel || !currentServer) return;
-    if (draggedChannel.type === "category") return; // categories can't be nested
+    if (draggedChannel.type === "category") return;
 
-    // Get the target category's children
     const targetChildren = categoryId
       ? (channelsByCategory.get(categoryId) || []).filter(c => c.id !== draggedChannel.id)
       : uncategorizedChannels.filter(c => c.id !== draggedChannel.id);
 
-    // Build update list: move channel to end of target category
     const updates: Array<{ id: string; position: number; parentId?: string | null }> = [
       { id: draggedChannel.id, position: targetChildren.length, parentId: categoryId },
     ];
-    // Re-index other children
     targetChildren.forEach((ch, i) => {
       updates.push({ id: ch.id, position: i, parentId: categoryId });
     });
@@ -252,6 +252,68 @@ export function ChannelSidebar({
     try {
       await reorderChannels(currentServer.id, updates);
       toast.success(`Moved #${draggedChannel.name}`);
+    } catch (err) {
+      toast.error("Failed to move channel");
+    }
+    setDraggedChannel(null);
+  };
+
+  const handleDragOverChannel = (e: React.DragEvent, targetChannel: typeof channels[0]) => {
+    if (!draggedChannel || !canManageChannels) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const isBefore = e.clientY < rect.top + rect.height / 2;
+    setDropIndicator({ targetId: targetChannel.id, position: isBefore ? "before" : "after" });
+    setDragOverTarget(null);
+  };
+
+  const handleDropOnChannel = async (e: React.DragEvent, targetChannel: typeof channels[0]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverTarget(null);
+    setDropIndicator(null);
+    dragCounterRef.current = 0;
+    if (!draggedChannel || !currentServer) return;
+    if (draggedChannel.id === targetChannel.id) return;
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const isBefore = e.clientY < rect.top + rect.height / 2;
+    const targetParent = targetChannel.type === "category" ? null : (targetChannel.parentId || null);
+    if (draggedChannel.type === "category" && targetParent !== null) return;
+
+    let siblings: typeof channels;
+    if (targetParent) {
+      siblings = (channelsByCategory.get(targetParent) || []).filter(c => c.id !== draggedChannel.id);
+    } else if (targetChannel.type === "category") {
+      siblings = categories.filter(c => c.id !== draggedChannel.id);
+    } else {
+      siblings = uncategorizedChannels.filter(c => c.id !== draggedChannel.id);
+    }
+
+    const targetIdx = siblings.findIndex(c => c.id === targetChannel.id);
+    if (targetIdx === -1) {
+      siblings.push(draggedChannel);
+    } else {
+      const insertIdx = isBefore ? targetIdx : targetIdx + 1;
+      siblings.splice(insertIdx, 0, draggedChannel);
+    }
+
+    const updates: Array<{ id: string; position: number; parentId?: string | null }> = siblings.map((ch, i) => ({
+      id: ch.id,
+      position: i,
+      parentId: draggedChannel.type === "category" ? null : (ch.parentId || null),
+    }));
+
+    if (draggedChannel.type !== "category") {
+      const draggedUpdate = updates.find(u => u.id === draggedChannel.id);
+      if (draggedUpdate) draggedUpdate.parentId = targetParent;
+    }
+
+    try {
+      await reorderChannels(currentServer.id, updates);
+      toast.success(`Moved ${draggedChannel.type === "category" ? "" : "#"}${draggedChannel.name}`);
     } catch (err) {
       toast.error("Failed to move channel");
     }
@@ -363,6 +425,8 @@ export function ChannelSidebar({
   const pathname = usePathname();
 
   const renderChannelItem = (channel: typeof channels[0]) => {
+    const showDropBefore = dropIndicator?.targetId === channel.id && dropIndicator.position === "before";
+    const showDropAfter = dropIndicator?.targetId === channel.id && dropIndicator.position === "after";
     if (channel.type === "voice") {
       const isActive = voiceService.currentRoomId === `channel-${channel.id}`;
       const channelParticipants = isActive ? voiceParticipants : (externalVoiceParticipants.get(channel.id) || []);
@@ -370,13 +434,17 @@ export function ChannelSidebar({
         <div
           key={channel.id}
           className={cn(
-            "mb-0.5",
+            "mb-0.5 relative",
             canManageChannels && "cursor-grab active:cursor-grabbing"
           )}
           draggable={canManageChannels}
           onDragStart={(e) => handleDragStart(e, channel)}
           onDragEnd={handleDragEnd}
+          onDragOver={(e) => handleDragOverChannel(e, channel)}
+          onDrop={(e) => handleDropOnChannel(e, channel)}
         >
+          {showDropBefore && <div className="absolute -top-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
+          {showDropAfter && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
           <button
             onClick={() => handleVoiceChannelClick(channel)}
             onContextMenu={(e) => handleContextMenu(e, channel)}
@@ -450,11 +518,15 @@ export function ChannelSidebar({
         draggable={canManageChannels}
         onDragStart={(e) => handleDragStart(e, channel)}
         onDragEnd={handleDragEnd}
+        onDragOver={(e) => handleDragOverChannel(e, channel)}
+        onDrop={(e) => handleDropOnChannel(e, channel)}
         className={cn(
           "relative",
           canManageChannels && "cursor-grab active:cursor-grabbing"
         )}
       >
+        {showDropBefore && <div className="absolute -top-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
+        {showDropAfter && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
         <button
           onClick={() => { navigateToChannel(channel); markChannelRead(channel.id); }}
           onContextMenu={(e) => handleContextMenu(e, channel)}
@@ -848,7 +920,23 @@ export function ChannelSidebar({
                 onDrop={(e) => handleDropOnCategory(e, category.id)}
               >
                 {/* Category Header */}
-                <div className="px-2 mb-1">
+                <div
+                  className={cn(
+                    "px-2 mb-1 relative",
+                    canManageChannels && "cursor-grab active:cursor-grabbing"
+                  )}
+                  draggable={canManageChannels}
+                  onDragStart={(e) => handleDragStart(e, category)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={(e) => handleDragOverChannel(e, category)}
+                  onDrop={(e) => handleDropOnChannel(e, category)}
+                >
+                  {dropIndicator?.targetId === category.id && dropIndicator.position === "before" && (
+                    <div className="absolute -top-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />
+                  )}
+                  {dropIndicator?.targetId === category.id && dropIndicator.position === "after" && (
+                    <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />
+                  )}
                   <div
                     className="w-full px-1 flex items-center justify-between group cursor-pointer"
                     onClick={() => toggleCategory(category.id)}

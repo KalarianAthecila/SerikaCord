@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { MemberSidebar } from "@/components/chat/MemberSidebar";
+import { useIsMobile } from "@/hooks/useIsMobile";
 import { Loader2 } from "lucide-react";
 
 export default function ServerPage() {
@@ -12,6 +13,7 @@ export default function ServerPage() {
   const router = useRouter();
   const { servers, setCurrentServer, channels, setCurrentChannel, isLoading, currentServer } = useServer();
   const [showMembers, setShowMembers] = useState(true);
+  const isMobile = useIsMobile();
 
   const serverId = params.serverId as string;
 
@@ -51,7 +53,7 @@ export default function ServerPage() {
   return (
     <>
       <ChatArea onToggleMembers={() => setShowMembers(!showMembers)} showMembers={showMembers} />
-      {showMembers && <MemberSidebar />}
+      {showMembers && !isMobile && <MemberSidebar />}
     </>
   );
 }

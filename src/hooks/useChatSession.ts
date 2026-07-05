@@ -112,6 +112,10 @@ export function useChatSession<M extends ChatMessage>({
   // overwriting the current one after a fast switch.
   const activeFetchContextRef = useRef<string | null>(null);
 
+  // Ref-based sending guard to prevent duplicate sends when state hasn't
+  // flushed yet (e.g. rapid double-Enter).
+  const isSendingRef = useRef(false);
+
   const latestRef = useRef({ normalizeContent, onIncomingMessage, onOtherEvent, onShouldScrollToBottom });
   useEffect(() => {
     latestRef.current = { normalizeContent, onIncomingMessage, onOtherEvent, onShouldScrollToBottom };
@@ -263,8 +267,10 @@ export function useChatSession<M extends ChatMessage>({
         setMessages((prev) => {
           if (prev.some((m) => m.id === incoming.id)) return prev;
           if (isOwnMessage) {
+            // Replace the most recent temp message from this user (content
+            // match is best-effort — server may normalise differently).
             const ownTempIndex = prev.findIndex(
-              (m) => m.id.startsWith("temp-") && m.authorId === user?.id && m.content === incoming.content
+              (m) => m.id.startsWith("temp-") && m.authorId === user?.id
             );
             if (ownTempIndex !== -1) {
               return prev.map((m, index) => (index === ownTempIndex ? incoming : m));
@@ -333,7 +339,8 @@ export function useChatSession<M extends ChatMessage>({
    */
   const sendMessage = useCallback(
     async ({ contentOverride, sticker }: SendMessageInput = {}) => {
-      if (!apiBase || !contextId || isSending || !user) return;
+      if (!apiBase || !contextId || isSendingRef.current || !user) return;
+      isSendingRef.current = true;
 
       const isOverrideSend = typeof contentOverride === "string";
       const composer = messageBarRef.current?.getComposer();
@@ -343,7 +350,10 @@ export function useChatSession<M extends ChatMessage>({
         : rawContent;
       const pendingAttachments = isOverrideSend ? [] : (messageBarRef.current?.getAttachments() ?? []);
 
-      if (!messageContent.trim() && pendingAttachments.length === 0 && !sticker) return;
+      if (!messageContent.trim() && pendingAttachments.length === 0 && !sticker) {
+        isSendingRef.current = false;
+        return;
+      }
 
       const replyReference = actions.replyToMessage;
       if (!isOverrideSend) {
@@ -437,6 +447,7 @@ export function useChatSession<M extends ChatMessage>({
         restoreDraft();
         toast.error("Failed to send message. Check your connection.");
       } finally {
+        isSendingRef.current = false;
         setIsSending(false);
         actions.setReplyToMessage(null);
       }

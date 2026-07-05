@@ -60,7 +60,7 @@ function isOnlyUrl(text: string): boolean {
 // Check if a string contains only emoji characters (including custom emoji syntax)
 function isOnlyEmoji(text: string, customEmojiCount: number): boolean {
   // Remove whitespace and custom emoji placeholders
-  const stripped = text.replace(/\s/g, "").replace(/:[a-zA-Z0-9_]+:/g, "");
+  const stripped = text.replace(/\s/g, "").replace(/:[a-zA-Z_][a-zA-Z0-9_]*:/g, "");
   const emojiRegex = /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)*$/u;
   
   // Check if remaining chars are only emojis and total emoji count is small
@@ -125,7 +125,7 @@ export const MessageContent = memo(function MessageContent({
       return { parts: [], customEmojiCount: 0 };
     }
 
-    const tokenRegex = /<@!?([a-f0-9]{24})>|<@&([a-f0-9]{24})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>|:([a-zA-Z0-9_]+):/gi;
+    const tokenRegex = /<@!?([a-f0-9]{24})>|<@&([a-f0-9]{24})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>|:([a-zA-Z_][a-zA-Z0-9_]*):/gi;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const parts: Array<{
       type: "text" | "custom-emoji" | "image" | "link" | "mention-user" | "mention-role" | "mention-special";

@@ -114,12 +114,13 @@ export default function DMConversationPage() {
   const lightbox = useMediaLightbox(chat.mediaGallery);
 
   const mentionUsers = useMemo(() => {
-    const entries: Array<{ id: string; username: string; displayName: string }> = [];
+    const entries: Array<{ id: string; username: string; displayName: string; avatar?: string }> = [];
     if (user?.id) {
       entries.push({
         id: user.id,
         username: user.username || user.displayName || "you",
         displayName: user.displayName || user.username || "You",
+        avatar: user.avatar,
       });
     }
     if (recipient?.id) {
@@ -127,6 +128,7 @@ export default function DMConversationPage() {
         id: recipient.id,
         username: recipient.username,
         displayName: recipient.displayName || recipient.username,
+        avatar: recipient.avatar,
       });
     }
     return entries;

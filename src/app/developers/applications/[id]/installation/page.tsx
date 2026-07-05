@@ -134,7 +134,7 @@ export default function InstallationPage() {
     );
   };
 
-  const installLink = `https://serika.dev/api/oauth2/authorize?client_id=${app?.clientId || appId}&scope=${selectedScopes.join("+")}${selectedPerms.length > 0 ? `&permissions=${selectedPerms.reduce((acc, p) => acc | (permissionBits[p] || 0), 0)}` : ""}`;
+  const installLink = `https://api.serika.chat/api/oauth2/authorize?client_id=${app?.clientId || appId}&scope=${selectedScopes.join("+")}${selectedPerms.length > 0 ? `&permissions=${selectedPerms.reduce((acc, p) => acc | (permissionBits[p] || 0), 0)}` : ""}`;
 
   const handleSave = async () => {
     const permBitmask = selectedPerms.reduce((acc, p) => acc | (permissionBits[p] || 0), 0);

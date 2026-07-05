@@ -160,39 +160,39 @@ export function MobileDrawer({
                 {/* Close Button */}
                 <button
                     onClick={onClose}
-                    className="absolute top-4 right-4 p-2 rounded-xl hover:bg-white/5 transition-colors z-10"
+                    className="absolute top-4 right-4 p-2 rounded-xl hover:bg-[var(--bg-hover)] transition-colors z-10"
                     aria-label="Close menu"
                 >
-                    <X className="w-5 h-5 text-neutral-400" />
+                    <X className="w-5 h-5 text-[var(--text-muted)]" />
                 </button>
 
                 <ScrollArea className="h-full">
                     <div className="px-4 py-6 space-y-6">
                         {/* User Profile Section */}
-                        <div className="flex items-center gap-4 p-4 bg-[#111111] rounded-2xl border border-white/5">
+                        <div className="flex items-center gap-4 p-4 bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)]">
                             <div className="relative">
                                 <Avatar className="w-14 h-14">
                                     <AvatarImage src={user?.avatar} />
-                                    <AvatarFallback className="bg-[#8B5CF6] text-white text-xl font-bold">
+                                    <AvatarFallback className="bg-[var(--app-accent)] text-white text-xl font-bold">
                                         {(user?.displayName || user?.username || "U").charAt(0).toUpperCase()}
                                     </AvatarFallback>
                                 </Avatar>
                                 <div
-                                    className="absolute bottom-0 right-0 w-4 h-4 rounded-full border-[3px] border-[#111111]"
+                                    className="absolute bottom-0 right-0 w-4 h-4 rounded-full border-[3px] border-[var(--bg-card)]"
                                     style={{ backgroundColor: statusColors[user?.status || "online"] }}
                                 />
                             </div>
                             <div className="flex-1 min-w-0">
-                                <p className="font-bold text-white truncate">
+                                <p className="font-bold text-[var(--text-primary)] truncate">
                                     {user?.displayName || user?.username}
                                 </p>
-                                <p className="text-sm text-neutral-400 truncate">@{user?.username}</p>
+                                <p className="text-sm text-[var(--text-muted)] truncate">@{user?.username}</p>
                             </div>
                             <button
                                 onClick={() => handleNavigation("/channels/profile")}
-                                className="p-2 rounded-xl hover:bg-white/5 transition-colors"
+                                className="p-2 rounded-xl hover:bg-[var(--bg-hover)] transition-colors"
                             >
-                                <ChevronRight className="w-5 h-5 text-neutral-500" />
+                                <ChevronRight className="w-5 h-5 text-[var(--text-muted)]" />
                             </button>
                         </div>
 
@@ -204,10 +204,10 @@ export function MobileDrawer({
                                     <button
                                         key={action.label}
                                         onClick={action.onClick}
-                                        className="flex items-center gap-3 p-3 bg-[#111111] rounded-xl border border-white/5 hover:bg-[#1a1a1a] active:scale-[0.98] transition-all"
+                                        className="flex items-center gap-3 p-3 bg-[var(--bg-card)] rounded-xl border border-[var(--border-subtle)] hover:bg-[var(--bg-hover)] active:scale-[0.98] transition-all"
                                     >
-                                        <Icon className="w-5 h-5 text-[#8B5CF6]" />
-                                        <span className="text-sm font-medium text-white">{action.label}</span>
+                                        <Icon className="w-5 h-5 text-[var(--app-accent)]" />
+                                        <span className="text-sm font-medium text-[var(--text-primary)]">{action.label}</span>
                                     </button>
                                 );
                             })}
@@ -217,7 +217,7 @@ export function MobileDrawer({
                         {settingsSections.map((section, sectionIndex) => (
                             <div key={sectionIndex}>
                                 {section.title && (
-                                    <h3 className="text-xs font-bold uppercase text-neutral-500 mb-2 px-1 tracking-wider">
+                                    <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] mb-2 px-1 tracking-wider">
                                         {section.title}
                                     </h3>
                                 )}
@@ -232,17 +232,17 @@ export function MobileDrawer({
                                                     "w-full flex items-center gap-3 p-3 rounded-xl transition-all active:scale-[0.98]",
                                                     item.danger
                                                         ? "hover:bg-red-500/10 text-red-400"
-                                                        : "hover:bg-white/5 text-neutral-300"
+                                                        : "hover:bg-[var(--bg-hover)] text-[var(--text-secondary)]"
                                                 )}
                                             >
-                                                <Icon className={cn("w-5 h-5", item.danger ? "text-red-400" : "text-neutral-400")} />
+                                                <Icon className={cn("w-5 h-5", item.danger ? "text-red-400" : "text-[var(--text-muted)]")} />
                                                 <span className="flex-1 text-left font-medium">{item.label}</span>
                                                 {item.badge && (
-                                                    <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-[#8B5CF6]/20 text-[#8B5CF6]">
+                                                    <span className="px-2 py-0.5 text-xs font-bold rounded-full bg-[var(--app-accent)]/20 text-[var(--app-accent)]">
                                                         {item.badge}
                                                     </span>
                                                 )}
-                                                <ChevronRight className={cn("w-4 h-4", item.danger ? "text-red-400/50" : "text-neutral-600")} />
+                                                <ChevronRight className={cn("w-4 h-4", item.danger ? "text-red-400/50" : "text-[var(--text-muted)]")} />
                                             </button>
                                         );
                                     })}
@@ -262,7 +262,7 @@ export function MobileDrawer({
 
                         {/* App Version */}
                         <div className="text-center pt-4">
-                            <p className="text-xs text-neutral-600">SerikaCord v1.0.0</p>
+                            <p className="text-xs text-[var(--text-muted)]">SerikaCord v1.0.0</p>
                         </div>
                     </div>
                 </ScrollArea>

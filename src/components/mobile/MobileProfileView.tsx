@@ -96,14 +96,14 @@ export function MobileProfileView() {
   ];
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a]">
+    <div className="flex flex-col h-full bg-[var(--bg-app)]">
       {/* Header */}
       <header className="flex-shrink-0 px-4 pt-3 pb-2 safe-area-top">
         <div className="flex items-center justify-between mb-3">
-          <h1 className="text-2xl font-bold text-white">You</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">You</h1>
           <button
             onClick={() => router.push("/channels/settings")}
-            className="flex items-center justify-center w-10 h-10 rounded-full bg-[#1a1a1a] text-white active:scale-95 active:bg-[#252525] transition-all touch-manipulation"
+            className="flex items-center justify-center w-10 h-10 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] active:scale-95 active:bg-[var(--bg-hover)] transition-all touch-manipulation"
           >
             <Settings className="w-5 h-5" />
           </button>
@@ -114,7 +114,7 @@ export function MobileProfileView() {
         <div className="pb-24">
           {/* Profile Card */}
           <div className="px-5 mb-6">
-            <div className="relative rounded-3xl overflow-hidden bg-[#111111] border border-white/5">
+            <div className="relative rounded-3xl overflow-hidden bg-[var(--bg-card)] border border-[var(--border-subtle)]">
               {/* Banner */}
               {user?.banner ? (
                 <div
@@ -122,7 +122,7 @@ export function MobileProfileView() {
                   style={{ backgroundImage: `url(${user.banner})` }}
                 />
               ) : (
-                <div className="h-28 bg-gradient-to-br from-[#8B5CF6] to-[#6366F1]" />
+                <div className="h-28 bg-gradient-to-br from-[var(--app-accent)] to-[var(--app-accent)] opacity-80" />
               )}
 
               {/* Profile Info */}
@@ -130,14 +130,14 @@ export function MobileProfileView() {
                 {/* Avatar */}
                 <div className="absolute -top-12 left-5">
                   <div className="relative">
-                    <Avatar className="w-24 h-24 border-[6px] border-[#111111] shadow-xl">
+                    <Avatar className="w-24 h-24 border-[6px] border-[var(--bg-card)] shadow-xl">
                       <AvatarImage src={user?.avatar} />
-                      <AvatarFallback className="bg-[#8B5CF6] text-white text-3xl font-bold">
+                      <AvatarFallback className="bg-[var(--app-accent)] text-white text-3xl font-bold">
                         {(user?.displayName || user?.username || "U").charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                     <div
-                      className="absolute bottom-2 right-2 w-5 h-5 rounded-full border-[4px] border-[#111111]"
+                      className="absolute bottom-2 right-2 w-5 h-5 rounded-full border-[4px] border-[var(--bg-card)]"
                       style={{ backgroundColor: statusColors[user?.status || "online"] }}
                     />
                   </div>
@@ -147,7 +147,7 @@ export function MobileProfileView() {
                 <div className="flex justify-end mb-4">
                   <button
                     onClick={() => router.push("/channels/settings/account")}
-                    className="px-4 py-2 rounded-xl bg-[#1a1a1a] hover:bg-[#252525] text-white text-sm font-semibold transition-all active:scale-95 border border-white/5"
+                    className="px-4 py-2 rounded-xl bg-[var(--bg-hover)] hover:bg-[var(--bg-active)] text-[var(--text-primary)] text-sm font-semibold transition-all active:scale-95 border border-[var(--border-subtle)]"
                   >
                     Edit Profile
                   </button>
@@ -156,30 +156,30 @@ export function MobileProfileView() {
                 {/* Name & Status */}
                 <div className="mt-2">
                   <div className="flex items-center gap-2">
-                    <h2 className="text-2xl font-bold text-white leading-tight">
+                    <h2 className="text-2xl font-bold text-[var(--text-primary)] leading-tight">
                       {user?.displayName || user?.username}
                     </h2>
                     {user?.isPremium && (
                       <Sparkles className="w-5 h-5 text-[#F59E0B]" />
                     )}
                   </div>
-                  <p className="text-neutral-400 font-medium">@{user?.username}</p>
+                  <p className="text-[var(--text-muted)] font-medium">@{user?.username}</p>
                   {user?.bio && (
-                    <p className="text-neutral-300 text-sm mt-3 leading-relaxed">{user.bio}</p>
+                    <p className="text-[var(--text-secondary)] text-sm mt-3 leading-relaxed">{user.bio}</p>
                   )}
                 </div>
 
                 {/* Status Selector */}
                 <button
                   onClick={() => router.push("/channels/settings/status")}
-                  className="w-full mt-5 flex items-center gap-3 p-3.5 rounded-2xl bg-[#0a0a0a] hover:bg-[#1a1a1a] border border-white/5 transition-colors active:scale-95"
+                  className="w-full mt-5 flex items-center gap-3 p-3.5 rounded-2xl bg-[var(--bg-app)] hover:bg-[var(--bg-hover)] border border-[var(--border-subtle)] transition-colors active:scale-95"
                 >
                   <div
                     className="w-3.5 h-3.5 rounded-full"
                     style={{ backgroundColor: statusColors[user?.status || "online"] }}
                   />
-                  <span className="text-white font-medium capitalize">{user?.status || "Online"}</span>
-                  <ChevronRight className="w-4 h-4 text-neutral-500 ml-auto" />
+                  <span className="text-[var(--text-primary)] font-medium capitalize">{user?.status || "Online"}</span>
+                  <ChevronRight className="w-4 h-4 text-[var(--text-muted)] ml-auto" />
                 </button>
               </div>
             </div>
@@ -189,10 +189,10 @@ export function MobileProfileView() {
           <div className="px-5 space-y-8">
             {settingsSections.map((section) => (
               <div key={section.title}>
-                <h3 className="text-xs font-bold uppercase text-neutral-500 mb-3 px-2 tracking-wider">
+                <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] mb-3 px-2 tracking-wider">
                   {section.title}
                 </h3>
-                <div className="rounded-2xl bg-[#111111] overflow-hidden divide-y divide-[#1a1a1a] border border-white/5">
+                <div className="rounded-2xl bg-[var(--bg-card)] overflow-hidden divide-y divide-[var(--border-subtle)] border border-[var(--border-subtle)]">
                   {section.items.map((item) => {
                     const Icon = item.icon;
                     return (
@@ -200,17 +200,17 @@ export function MobileProfileView() {
                         key={item.label}
                         onClick={() => item.onClick?.() || (item.href && router.push(item.href))}
                         className={cn(
-                          "w-full flex items-center gap-4 p-4 hover:bg-[#1a1a1a] transition-all active:bg-[#222]",
+                          "w-full flex items-center gap-4 p-4 hover:bg-[var(--bg-hover)] transition-all active:bg-[var(--bg-active)]",
                           item.danger && "text-red-500"
                         )}
                       >
                         <Icon className={cn(
                           "w-5 h-5",
-                          item.danger ? "text-red-500" : "text-neutral-400"
+                          item.danger ? "text-red-500" : "text-[var(--text-muted)]"
                         )} />
                         <span className={cn(
                           "flex-1 text-left font-medium",
-                          item.danger ? "text-red-500" : "text-white"
+                          item.danger ? "text-red-500" : "text-[var(--text-primary)]"
                         )}>
                           {item.label}
                         </span>
@@ -218,7 +218,7 @@ export function MobileProfileView() {
                           <span className={cn(
                             "px-2.5 py-1 rounded-full text-xs font-bold",
                             item.badge === "Active"
-                              ? "bg-[#8B5CF6]/20 text-[#8B5CF6]"
+                              ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)]"
                               : "bg-[#F59E0B]/20 text-[#F59E0B]"
                           )}>
                             {item.badge}
@@ -226,7 +226,7 @@ export function MobileProfileView() {
                         )}
                         <ChevronRight className={cn(
                           "w-4 h-4",
-                          item.danger ? "text-red-500/50" : "text-neutral-600"
+                          item.danger ? "text-red-500/50" : "text-[var(--text-muted)]"
                         )} />
                       </button>
                     );
@@ -236,10 +236,10 @@ export function MobileProfileView() {
             ))}
 
             {/* Logout Button */}
-            <div className="rounded-2xl bg-[#111111] overflow-hidden border border-white/5">
+            <div className="rounded-2xl bg-[var(--bg-card)] overflow-hidden border border-[var(--border-subtle)]">
               <button
                 onClick={handleLogout}
-                className="w-full flex items-center gap-4 p-4 hover:bg-[#1a1a1a] transition-colors text-red-500 active:bg-[#222]"
+                className="w-full flex items-center gap-4 p-4 hover:bg-[var(--bg-hover)] transition-colors text-red-500 active:bg-[var(--bg-active)]"
               >
                 <LogOut className="w-5 h-5" />
                 <span className="flex-1 text-left font-medium">Log Out</span>
@@ -249,8 +249,8 @@ export function MobileProfileView() {
 
             {/* App Info */}
             <div className="text-center py-6">
-              <p className="text-xs font-medium text-neutral-600">SerikaCord v1.0.0 (Beta)</p>
-              <p className="text-xs font-medium text-neutral-600 mt-1">Made with 💜 in Tokyo</p>
+              <p className="text-xs font-medium text-[var(--text-muted)]">SerikaCord v1.0.0 (Beta)</p>
+              <p className="text-xs font-medium text-[var(--text-muted)] mt-1">Made with 💜 in Tokyo</p>
             </div>
           </div>
         </div>

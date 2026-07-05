@@ -42,7 +42,7 @@ export function MobileServerList({ onServerSelect, onCreateServer }: MobileServe
   const hasNotification = (server: any): boolean => server.hasNotification || false;
 
   return (
-    <div className="flex flex-col w-[76px] min-w-[76px] h-full bg-[#000000] border-r border-white/5 pt-safe">
+    <div className="flex flex-col w-[76px] min-w-[76px] h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] pt-safe">
       <div className="flex-1 overflow-y-auto scrollbar-hide py-3">
         <div className="flex flex-col items-center gap-3 px-3">
           {/* Home Button (DMs) */}
@@ -57,8 +57,8 @@ export function MobileServerList({ onServerSelect, onCreateServer }: MobileServe
               className={cn(
                 "relative w-[52px] h-[52px] flex items-center justify-center transition-all duration-200",
                 !currentServer 
-                  ? "bg-[#8B5CF6] rounded-[18px]" 
-                  : "bg-[#1a1a1a] rounded-[24px] hover:bg-[#8B5CF6] hover:rounded-[18px] active:scale-95"
+                  ? "bg-[var(--app-accent)] rounded-[18px]" 
+                  : "bg-[var(--bg-sidebar-elevated)] rounded-[24px] hover:bg-[var(--app-accent)] hover:rounded-[18px] active:scale-95"
               )}
             >
               <svg className="w-6 h-6 text-white" viewBox="0 0 24 24" fill="currentColor">
@@ -68,7 +68,7 @@ export function MobileServerList({ onServerSelect, onCreateServer }: MobileServe
           </div>
 
           {/* Separator */}
-          <div className="w-8 h-0.5 bg-[#1a1a1a] rounded-full" />
+          <div className="w-8 h-0.5 bg-[var(--bg-sidebar-elevated)] rounded-full" />
 
           {/* Server List */}
           {servers.map((server) => {
@@ -100,19 +100,19 @@ export function MobileServerList({ onServerSelect, onCreateServer }: MobileServe
                   {server.icon ? (
                     <Avatar className="w-[52px] h-[52px] rounded-none">
                       <AvatarImage src={server.icon} className="object-cover" />
-                      <AvatarFallback className="rounded-none bg-[#8B5CF6] text-white text-xl font-semibold">
+                      <AvatarFallback className="rounded-none bg-[var(--app-accent)] text-white text-xl font-semibold">
                         {server.name.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
                   ) : (
-                    <div className="w-full h-full bg-[#1a1a1a] hover:bg-[#8B5CF6] flex items-center justify-center text-white text-xl font-semibold transition-colors">
+                    <div className="w-full h-full bg-[var(--bg-sidebar-elevated)] hover:bg-[var(--app-accent)] flex items-center justify-center text-white text-xl font-semibold transition-colors">
                       {server.name.charAt(0).toUpperCase()}
                     </div>
                   )}
 
                   {/* Notification Badge */}
                   {unreadCount > 0 && (
-                    <span className="absolute bottom-0 right-0 min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-[#ED4245] text-white text-[10px] font-bold rounded-full border-[3px] border-[#000000]">
+                    <span className="absolute bottom-0 right-0 min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-[#ED4245] text-white text-[10px] font-bold rounded-full border-[3px] border-[var(--bg-sidebar)]">
                       {unreadCount > 99 ? "99+" : unreadCount}
                     </span>
                   )}
@@ -122,12 +122,12 @@ export function MobileServerList({ onServerSelect, onCreateServer }: MobileServe
           })}
 
           {/* Separator */}
-          <div className="w-8 h-0.5 bg-[#1a1a1a] rounded-full" />
+          <div className="w-8 h-0.5 bg-[var(--bg-sidebar-elevated)] rounded-full" />
 
           {/* Explore Servers */}
           <button
             onClick={handleExploreClick}
-            className="w-[52px] h-[52px] rounded-[24px] bg-[#1a1a1a] flex items-center justify-center text-[#23A559] hover:bg-[#23A559] hover:text-white hover:rounded-[18px] transition-all duration-200 active:scale-95"
+            className="w-[52px] h-[52px] rounded-[24px] bg-[var(--bg-sidebar-elevated)] flex items-center justify-center text-[#23A559] hover:bg-[#23A559] hover:text-white hover:rounded-[18px] transition-all duration-200 active:scale-95"
           >
             <Compass className="w-6 h-6" />
           </button>
@@ -135,7 +135,7 @@ export function MobileServerList({ onServerSelect, onCreateServer }: MobileServe
           {/* Add Server Button */}
           <button
             onClick={onCreateServer}
-            className="w-[52px] h-[52px] rounded-[24px] bg-[#1a1a1a] flex items-center justify-center text-[#23A559] hover:bg-[#23A559] hover:text-white hover:rounded-[18px] transition-all duration-200 active:scale-95"
+            className="w-[52px] h-[52px] rounded-[24px] bg-[var(--bg-sidebar-elevated)] flex items-center justify-center text-[#23A559] hover:bg-[#23A559] hover:text-white hover:rounded-[18px] transition-all duration-200 active:scale-95"
           >
             <Plus className="w-6 h-6" />
           </button>

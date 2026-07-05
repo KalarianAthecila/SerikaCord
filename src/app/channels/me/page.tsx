@@ -10,6 +10,7 @@ import {
   X,
   MoreVertical,
   UserX,
+  UserPlus,
   Clock,
   Crown,
   Shield,
@@ -305,25 +306,46 @@ export default function DirectMessagesPage() {
   };
 
   return (
-    <div className="flex-1 flex flex-col bg-[var(--bg-app)]">
-      {/* Header — wraps to two rows on small screens; tabs scroll horizontally */}
-      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-app)]">
-        <div className="min-h-12 px-3 sm:px-4 py-2 flex flex-wrap items-center gap-x-3 gap-y-2">
-          <div className="flex items-center gap-2 text-[var(--text-primary)]">
-            <Users className="w-6 h-6 text-[#555555]" />
-            <span className="font-semibold">Friends</span>
+    <div className="flex-1 flex flex-col bg-[var(--bg-app)] overflow-hidden">
+      {/* Header */}
+      <div className="border-b border-[var(--border-subtle)] bg-[var(--bg-app)] flex-shrink-0">
+        <div className="px-3 sm:px-6 pt-4 pb-3">
+          {/* Title row */}
+          <div className="flex items-center justify-between gap-2 mb-3">
+            <div className="flex items-center gap-2.5">
+              <div className="w-9 h-9 rounded-xl bg-[var(--app-accent)]/15 flex items-center justify-center">
+                <Users className="w-5 h-5 text-[var(--app-accent)]" />
+              </div>
+              <div>
+                <h1 className="text-lg font-bold text-[var(--text-primary)] leading-tight">Friends</h1>
+                <p className="text-xs text-[var(--text-muted)] hidden sm:block">
+                  {friendsData.friends.length} friends · {onlineFriends.length} online
+                </p>
+              </div>
+            </div>
+            <button
+              onClick={() => setActiveTab("add")}
+              className={cn(
+                "flex items-center gap-2 px-3 sm:px-4 py-2 rounded-lg text-sm font-medium transition-colors shrink-0",
+                activeTab === "add"
+                  ? "bg-[var(--app-accent)]/15 text-[var(--app-accent)]"
+                  : "bg-[var(--app-accent)] text-white hover:opacity-90"
+              )}
+            >
+              <UserPlus className="w-4 h-4" />
+              <span className="hidden sm:inline">Add Friend</span>
+              <span className="sm:hidden">Add</span>
+            </button>
           </div>
 
-          <div className="w-px h-6 bg-[var(--border-subtle)] hidden sm:block" />
-
-          {/* Tabs — scrollable strip so they never push content off-screen */}
-          <div className="order-last sm:order-none w-full sm:w-auto -mx-3 px-3 sm:mx-0 sm:px-0 flex items-center gap-1 overflow-x-auto scrollbar-hide">
+          {/* Tabs */}
+          <div className="flex items-center gap-1 overflow-x-auto scrollbar-hide -mx-3 px-3 sm:mx-0 sm:px-0">
             {tabs.map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={cn(
-                  "px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap shrink-0",
+                  "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors whitespace-nowrap shrink-0 flex items-center gap-1.5",
                   activeTab === tab.id
                     ? "bg-[var(--bg-active)] text-[var(--app-accent)]"
                     : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
@@ -331,26 +353,17 @@ export default function DirectMessagesPage() {
               >
                 {tab.label}
                 {tab.count > 0 && (
-                  <span className="ml-1.5 text-xs bg-[var(--border-subtle)] px-1.5 py-0.5 rounded-full text-[var(--text-secondary)]">
+                  <span className={cn(
+                    "text-xs px-1.5 py-0.5 rounded-full",
+                    activeTab === tab.id
+                      ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)]"
+                      : "bg-[var(--border-subtle)] text-[var(--text-secondary)]"
+                  )}>
                     {tab.count}
                   </span>
                 )}
               </button>
             ))}
-          </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            <button
-              onClick={() => setActiveTab("add")}
-              className={cn(
-                "px-3 py-1.5 rounded-md text-sm font-medium transition-colors whitespace-nowrap",
-                activeTab === "add"
-                  ? "bg-transparent text-[#8B5CF6]"
-                  : "bg-[#8B5CF6] text-white hover:bg-[#7C3AED]"
-              )}
-            >
-              Add Friend
-            </button>
           </div>
         </div>
       </div>
@@ -358,437 +371,440 @@ export default function DirectMessagesPage() {
       {/* Content */}
       <div className="flex-1 flex overflow-hidden">
         {/* Main content area */}
-        <div className="flex-1 flex flex-col min-w-0">
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
           {activeTab === "add" ? (
-            <div className="p-4 sm:p-6">
-              <h2 className="text-lg font-semibold text-[var(--text-primary)] uppercase tracking-wide mb-2">
-                Add Friend
-              </h2>
-              <p className="text-[var(--text-secondary)] text-sm mb-4">
-                You can add friends with their SerikaCord username.
-              </p>
+            <ScrollArea className="flex-1">
+              <div className="p-4 sm:p-6 max-w-2xl">
+                <div className="rounded-2xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-5 sm:p-6">
+                  <h2 className="text-xl font-bold text-[var(--text-primary)] mb-1">
+                    Add Friend
+                  </h2>
+                  <p className="text-sm text-[var(--text-muted)] mb-5">
+                    Enter a SerikaCord username to send a friend request.
+                  </p>
 
-              <div className="flex flex-col sm:relative gap-2 max-w-xl">
-                <Input
-                  value={addFriendUsername}
-                  onChange={(e) => {
-                    setAddFriendUsername(e.target.value);
-                    setAddFriendStatus({ type: null, message: "" });
-                  }}
-                  onKeyDown={(e) => e.key === "Enter" && handleAddFriend()}
-                  placeholder="Enter a username"
-                  className={cn(
-                    "h-14 bg-[var(--bg-card)] border-2 text-[var(--text-primary)] placeholder:text-[#555555] sm:pr-48 text-base rounded-lg focus-visible:ring-0",
-                    addFriendStatus.type === "success" && "border-green-500/50",
-                    addFriendStatus.type === "error" && "border-red-500/50",
-                    !addFriendStatus.type && "border-[var(--border-subtle)] focus:border-[#8B5CF6]"
+                  <div className="flex flex-col sm:flex-row gap-2">
+                    <Input
+                      value={addFriendUsername}
+                      onChange={(e) => {
+                        setAddFriendUsername(e.target.value);
+                        setAddFriendStatus({ type: null, message: "" });
+                      }}
+                      onKeyDown={(e) => e.key === "Enter" && handleAddFriend()}
+                      placeholder="Enter a username"
+                      className={cn(
+                        "h-12 bg-[var(--bg-app)] border-2 text-[var(--text-primary)] placeholder:text-[var(--text-muted)] text-base rounded-lg focus-visible:ring-0 flex-1",
+                        addFriendStatus.type === "success" && "border-green-500/50",
+                        addFriendStatus.type === "error" && "border-red-500/50",
+                        !addFriendStatus.type && "border-[var(--border-subtle)] focus:border-[var(--app-accent)]"
+                      )}
+                    />
+                    <button
+                      onClick={handleAddFriend}
+                      disabled={!addFriendUsername.trim() || isAddingFriend}
+                      className={cn(
+                        "h-12 px-5 text-sm font-medium rounded-lg transition-colors flex items-center justify-center gap-2 shrink-0",
+                        addFriendUsername.trim() && !isAddingFriend
+                          ? "bg-[var(--app-accent)] hover:opacity-90 text-white"
+                          : "bg-[var(--app-accent)]/40 text-white/50 cursor-not-allowed"
+                      )}
+                    >
+                      {isAddingFriend && <Loader2 className="w-4 h-4 animate-spin" />}
+                      Send Request
+                    </button>
+                  </div>
+
+                  {addFriendStatus.type && (
+                    <div className={cn(
+                      "mt-3 px-4 py-2.5 rounded-lg text-sm flex items-center gap-2",
+                      addFriendStatus.type === "success"
+                        ? "bg-green-500/10 text-green-500"
+                        : "bg-red-500/10 text-red-500"
+                    )}>
+                      {addFriendStatus.type === "success"
+                        ? <Check className="w-4 h-4 shrink-0" />
+                        : <X className="w-4 h-4 shrink-0" />}
+                      {addFriendStatus.message}
+                    </div>
                   )}
-                />
-                <button
-                  onClick={handleAddFriend}
-                  disabled={!addFriendUsername.trim() || isAddingFriend}
-                  className={cn(
-                    "sm:absolute sm:right-2 sm:top-1/2 sm:-translate-y-1/2 w-full sm:w-auto justify-center px-4 py-2.5 sm:py-2 text-sm font-medium rounded-md transition-colors flex items-center gap-2",
-                    addFriendUsername.trim() && !isAddingFriend
-                      ? "bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
-                      : "bg-[#8B5CF6]/50 text-white/50 cursor-not-allowed"
-                  )}
-                >
-                  {isAddingFriend && <Loader2 className="w-4 h-4 animate-spin" />}
-                  Send Friend Request
-                </button>
-              </div>
+                </div>
 
-              {addFriendStatus.type && (
-                <p className={cn(
-                  "mt-3 text-sm",
-                  addFriendStatus.type === "success" ? "text-green-500" : "text-red-500"
-                )}>
-                  {addFriendStatus.message}
-                </p>
-              )}
-
-              {/* Instructions */}
-              <div className="mt-8 p-4 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] max-w-xl">
-                <h3 className="text-sm font-semibold text-[var(--text-primary)] mb-2">How to add friends</h3>
-                <ul className="text-sm text-[var(--text-secondary)] space-y-2">
-                  <li className="flex items-start gap-2">
-                    <span className="text-[#8B5CF6]">1.</span>
-                    Ask your friend for their username
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-[#8B5CF6]">2.</span>
-                    Type their exact username above
-                  </li>
-                  <li className="flex items-start gap-2">
-                    <span className="text-[#8B5CF6]">3.</span>
-                    They&apos;ll receive a friend request they can accept
-                  </li>
-                </ul>
+                {/* Tips */}
+                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                  {[
+                    { icon: <Search className="w-5 h-5" />, title: "Find username", desc: "Ask your friend for their exact SerikaCord username" },
+                    { icon: <UserPlus className="w-5 h-5" />, title: "Send request", desc: "Type it above and send a friend request" },
+                    { icon: <Check className="w-5 h-5" />, title: "Get connected", desc: "Once they accept, you can start chatting" },
+                  ].map((step, i) => (
+                    <div key={i} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4">
+                      <div className="w-9 h-9 rounded-lg bg-[var(--app-accent)]/15 flex items-center justify-center text-[var(--app-accent)] mb-2">
+                        {step.icon}
+                      </div>
+                      <p className="text-sm font-semibold text-[var(--text-primary)] mb-0.5">{step.title}</p>
+                      <p className="text-xs text-[var(--text-muted)] leading-relaxed">{step.desc}</p>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
+            </ScrollArea>
           ) : activeTab === "pending" ? (
-            <div className="flex-1 flex flex-col">
-              <ScrollArea className="flex-1">
-                <div className="p-4">
-                  {/* Incoming requests */}
-                  {friendsData.pending.incoming.length > 0 && (
-                    <>
-                      <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2 px-2">
-                        Incoming — {friendsData.pending.incoming.length}
+            <ScrollArea className="flex-1">
+              <div className="p-4 sm:p-6 max-w-3xl">
+                {/* Incoming requests */}
+                {friendsData.pending.incoming.length > 0 && (
+                  <div className="mb-6">
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2 h-2 rounded-full bg-green-500" />
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">
+                        Incoming
                       </p>
-                      <div className="space-y-0.5 mb-6">
-                        {friendsData.pending.incoming.map((request) => (
-                          <div
-                            key={request.id}
-                            className="group flex items-center justify-between p-3 rounded-lg hover:bg-[var(--bg-hover)] transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="relative">
-                                <Avatar className="w-10 h-10">
-                                  <AvatarImage src={request.avatar} />
-                                  <AvatarFallback className="bg-[#8B5CF6] text-[var(--text-on-accent)]">
-                                    {(request.displayName || request.username).charAt(0).toUpperCase()}
-                                  </AvatarFallback>
-                                </Avatar>
-                              </div>
-                              
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium text-[var(--text-primary)] text-sm">
-                                    {request.displayName || request.username}
-                                  </p>
-                                  {request.isPremium && (
-                                    <Crown className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                                  )}
-                                </div>
-                                <p className="text-xs text-[var(--text-muted)]">
-                                  Incoming Friend Request
+                      <span className="text-xs text-[var(--text-muted)]">· {friendsData.pending.incoming.length}</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {friendsData.pending.incoming.map((request) => (
+                        <div
+                          key={request.id}
+                          className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar className="w-10 h-10 shrink-0">
+                              <AvatarImage src={request.avatar} />
+                              <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
+                                {(request.displayName || request.username).charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="font-medium text-[var(--text-primary)] text-sm truncate">
+                                  {request.displayName || request.username}
                                 </p>
-                              </div>
-                            </div>
-
-                            <div className="flex items-center gap-2">
-                              <button
-                                onClick={() => handleAcceptRequest(request.id)}
-                                disabled={actionLoading === request.id}
-                                className="p-2 bg-[var(--bg-card)] rounded-full hover:bg-green-500/20 text-[var(--text-secondary)] hover:text-green-500 transition-colors disabled:opacity-50"
-                              >
-                                {actionLoading === request.id ? (
-                                  <Loader2 className="w-5 h-5 animate-spin" />
-                                ) : (
-                                  <Check className="w-5 h-5" />
+                                {request.isPremium && (
+                                  <Crown className="w-3.5 h-3.5 text-[var(--app-accent)] shrink-0" />
                                 )}
-                              </button>
-                              <button
-                                onClick={() => handleDeclineRequest(request.id)}
-                                disabled={actionLoading === request.id}
-                                className="p-2 bg-[var(--bg-card)] rounded-full hover:bg-red-500/20 text-[var(--text-secondary)] hover:text-red-500 transition-colors disabled:opacity-50"
-                              >
-                                <X className="w-5 h-5" />
-                              </button>
+                              </div>
+                              <p className="text-xs text-[var(--text-muted)]">Incoming request</p>
                             </div>
                           </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  {/* Outgoing requests */}
-                  {friendsData.pending.outgoing.length > 0 && (
-                    <>
-                      <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2 px-2">
-                        Outgoing — {friendsData.pending.outgoing.length}
-                      </p>
-                      <div className="space-y-0.5">
-                        {friendsData.pending.outgoing.map((request) => (
-                          <div
-                            key={request.id}
-                            className="group flex items-center justify-between p-3 rounded-lg hover:bg-[var(--bg-hover)] transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <div className="relative">
-                                <Avatar className="w-10 h-10">
-                                  <AvatarImage src={request.avatar} />
-                                  <AvatarFallback className="bg-[#8B5CF6] text-[var(--text-on-accent)]">
-                                    {(request.displayName || request.username).charAt(0).toUpperCase()}
-                                  </AvatarFallback>
-                                </Avatar>
-                              </div>
-                              
-                              <div>
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium text-[var(--text-primary)] text-sm">
-                                    {request.displayName || request.username}
-                                  </p>
-                                  {request.isPremium && (
-                                    <Crown className="w-3.5 h-3.5 text-[#8B5CF6]" />
-                                  )}
-                                </div>
-                                <p className="text-xs text-[var(--text-muted)]">
-                                  Outgoing Friend Request
-                                </p>
-                              </div>
-                            </div>
-
+                          <div className="flex items-center gap-1.5 shrink-0">
                             <button
-                              onClick={() => handleCancelRequest(request.id)}
+                              onClick={() => handleAcceptRequest(request.id)}
                               disabled={actionLoading === request.id}
-                              className="px-3 py-1.5 text-sm bg-[var(--bg-card)] rounded-md hover:bg-red-500/20 text-[var(--text-secondary)] hover:text-red-500 transition-colors disabled:opacity-50"
+                              className="p-2 rounded-lg bg-green-500/10 hover:bg-green-500/20 text-green-500 transition-colors disabled:opacity-50"
+                              aria-label="Accept"
                             >
                               {actionLoading === request.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
+                                <Loader2 className="w-5 h-5 animate-spin" />
                               ) : (
-                                "Cancel"
+                                <Check className="w-5 h-5" />
                               )}
                             </button>
-                          </div>
-                        ))}
-                      </div>
-                    </>
-                  )}
-
-                  {friendsData.pending.incoming.length === 0 && friendsData.pending.outgoing.length === 0 && (
-                    <EmptyState
-                      icon={<Clock className="w-12 h-12 text-[#8B5CF6]" />}
-                      title="No pending requests"
-                      description="Friend requests you send or receive will show up here"
-                    />
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
-          ) : activeTab === "blocked" ? (
-            <div className="flex-1 flex flex-col">
-              <ScrollArea className="flex-1">
-                <div className="p-4">
-                  {friendsData.blocked.length > 0 ? (
-                    <>
-                      <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2 px-2">
-                        Blocked Users — {friendsData.blocked.length}
-                      </p>
-                      <div className="space-y-0.5">
-                        {friendsData.blocked.map((blockedUser) => (
-                          <div
-                            key={blockedUser.id}
-                            className="group flex items-center justify-between p-3 rounded-lg hover:bg-[var(--bg-hover)] transition-colors"
-                          >
-                            <div className="flex items-center gap-3">
-                              <Avatar className="w-10 h-10">
-                                <AvatarImage src={blockedUser.avatar} />
-                                <AvatarFallback className="bg-[var(--bg-sidebar-elevated)] text-[var(--text-primary)]">
-                                  {(blockedUser.displayName || blockedUser.username).charAt(0).toUpperCase()}
-                                </AvatarFallback>
-                              </Avatar>
-                              
-                              <div>
-                                <p className="font-medium text-[var(--text-primary)] text-sm">
-                                  {blockedUser.displayName || blockedUser.username}
-                                </p>
-                                <p className="text-xs text-[var(--text-muted)]">Blocked</p>
-                              </div>
-                            </div>
-
                             <button
-                              onClick={() => handleUnblockUser(blockedUser.id)}
-                              disabled={actionLoading === blockedUser.id}
-                              className="px-3 py-1.5 text-sm bg-[var(--bg-card)] rounded-md hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors disabled:opacity-50"
+                              onClick={() => handleDeclineRequest(request.id)}
+                              disabled={actionLoading === request.id}
+                              className="p-2 rounded-lg bg-red-500/10 hover:bg-red-500/20 text-red-500 transition-colors disabled:opacity-50"
+                              aria-label="Decline"
                             >
-                              {actionLoading === blockedUser.id ? (
-                                <Loader2 className="w-4 h-4 animate-spin" />
-                              ) : (
-                                "Unblock"
-                              )}
+                              <X className="w-5 h-5" />
                             </button>
                           </div>
-                        ))}
-                      </div>
-                    </>
-                  ) : (
-                    <EmptyState
-                      icon={<Shield className="w-12 h-12 text-[#8B5CF6]" />}
-                      title="No blocked users"
-                      description="Users you block won't be able to message you or send friend requests"
-                    />
-                  )}
-                </div>
-              </ScrollArea>
-            </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {/* Outgoing requests */}
+                {friendsData.pending.outgoing.length > 0 && (
+                  <div>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2 h-2 rounded-full bg-[var(--text-muted)]" />
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">
+                        Outgoing
+                      </p>
+                      <span className="text-xs text-[var(--text-muted)]">· {friendsData.pending.outgoing.length}</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {friendsData.pending.outgoing.map((request) => (
+                        <div
+                          key={request.id}
+                          className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar className="w-10 h-10 shrink-0">
+                              <AvatarImage src={request.avatar} />
+                              <AvatarFallback className="bg-[var(--bg-sidebar-elevated)] text-[var(--text-primary)]">
+                                {(request.displayName || request.username).charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <div className="flex items-center gap-1.5">
+                                <p className="font-medium text-[var(--text-primary)] text-sm truncate">
+                                  {request.displayName || request.username}
+                                </p>
+                                {request.isPremium && (
+                                  <Crown className="w-3.5 h-3.5 text-[var(--app-accent)] shrink-0" />
+                                )}
+                              </div>
+                              <p className="text-xs text-[var(--text-muted)]">Outgoing request</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleCancelRequest(request.id)}
+                            disabled={actionLoading === request.id}
+                            className="px-3 py-1.5 text-sm rounded-lg bg-[var(--bg-hover)] hover:bg-red-500/15 text-[var(--text-secondary)] hover:text-red-500 transition-colors disabled:opacity-50 shrink-0"
+                          >
+                            {actionLoading === request.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              "Cancel"
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+
+                {friendsData.pending.incoming.length === 0 && friendsData.pending.outgoing.length === 0 && (
+                  <EmptyState
+                    icon={<Clock className="w-12 h-12 text-[var(--app-accent)]" />}
+                    title="No pending requests"
+                    description="Friend requests you send or receive will appear here"
+                  />
+                )}
+              </div>
+            </ScrollArea>
+          ) : activeTab === "blocked" ? (
+            <ScrollArea className="flex-1">
+              <div className="p-4 sm:p-6 max-w-3xl">
+                {friendsData.blocked.length > 0 ? (
+                  <>
+                    <div className="flex items-center gap-2 mb-3">
+                      <div className="w-2 h-2 rounded-full bg-red-500" />
+                      <p className="text-sm font-semibold text-[var(--text-primary)]">
+                        Blocked Users
+                      </p>
+                      <span className="text-xs text-[var(--text-muted)]">· {friendsData.blocked.length}</span>
+                    </div>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                      {friendsData.blocked.map((blockedUser) => (
+                        <div
+                          key={blockedUser.id}
+                          className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
+                        >
+                          <div className="flex items-center gap-3 min-w-0">
+                            <Avatar className="w-10 h-10 shrink-0">
+                              <AvatarImage src={blockedUser.avatar} />
+                              <AvatarFallback className="bg-[var(--bg-sidebar-elevated)] text-[var(--text-primary)]">
+                                {(blockedUser.displayName || blockedUser.username).charAt(0).toUpperCase()}
+                              </AvatarFallback>
+                            </Avatar>
+                            <div className="min-w-0">
+                              <p className="font-medium text-[var(--text-primary)] text-sm truncate">
+                                {blockedUser.displayName || blockedUser.username}
+                              </p>
+                              <p className="text-xs text-[var(--text-muted)]">Blocked</p>
+                            </div>
+                          </div>
+                          <button
+                            onClick={() => handleUnblockUser(blockedUser.id)}
+                            disabled={actionLoading === blockedUser.id}
+                            className="px-3 py-1.5 text-sm rounded-lg bg-[var(--bg-hover)] hover:bg-[var(--app-accent)]/15 text-[var(--text-secondary)] hover:text-[var(--app-accent)] transition-colors disabled:opacity-50 shrink-0"
+                          >
+                            {actionLoading === blockedUser.id ? (
+                              <Loader2 className="w-4 h-4 animate-spin" />
+                            ) : (
+                              "Unblock"
+                            )}
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                  </>
+                ) : (
+                  <EmptyState
+                    icon={<Shield className="w-12 h-12 text-[var(--app-accent)]" />}
+                    title="No blocked users"
+                    description="Users you block won't be able to message you or send friend requests"
+                  />
+                )}
+              </div>
+            </ScrollArea>
           ) : (
-            <div className="flex-1 flex flex-col">
+            <div className="flex-1 flex flex-col overflow-hidden">
               {/* Search */}
-              <div className="p-4 pb-0">
-                <div className="relative">
+              <div className="p-4 pb-2 flex-shrink-0">
+                <div className="relative max-w-md">
                   <Input
                     value={searchQuery}
                     onChange={(e) => setSearchQuery(e.target.value)}
-                    placeholder="Search"
-                    className="h-9 bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[#555555] pl-9 rounded-md focus:border-[#8B5CF6] focus-visible:ring-0"
+                    placeholder="Search friends..."
+                    className="h-10 bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] pl-10 rounded-lg focus:border-[var(--app-accent)] focus-visible:ring-0"
                   />
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#555555]" />
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[var(--text-muted)]" />
                 </div>
               </div>
 
               {/* Friends list */}
               <ScrollArea className="flex-1">
-                <div className="p-4">
-                  <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-2 px-2">
-                    {activeTab === "online" ? "Online" : "All Friends"} — {filteredFriends.length}
-                  </p>
-                  
+                <div className="p-4 pt-2">
                   {isLoading ? (
                     <div className="flex items-center justify-center py-20">
-                      <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+                      <Loader2 className="w-8 h-8 text-[var(--app-accent)] animate-spin" />
                     </div>
                   ) : filteredFriends.length > 0 ? (
-                    <div className="space-y-0.5">
-                      {filteredFriends.map((friend) => (
-                        <SwipeableRow
-                          key={friend.id}
-                          className="rounded-lg"
-                          actions={[
-                            {
-                              icon: <MessageCircle className="w-5 h-5" />,
-                              label: "Message",
-                              className: "bg-[#8B5CF6]",
-                              onAction: () => startDM(friend.id),
-                            },
-                            {
-                              icon: <UserX className="w-5 h-5" />,
-                              label: "Remove",
-                              className: "bg-red-500",
-                              onAction: () => handleRemoveFriend(friend.id),
-                            },
-                          ]}
-                        >
-                          <div className="group flex items-center justify-between gap-2 p-2 min-h-[56px] rounded-lg hover:bg-[var(--bg-hover)] cursor-pointer transition-colors">
-                            <button
-                              className="flex items-center gap-3 flex-1 min-w-0 text-left"
-                              onClick={() => startDM(friend.id)}
-                              aria-label={`Message ${friend.displayName || friend.username}`}
-                            >
-                              <div className="relative shrink-0">
-                                <Avatar className="w-10 h-10">
-                                  <AvatarImage src={friend.avatar} />
-                                  <AvatarFallback className="bg-[#8B5CF6] text-[var(--text-on-accent)]">
-                                    {(friend.displayName || friend.username).charAt(0).toUpperCase()}
-                                  </AvatarFallback>
-                                </Avatar>
-                                <div
-                                  className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-[var(--bg-app)]"
-                                  style={{ backgroundColor: statusColors[friend.status] }}
-                                />
-                              </div>
-
-                              <div className="min-w-0">
-                                <div className="flex items-center gap-2">
-                                  <p className="font-medium text-[var(--text-primary)] text-sm truncate">
-                                    {friend.displayName || friend.username}
-                                  </p>
-                                  {friend.isPremium && (
-                                    <Crown className="w-3.5 h-3.5 text-[#8B5CF6] shrink-0" />
-                                  )}
-                                </div>
-                                <p className="text-xs text-[var(--text-muted)] truncate">
-                                  {friend.customStatus || statusLabels[friend.status]}
-                                </p>
-                              </div>
-                            </button>
-
-                            {/* Desktop hover actions (mobile uses swipe) */}
-                            <div className="hidden sm:flex items-center gap-2 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity">
+                    <>
+                      <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-3 px-1">
+                        {activeTab === "online" ? "Online" : "All Friends"} — {filteredFriends.length}
+                      </p>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                        {filteredFriends.map((friend) => (
+                          <SwipeableRow
+                            key={friend.id}
+                            className="rounded-xl"
+                            actions={[
+                              {
+                                icon: <MessageCircle className="w-5 h-5" />,
+                                label: "Message",
+                                className: "bg-[var(--app-accent)]",
+                                onAction: () => startDM(friend.id),
+                              },
+                              {
+                                icon: <UserX className="w-5 h-5" />,
+                                label: "Remove",
+                                className: "bg-red-500",
+                                onAction: () => handleRemoveFriend(friend.id),
+                              },
+                            ]}
+                          >
+                            <div className="group flex items-center gap-3 p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 hover:bg-[var(--bg-hover)] cursor-pointer transition-all">
                               <button
+                                className="flex items-center gap-3 flex-1 min-w-0 text-left"
                                 onClick={() => startDM(friend.id)}
-                                aria-label="Message"
-                                title="Message"
-                                className="p-2 bg-[var(--bg-card)] rounded-full hover:bg-[var(--bg-hover)] transition-colors"
+                                aria-label={`Message ${friend.displayName || friend.username}`}
                               >
-                                <MessageCircle className="w-5 h-5 text-[var(--text-secondary)]" />
+                                <div className="relative shrink-0">
+                                  <Avatar className="w-11 h-11">
+                                    <AvatarImage src={friend.avatar} />
+                                    <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
+                                      {(friend.displayName || friend.username).charAt(0).toUpperCase()}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                  <div
+                                    className="absolute bottom-0 right-0 w-3.5 h-3.5 rounded-full border-2 border-[var(--bg-card)]"
+                                    style={{ backgroundColor: statusColors[friend.status] }}
+                                  />
+                                </div>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-center gap-1.5">
+                                    <p className="font-medium text-[var(--text-primary)] text-sm truncate">
+                                      {friend.displayName || friend.username}
+                                    </p>
+                                    {friend.isPremium && (
+                                      <Crown className="w-3.5 h-3.5 text-[var(--app-accent)] shrink-0" />
+                                    )}
+                                  </div>
+                                  <p className="text-xs text-[var(--text-muted)] truncate">
+                                    {friend.customStatus || statusLabels[friend.status]}
+                                  </p>
+                                </div>
                               </button>
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <button
-                                    aria-label="More options"
-                                    title="More"
-                                    className="p-2 bg-[var(--bg-card)] rounded-full hover:bg-[var(--bg-hover)] transition-colors"
-                                  >
-                                    <MoreVertical className="w-5 h-5 text-[var(--text-secondary)]" />
-                                  </button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent className="bg-[var(--bg-card)] border-[var(--border-subtle)]">
-                                  <DropdownMenuItem
-                                    onClick={() => startDM(friend.id)}
-                                    className="text-[var(--text-secondary)] focus:text-[var(--text-on-accent)] focus:bg-[#8B5CF6]"
-                                  >
-                                    <MessageCircle className="w-4 h-4 mr-2" />
-                                    Message
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
-                                  <DropdownMenuItem
-                                    onClick={() => handleRemoveFriend(friend.id)}
-                                    className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
-                                  >
-                                    <UserX className="w-4 h-4 mr-2" />
-                                    Remove Friend
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => handleBlockUser(friend.id)}
-                                    className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
-                                  >
-                                    <Shield className="w-4 h-4 mr-2" />
-                                    Block
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
-                            </div>
 
-                            {/* Mobile hint: more menu accessible without swipe too */}
-                            <div className="sm:hidden">
-                              <DropdownMenu>
-                                <DropdownMenuTrigger asChild>
-                                  <button
-                                    aria-label="More options"
-                                    className="p-2.5 rounded-full text-[var(--text-muted)] active:bg-[var(--bg-card)] transition-colors"
-                                  >
-                                    <MoreVertical className="w-5 h-5" />
-                                  </button>
-                                </DropdownMenuTrigger>
-                                <DropdownMenuContent align="end" className="bg-[var(--bg-card)] border-[var(--border-subtle)]">
-                                  <DropdownMenuItem
-                                    onClick={() => startDM(friend.id)}
-                                    className="text-[var(--text-secondary)] focus:text-[var(--text-on-accent)] focus:bg-[#8B5CF6]"
-                                  >
-                                    <MessageCircle className="w-4 h-4 mr-2" />
-                                    Message
-                                  </DropdownMenuItem>
-                                  <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
-                                  <DropdownMenuItem
-                                    onClick={() => handleRemoveFriend(friend.id)}
-                                    className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
-                                  >
-                                    <UserX className="w-4 h-4 mr-2" />
-                                    Remove Friend
-                                  </DropdownMenuItem>
-                                  <DropdownMenuItem
-                                    onClick={() => handleBlockUser(friend.id)}
-                                    className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
-                                  >
-                                    <Shield className="w-4 h-4 mr-2" />
-                                    Block
-                                  </DropdownMenuItem>
-                                </DropdownMenuContent>
-                              </DropdownMenu>
+                              {/* Desktop hover actions */}
+                              <div className="hidden sm:flex items-center gap-1 opacity-0 group-hover:opacity-100 focus-within:opacity-100 transition-opacity shrink-0">
+                                <button
+                                  onClick={() => startDM(friend.id)}
+                                  aria-label="Message"
+                                  title="Message"
+                                  className="p-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors"
+                                >
+                                  <MessageCircle className="w-4 h-4 text-[var(--text-secondary)]" />
+                                </button>
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      aria-label="More options"
+                                      title="More"
+                                      className="p-2 rounded-lg hover:bg-[var(--bg-hover)] transition-colors"
+                                    >
+                                      <MoreVertical className="w-4 h-4 text-[var(--text-secondary)]" />
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent className="bg-[var(--bg-card)] border-[var(--border-subtle)]">
+                                    <DropdownMenuItem
+                                      onClick={() => startDM(friend.id)}
+                                      className="text-[var(--text-secondary)] focus:text-[var(--text-on-accent)] focus:bg-[var(--app-accent)]"
+                                    >
+                                      <MessageCircle className="w-4 h-4 mr-2" />
+                                      Message
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
+                                    <DropdownMenuItem
+                                      onClick={() => handleRemoveFriend(friend.id)}
+                                      className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
+                                    >
+                                      <UserX className="w-4 h-4 mr-2" />
+                                      Remove Friend
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => handleBlockUser(friend.id)}
+                                      className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
+                                    >
+                                      <Shield className="w-4 h-4 mr-2" />
+                                      Block
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
+
+                              {/* Mobile more menu */}
+                              <div className="sm:hidden shrink-0">
+                                <DropdownMenu>
+                                  <DropdownMenuTrigger asChild>
+                                    <button
+                                      aria-label="More options"
+                                      className="p-2 rounded-lg text-[var(--text-muted)] active:bg-[var(--bg-hover)] transition-colors"
+                                    >
+                                      <MoreVertical className="w-5 h-5" />
+                                    </button>
+                                  </DropdownMenuTrigger>
+                                  <DropdownMenuContent align="end" className="bg-[var(--bg-card)] border-[var(--border-subtle)]">
+                                    <DropdownMenuItem
+                                      onClick={() => startDM(friend.id)}
+                                      className="text-[var(--text-secondary)] focus:text-[var(--text-on-accent)] focus:bg-[var(--app-accent)]"
+                                    >
+                                      <MessageCircle className="w-4 h-4 mr-2" />
+                                      Message
+                                    </DropdownMenuItem>
+                                    <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
+                                    <DropdownMenuItem
+                                      onClick={() => handleRemoveFriend(friend.id)}
+                                      className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
+                                    >
+                                      <UserX className="w-4 h-4 mr-2" />
+                                      Remove Friend
+                                    </DropdownMenuItem>
+                                    <DropdownMenuItem
+                                      onClick={() => handleBlockUser(friend.id)}
+                                      className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
+                                    >
+                                      <Shield className="w-4 h-4 mr-2" />
+                                      Block
+                                    </DropdownMenuItem>
+                                  </DropdownMenuContent>
+                                </DropdownMenu>
+                              </div>
                             </div>
-                          </div>
-                        </SwipeableRow>
-                      ))}
-                    </div>
+                          </SwipeableRow>
+                        ))}
+                      </div>
+                    </>
                   ) : (
                     <EmptyState
-                      icon={<Users className="w-12 h-12 text-[#8B5CF6]" />}
+                      icon={<Users className="w-12 h-12 text-[var(--app-accent)]" />}
                       title={searchQuery ? "No friends found" : "No friends yet"}
                       description={searchQuery
-                        ? "Try a different search"
+                        ? "Try a different search term"
                         : "Add some friends to start chatting!"}
                     />
                   )}
@@ -799,22 +815,22 @@ export default function DirectMessagesPage() {
         </div>
 
         {/* Active Now sidebar */}
-        <div className="w-[360px] bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col">
+        <div className="w-[300px] bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden xl:flex flex-col shrink-0">
           <div className="p-4">
-            <h3 className="text-xl font-bold text-[var(--text-primary)] mb-4">Active Now</h3>
+            <h3 className="text-lg font-bold text-[var(--text-primary)] mb-4">Active Now</h3>
             
             {onlineFriends.length > 0 ? (
-              <div className="space-y-2">
-                {onlineFriends.slice(0, 5).map((friend) => (
+              <div className="space-y-1.5">
+                {onlineFriends.slice(0, 8).map((friend) => (
                   <div
                     key={friend.id}
-                    className="flex items-center gap-3 p-2 rounded-lg hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
+                    className="flex items-center gap-3 p-2.5 rounded-xl hover:bg-[var(--bg-hover)] cursor-pointer transition-colors"
                     onClick={() => startDM(friend.id)}
                   >
-                    <div className="relative">
+                    <div className="relative shrink-0">
                       <Avatar className="w-9 h-9">
                         <AvatarImage src={friend.avatar} />
-                        <AvatarFallback className="bg-[#8B5CF6] text-[var(--text-on-accent)] text-sm">
+                        <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
                           {(friend.displayName || friend.username).charAt(0).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
@@ -837,49 +853,47 @@ export default function DirectMessagesPage() {
                 ))}
               </div>
             ) : (
-              <div className="flex flex-col items-center justify-center py-10 text-center">
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <div className="w-16 h-16 rounded-full bg-[var(--app-accent)]/10 flex items-center justify-center mb-3">
+                  <Users className="w-8 h-8 text-[var(--app-accent)]/40" />
+                </div>
                 <p className="text-sm font-semibold text-[var(--text-primary)] mb-1">
-                  It&apos;s quiet for now...
+                  It&apos;s quiet for now
                 </p>
-                <p className="text-sm text-[var(--text-muted)] max-w-[200px]">
-                  When a friend starts an activity—like playing a game or hanging out on voice—we&apos;ll show it here!
+                <p className="text-xs text-[var(--text-muted)] max-w-[200px]">
+                  When friends come online, they&apos;ll appear here
                 </p>
               </div>
             )}
           </div>
 
-          {/* Serika+ Promo - Only show if user is not premium */}
-          {!user?.isPremium && (
-            <div className="mt-auto p-4">
-              <div className="p-4 rounded-lg bg-gradient-to-br from-[#8B5CF6]/20 to-[#6D28D9]/20 border border-[#8B5CF6]/30">
+          {/* Serika+ Promo / Premium badge */}
+          <div className="mt-auto p-4">
+            {!user?.isPremium ? (
+              <div className="p-4 rounded-xl bg-gradient-to-br from-[var(--app-accent)]/20 to-[var(--app-accent)]/5 border border-[var(--app-accent)]/30">
                 <div className="flex items-center gap-2 mb-2">
-                  <Sparkles className="w-5 h-5 text-[#8B5CF6]" />
+                  <Sparkles className="w-5 h-5 text-[var(--app-accent)]" />
                   <span className="font-semibold text-[var(--text-primary)]">Serika+</span>
                 </div>
                 <p className="text-sm text-[var(--text-secondary)] mb-3">
-                  Get bigger uploads, custom profiles, animated avatars, and more!
+                  Bigger uploads, custom profiles, animated avatars & more
                 </p>
-                <button className="w-full py-2.5 px-4 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white text-sm font-medium rounded-lg transition-colors">
-                  Upgrade to Serika+
+                <button className="w-full py-2.5 px-4 bg-[var(--app-accent)] hover:opacity-90 text-white text-sm font-medium rounded-lg transition-opacity">
+                  Upgrade
                 </button>
               </div>
-            </div>
-          )}
-
-          {/* Premium badge if user is premium */}
-          {user?.isPremium && (
-            <div className="mt-auto p-4">
-              <div className="p-4 rounded-lg bg-gradient-to-br from-[#8B5CF6]/10 to-[#6D28D9]/10 border border-[#8B5CF6]/20">
+            ) : (
+              <div className="p-4 rounded-xl bg-gradient-to-br from-[var(--app-accent)]/10 to-[var(--app-accent)]/5 border border-[var(--app-accent)]/20">
                 <div className="flex items-center gap-2 mb-2">
-                  <Crown className="w-5 h-5 text-[#8B5CF6]" />
+                  <Crown className="w-5 h-5 text-[var(--app-accent)]" />
                   <span className="font-semibold text-[var(--text-primary)]">Serika+ Active</span>
                 </div>
                 <p className="text-sm text-[var(--text-secondary)]">
-                  Thank you for supporting SerikaCord! You have access to all premium features.
+                  Thanks for supporting SerikaCord!
                 </p>
               </div>
-            </div>
-          )}
+            )}
+          </div>
         </div>
       </div>
     </div>
@@ -890,12 +904,12 @@ export default function DirectMessagesPage() {
 function EmptyState({ icon, title, description }: { icon: React.ReactNode; title: string; description: string }) {
   return (
     <div className="flex flex-col items-center justify-center py-20 text-center">
-      <div className="mb-6">
-        <div className="w-24 h-24 rounded-full bg-[#8B5CF6]/10 flex items-center justify-center">
+      <div className="mb-5">
+        <div className="w-20 h-20 rounded-2xl bg-[var(--app-accent)]/10 flex items-center justify-center">
           {icon}
         </div>
       </div>
-      <h3 className="text-lg font-medium text-[var(--text-primary)] mb-2">
+      <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-2">
         {title}
       </h3>
       <p className="text-sm text-[var(--text-muted)] max-w-xs">
