@@ -306,7 +306,7 @@ html.theme-midnight body {
      Smooth scrolling is applied per-call via scrollTo({ behavior: 'smooth' }). */
   scroll-behavior: auto;
   /* Improve paint performance for long message lists. */
-  contain: strict;
+  contain: content;
 }
 
 /* Thin, unobtrusive scrollbar shared by chat + dialog scroll areas. */

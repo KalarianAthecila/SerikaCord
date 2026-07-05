@@ -34,7 +34,7 @@ export default function EmojisPage() {
         setEmojis(data.emojis || []);
       }
     } catch {
-      // Demo mode
+      // ignore
     }
   };
 
@@ -45,25 +45,34 @@ export default function EmojisPage() {
     }
     setUploading(true);
     try {
-      const formData = new FormData();
-      formData.append("name", newName.trim());
-      formData.append("image", file);
-      const res = await fetch(`/api/developers/applications/${appId}/emojis`, {
-        method: "POST",
-        body: formData,
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setEmojis([...emojis, data.emoji]);
-        setNewName("");
-        setShowAdd(false);
-        toast.success("Emoji uploaded!");
-      } else {
-        toast.error("Failed to upload emoji");
-      }
+      const reader = new FileReader();
+      reader.onload = async () => {
+        const base64 = reader.result as string;
+        const animated = file.type === "image/gif";
+        const res = await fetch(`/api/developers/applications/${appId}/emojis`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: newName.trim(), image: base64, animated }),
+        });
+        if (res.ok) {
+          const data = await res.json();
+          setEmojis([...emojis, data.emoji]);
+          setNewName("");
+          setShowAdd(false);
+          toast.success("Emoji uploaded!");
+        } else {
+          const err = await res.json().catch(() => ({}));
+          toast.error(err.error || "Failed to upload emoji");
+        }
+        setUploading(false);
+      };
+      reader.onerror = () => {
+        toast.error("Failed to read file");
+        setUploading(false);
+      };
+      reader.readAsDataURL(file);
     } catch {
       toast.error("Failed to upload emoji");
-    } finally {
       setUploading(false);
     }
   };
@@ -77,6 +86,9 @@ export default function EmojisPage() {
       if (res.ok) {
         setEmojis(emojis.filter((e) => e.id !== id));
         toast.success("Emoji deleted");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to delete emoji");
       }
     } catch {
       toast.error("Failed to delete emoji");

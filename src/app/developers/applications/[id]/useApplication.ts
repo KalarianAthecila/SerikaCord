@@ -1,12 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { toast } from "sonner";
 
 export interface ApplicationData {
   id: string;
   name: string;
   description?: string;
   icon?: string;
+  coverImage?: string;
   botId?: string;
   botPublic?: boolean;
   botRequireCodeGrant?: boolean;
@@ -27,12 +29,14 @@ export interface ApplicationData {
   customInstallUrl?: string;
   emojiCount?: number;
   webhookCount?: number;
+  gatewayIntents?: number;
 }
 
 export function useApplication(appId: string) {
   const [app, setApp] = useState<ApplicationData | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const fetchApp = useCallback(async () => {
     try {
@@ -40,26 +44,13 @@ export function useApplication(appId: string) {
       if (res.ok) {
         const data = await res.json();
         setApp(data.application || data);
+        setError(null);
+      } else {
+        const err = await res.json().catch(() => ({}));
+        setError(err.error || "Failed to load application");
       }
     } catch {
-      // Demo mode — return mock data
-      setApp({
-        id: appId,
-        name: "My Awesome Bot",
-        description: "",
-        clientId: appId,
-        botId: appId,
-        botPublic: false,
-        botRequireCodeGrant: false,
-        redirectUris: [],
-        scopes: [],
-        verified: false,
-        serverCount: 0,
-        createdAt: new Date().toISOString(),
-        tags: [],
-        emojiCount: 0,
-        webhookCount: 0,
-      });
+      setError("Failed to connect to server");
     } finally {
       setLoading(false);
     }
@@ -80,14 +71,19 @@ export function useApplication(appId: string) {
       if (res.ok) {
         const data = await res.json();
         setApp((prev) => ({ ...prev, ...data.application, ...patch }));
+        return true;
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to save changes");
+        return false;
       }
-      setApp((prev) => (prev ? { ...prev, ...patch } : prev));
     } catch {
-      setApp((prev) => (prev ? { ...prev, ...patch } : prev));
+      toast.error("Failed to save changes");
+      return false;
     } finally {
       setSaving(false);
     }
   };
 
-  return { app, loading, saving, saveApp, refetch: fetchApp };
+  return { app, loading, saving, error, saveApp, refetch: fetchApp };
 }

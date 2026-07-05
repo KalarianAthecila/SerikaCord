@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { Crown, Play } from "lucide-react";
+import { Crown, Play, Pause } from "lucide-react";
 import { useServer } from "@/contexts/ServerContext";
 import { useMoeActivity } from "@/hooks/useMoeActivity";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -230,9 +230,13 @@ function MemberItem({ member, serverId }: MemberItemProps) {
             );
           })()}
           {moeActivity ? (
-            <div className="flex items-center gap-1 text-xs text-[#8B5CF6] truncate">
-              <Play className="w-2.5 h-2.5 shrink-0 fill-current" />
-              <span className="truncate">Watching {moeActivity.titleName}</span>
+            <div className="flex items-center gap-1 text-xs text-[#8B5CF6] min-w-0">
+              {moeActivity.isPaused ? (
+                <Pause className="w-2.5 h-2.5 shrink-0 fill-current" />
+              ) : (
+                <Play className="w-2.5 h-2.5 shrink-0 fill-current" />
+              )}
+              <span className="truncate min-w-0">Watching {moeActivity.titleName}</span>
             </div>
           ) : (
             subtitle && (

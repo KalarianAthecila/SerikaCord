@@ -29,6 +29,7 @@ export interface IApplication extends Document {
   termsOfServiceUrl?: string | null;
   privacyPolicyUrl?: string | null;
   flags: number;
+  gatewayIntents: number;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -61,6 +62,7 @@ const ApplicationSchema = new Schema<IApplication>({
   termsOfServiceUrl: { type: String, default: null },
   privacyPolicyUrl: { type: String, default: null },
   flags: { type: Number, default: 0 },
+  gatewayIntents: { type: Number, default: 0 },
 }, {
   timestamps: true,
 });

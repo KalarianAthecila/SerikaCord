@@ -4,9 +4,10 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { LogoInline } from "@/components/ui/Logo";
 import { cn } from "@/lib/utils";
-import { Book, Boxes, Users, ExternalLink } from "lucide-react";
+import { Home, Book, Boxes, Users, ExternalLink } from "lucide-react";
 
 const navItems = [
+  { label: "Home", href: "/developers/home", icon: Home },
   { label: "Applications", href: "/developers/applications", icon: Boxes },
   { label: "Teams", href: "/developers/teams", icon: Users },
   { label: "Documentation", href: "/developers/docs/intro", icon: Book },
@@ -23,20 +24,22 @@ export default function DevelopersLayout({
   return (
     <div className="min-h-screen bg-[#0a0a0a] text-white flex flex-col">
       {/* Top Navigation */}
-      <header className="h-14 border-b border-white/[0.06] bg-[#0a0a0a] sticky top-0 z-50 flex items-center px-4 gap-6">
-        <Link href="/" className="flex items-center gap-2 shrink-0">
+      <header className="h-14 border-b border-white/[0.06] bg-[#0a0a0a] sticky top-0 z-50 flex items-center px-4 gap-6 backdrop-blur-sm">
+        <Link href="/developers/home" className="flex items-center gap-2 shrink-0">
           <LogoInline size={28} />
           <span className="font-bold text-sm hidden sm:inline">
             SerikaCord Developers
           </span>
         </Link>
 
-        <nav className="flex items-center gap-1">
+        <nav className="flex items-center gap-0.5">
           {navItems.map((item) => {
             const active =
               item.href === "/developers/docs/intro"
                 ? isDocs
-                : pathname?.startsWith(item.href);
+                : item.href === "/developers/home"
+                  ? pathname === "/developers/home" || pathname === "/developers"
+                  : pathname?.startsWith(item.href);
             return (
               <Link
                 key={item.href}
@@ -45,7 +48,7 @@ export default function DevelopersLayout({
                   "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
                   active
                     ? "bg-white/10 text-white"
-                    : "text-[#999] hover:text-white hover:bg-white/5"
+                    : "text-[#949ba4] hover:text-white hover:bg-white/[0.04]"
                 )}
               >
                 <item.icon className="size-4" />

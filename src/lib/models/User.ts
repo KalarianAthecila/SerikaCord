@@ -305,9 +305,8 @@ const UserSchema = new Schema<IUser>({
       default: 'dark',
     },
     customTheme: {
-      primary: { type: String, default: null },
-      secondary: { type: String, default: null },
-      accent: { type: String, default: null },
+      type: Schema.Types.Mixed,
+      default: null,
     },
   },
   gifFavorites: [{

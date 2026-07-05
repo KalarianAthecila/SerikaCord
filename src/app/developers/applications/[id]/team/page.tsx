@@ -34,7 +34,7 @@ export default function TeamPage() {
         setMembers(data.members || []);
       }
     } catch {
-      // Demo mode
+      // ignore
     }
   };
 
@@ -53,7 +53,8 @@ export default function TeamPage() {
         setShowInvite(false);
         toast.success("Team member invited!");
       } else {
-        toast.error("Failed to invite member");
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to invite member");
       }
     } catch {
       toast.error("Failed to invite member");
@@ -69,6 +70,9 @@ export default function TeamPage() {
       if (res.ok) {
         setMembers(members.filter((m) => m.id !== id));
         toast.success("Member removed");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to remove member");
       }
     } catch {
       toast.error("Failed to remove member");

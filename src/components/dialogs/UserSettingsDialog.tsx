@@ -1391,7 +1391,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 <span className="text-[14px] font-bold text-white">Gradient Background (Optional)</span>
                                 <button onClick={() => setProfileGradient([])} className="text-[#B5BAC1] hover:text-white" title="Reset Gradient"><RotateCcw className="w-4 h-4" /></button>
                               </div>
-                              <div className="flex flex-wrap gap-2.5">
+                              <div className="flex flex-wrap gap-2.5 mb-3">
                                 {[
                                   ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
                                   ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
@@ -1406,6 +1406,38 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                   );
                                 })}
                               </div>
+                              {/* Custom gradient color pickers */}
+                              <div className="flex items-center gap-3 p-3 bg-[#1e1f22] rounded-lg">
+                                <div className="flex items-center gap-2">
+                                  <label className="text-xs text-[#B5BAC1] font-medium">From</label>
+                                  <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[0] || '#8B5CF6' }}>
+                                    <input
+                                      type="color"
+                                      value={profileGradient[0] || '#8B5CF6'}
+                                      onChange={(e) => {
+                                        const end = profileGradient[1] || '#6366F1';
+                                        setProfileGradient([e.target.value, end]);
+                                      }}
+                                      className="absolute inset-0 opacity-0 cursor-pointer"
+                                    />
+                                  </label>
+                                </div>
+                                <div className="flex-1 h-2 rounded-full" style={{ background: profileGradient.length >= 2 ? `linear-gradient(90deg, ${profileGradient.join(', ')})` : 'linear-gradient(90deg, #8B5CF6, #6366F1)' }} />
+                                <div className="flex items-center gap-2">
+                                  <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[1] || '#6366F1' }}>
+                                    <input
+                                      type="color"
+                                      value={profileGradient[1] || '#6366F1'}
+                                      onChange={(e) => {
+                                        const start = profileGradient[0] || '#8B5CF6';
+                                        setProfileGradient([start, e.target.value]);
+                                      }}
+                                      className="absolute inset-0 opacity-0 cursor-pointer"
+                                    />
+                                  </label>
+                                  <label className="text-xs text-[#B5BAC1] font-medium">To</label>
+                                </div>
+                              </div>
                             </div>
                           </div>
                         </div>
@@ -1415,49 +1447,74 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     {/* Preview */}
                     <div>
                       <h3 className="text-xs font-bold text-[var(--text-secondary)] uppercase mb-3">Preview</h3>
-                      <div className="bg-[#232428] rounded-lg overflow-hidden w-full max-w-[300px]">
+                      <div className="rounded-xl overflow-hidden w-full max-w-[320px] shadow-xl border border-white/5">
+                        {/* Banner */}
                         <div
-                          className="h-[60px]"
+                          className="h-[100px] relative"
                           style={{
                             background: user?.banner
                               ? `url(${user.banner}) center/cover`
-                              : `linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)`,
+                              : profileGradient.length >= 2
+                                ? `linear-gradient(135deg, ${profileGradient.join(', ')})`
+                                : profileColor
+                                  ? profileColor
+                                  : `linear-gradient(135deg, #8B5CF6 0%, #6366F1 100%)`,
                           }}
-                        />
-                        <div className="p-3 pt-0 relative">
-                          <div className="absolute -top-6 left-3">
-                            <Avatar className="w-[72px] h-[72px] border-[5px] border-[#232428]">
+                        >
+                          {user?.isPremium && (
+                            <div className="absolute top-2 right-2 bg-black/30 backdrop-blur-sm rounded-full px-2 py-0.5 flex items-center gap-1">
+                              <Crown className="w-3 h-3 text-yellow-400" />
+                              <span className="text-[10px] text-white font-medium">Serika+</span>
+                            </div>
+                          )}
+                        </div>
+                        {/* Profile body */}
+                        <div className="bg-[#111214] px-4 pb-4 relative">
+                          {/* Avatar */}
+                          <div className="-mt-8 mb-2">
+                            <Avatar className="w-[80px] h-[80px] border-[6px] border-[#111214] rounded-full">
                               <AvatarImage src={user?.avatar} />
-                              <AvatarFallback className="bg-[#8B5CF6] text-white text-xl">
-                                {user?.displayName?.charAt(0).toUpperCase() || "?"}
+                              <AvatarFallback className="bg-[#8B5CF6] text-white text-2xl font-bold">
+                                {(displayName || user?.username)?.charAt(0).toUpperCase() || "?"}
                               </AvatarFallback>
                             </Avatar>
                           </div>
-                          <div className="pt-10 bg-[#111214] rounded-lg p-3 mt-2"
-                            style={getProfileBackgroundStyle({ profileColor, profileGradient })}
-                          >
+                          {/* Name + username */}
+                          <div className="mb-2">
                             <h3
-                              className={cn("font-bold text-white", getDisplayNameStyleClasses(displayNameStyle))}
+                              className={cn("text-lg font-bold leading-tight", getDisplayNameStyleClasses(displayNameStyle))}
                               style={getDisplayNameStyleInline(displayNameStyle)}
                             >
                               {displayName || user?.username}
                             </h3>
-                            <div className="flex items-center gap-1 text-sm text-[var(--text-secondary)]">
+                            <div className="flex items-center gap-1.5 text-sm text-[#949ba4] mt-0.5">
                               <span>{user?.username}</span>
                               {pronouns && (
                                 <>
-                                  <span>•</span>
+                                  <span className="text-[#4e5058]">•</span>
                                   <span>{pronouns}</span>
                                 </>
                               )}
                             </div>
-                            {bio && (
-                              <>
-                                <div className="h-px bg-[#2e2f34] my-3" />
-                                <p className="text-sm text-[#dbdee1]">{bio}</p>
-                              </>
-                            )}
                           </div>
+                          {/* Custom status */}
+                          {customStatus && (
+                            <div className="mb-2 text-sm text-[#dbdee1] italic">
+                              "{customStatus}"
+                            </div>
+                          )}
+                          {/* Bio */}
+                          {bio && (
+                            <div
+                              className="rounded-lg p-3 mt-2 bg-white/5"
+                              style={profileColor || profileGradient.length >= 2
+                                ? getProfileBackgroundStyle({ profileColor, profileGradient })
+                                : undefined
+                              }
+                            >
+                              <p className="text-sm text-white/90 leading-relaxed">{bio}</p>
+                            </div>
+                          )}
                         </div>
                       </div>
                     </div>

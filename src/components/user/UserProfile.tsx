@@ -148,7 +148,7 @@ export function UserProfile({ user, isOpen, onClose, variant = 'popup', isCurren
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
             transition={{ type: "spring", duration: 0.4 }}
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-[95vw] max-h-[80vh] bg-[#232428] rounded-2xl shadow-2xl overflow-hidden z-50 border border-[#1e1f22]"
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-[95vw] max-h-[80vh] bg-[#232428] rounded-2xl shadow-2xl overflow-y-auto scrollbar-thin z-50 border border-[#1e1f22]"
           >
             <button
               onClick={onClose}
@@ -188,7 +188,11 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
         style={{
           background: user.banner 
             ? `url(${user.banner}) center/cover`
-            : user.bannerColor || 'linear-gradient(135deg, #5865F2 0%, #EB459E 100%)',
+            : user.customization?.profileGradient && user.customization.profileGradient.length >= 2
+              ? `linear-gradient(135deg, ${user.customization.profileGradient.join(', ')})`
+              : user.customization?.profileColor
+                ? user.customization.profileColor
+                : user.bannerColor || 'linear-gradient(135deg, #5865F2 0%, #EB459E 100%)',
         }}
       >
         {/* Gradient overlay */}

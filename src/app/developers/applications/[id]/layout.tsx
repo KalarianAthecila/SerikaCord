@@ -15,6 +15,7 @@ import {
   Activity,
   Loader2,
   ArrowLeft,
+  AlertTriangle,
 } from "lucide-react";
 import { useApplication } from "./useApplication";
 
@@ -38,14 +39,14 @@ export default function ApplicationDetailLayout({
   const params = useParams();
   const pathname = usePathname();
   const appId = params.id as string;
-  const { app, loading } = useApplication(appId);
+  const { app, loading, error } = useApplication(appId);
 
   const activeTab = pathname?.split("/").pop() || "information";
 
   return (
     <div className="flex-1 flex overflow-hidden">
       {/* Sidebar */}
-      <aside className="w-64 border-r border-white/[0.06] bg-[#0d0d0d] flex flex-col shrink-0">
+      <aside className="w-64 border-r border-white/[0.06] bg-[#0d0d0d] flex flex-col shrink-0 h-[calc(100vh-3.5rem)] sticky top-0">
         <div className="p-4 border-b border-white/[0.06]">
           <Link
             href="/developers/applications"
@@ -60,9 +61,9 @@ export default function ApplicationDetailLayout({
             </div>
           ) : (
             <div className="flex items-center gap-3">
-              <div className="size-10 rounded-lg bg-gradient-to-br from-[#8B5CF6] to-[#6366f1] flex items-center justify-center shrink-0">
+              <div className="size-10 rounded-xl bg-gradient-to-br from-[#8B5CF6] to-[#6366f1] flex items-center justify-center shrink-0 overflow-hidden">
                 {app?.icon ? (
-                  <img src={app.icon} alt="" className="size-10 rounded-lg object-cover" />
+                  <img src={app.icon} alt="" className="size-10 rounded-xl object-cover" />
                 ) : (
                   <Bot className="size-5 text-white" />
                 )}
@@ -83,10 +84,10 @@ export default function ApplicationDetailLayout({
                 key={tab.href}
                 href={`/developers/applications/${appId}/${tab.href}`}
                 className={cn(
-                  "flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors mb-0.5",
+                  "flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors mb-0.5",
                   active
                     ? "bg-white/10 text-white"
-                    : "text-[#999] hover:text-white hover:bg-white/5"
+                    : "text-[#949ba4] hover:text-white hover:bg-white/[0.04]"
                 )}
               >
                 <tab.icon className="size-4 shrink-0" />
@@ -116,7 +117,25 @@ export default function ApplicationDetailLayout({
 
       {/* Main content */}
       <div className="flex-1 overflow-y-auto bg-[#0a0a0a]">
-        <div className="max-w-3xl mx-auto px-6 py-8">{children}</div>
+        <div className="max-w-3xl mx-auto px-6 py-8">
+          {error ? (
+            <div className="flex flex-col items-center justify-center py-20 text-center">
+              <div className="size-16 rounded-2xl bg-red-500/10 flex items-center justify-center mb-4">
+                <AlertTriangle className="size-8 text-red-400" />
+              </div>
+              <h2 className="text-base font-semibold mb-1">Failed to load application</h2>
+              <p className="text-sm text-[#777] mb-4">{error}</p>
+              <Link
+                href="/developers/applications"
+                className="flex items-center gap-2 px-4 py-2 bg-white/[0.06] hover:bg-white/[0.1] text-sm font-medium rounded-lg transition-colors"
+              >
+                <ArrowLeft className="size-4" /> Back to Applications
+              </Link>
+            </div>
+          ) : (
+            children
+          )}
+        </div>
       </div>
     </div>
   );

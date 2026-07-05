@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Play, Pause } from "lucide-react";
+import { useEffect, useState, type ReactNode } from "react";
+import { Play, Pause, CheckCircle2 } from "lucide-react";
 import type { MoeActivity } from "@/hooks/useMoeActivity";
 
 function formatTime(totalSeconds: number): string {
@@ -16,19 +16,22 @@ function formatTime(totalSeconds: number): string {
 function subtitle(activity: MoeActivity): string {
   const parts: string[] = [];
   if (activity.seasonNumber != null && activity.episodeNumber != null) {
-    parts.push(`S${activity.seasonNumber}·E${activity.episodeNumber}`);
+    parts.push(`S${activity.seasonNumber} · E${activity.episodeNumber}`);
   } else if (activity.episodeNumber != null) {
     parts.push(`Episode ${activity.episodeNumber}`);
   }
   if (activity.episodeName) parts.push(activity.episodeName);
-  return parts.join(" — ");
+  return parts.join("  ·  ");
 }
+
+type PlaybackState = "playing" | "paused" | "finished";
 
 /**
  * Discord-Spotify-style "Watching on serika.moe" activity card.
  *
  * Ticks the progress bar locally between server polls so it feels live, and
- * pauses ticking when the stream is paused.
+ * pauses ticking when the stream is paused. Derives a discrete playback state
+ * (playing / paused / finished) for a clearer, nicer status presentation.
  */
 export function NowWatchingCard({ activity }: { activity: MoeActivity }) {
   const duration = activity.durationSeconds ?? 0;
@@ -51,50 +54,108 @@ export function NowWatchingCard({ activity }: { activity: MoeActivity }) {
   const pct = duration > 0 ? Math.min(100, (current / duration) * 100) : 0;
   const line2 = subtitle(activity);
 
-  return (
-    <div className="rounded-lg bg-white/[0.03] border border-white/[0.05] p-3">
-      <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-2 flex items-center gap-1.5">
-        {activity.isPaused ? (
-          <Pause className="w-3 h-3 text-[#8B5CF6]" />
-        ) : (
-          <Play className="w-3 h-3 text-[#8B5CF6] fill-[#8B5CF6]" />
-        )}
-        Watching on serika.moe
-      </h4>
+  // Consider the episode finished once we're within a few seconds of the end.
+  const isFinished = duration > 0 && current >= duration - 2;
+  const state: PlaybackState = isFinished ? "finished" : activity.isPaused ? "paused" : "playing";
 
-      <div className="flex gap-3">
+  const stateConfig: Record<PlaybackState, { label: string; icon: ReactNode; dot: string }> = {
+    playing: {
+      label: "Playing",
+      icon: <Play className="w-3 h-3 fill-[#8B5CF6] text-[#8B5CF6]" />,
+      dot: "bg-[#8B5CF6] animate-pulse",
+    },
+    paused: {
+      label: "Paused",
+      icon: <Pause className="w-3 h-3 fill-[#9a9aad] text-[#9a9aad]" />,
+      dot: "bg-[#9a9aad]",
+    },
+    finished: {
+      label: "Finished",
+      icon: <CheckCircle2 className="w-3 h-3 text-[#22c55e]" />,
+      dot: "bg-[#22c55e]",
+    },
+  };
+  const cfg = stateConfig[state];
+
+  return (
+    <div className="overflow-hidden rounded-xl border border-white/[0.06] bg-gradient-to-b from-white/[0.05] to-white/[0.02] shadow-[0_1px_0_rgba(255,255,255,0.03)_inset]">
+      {/* Header */}
+      <div className="flex items-center justify-between px-3 pt-2.5 pb-2">
+        <h4 className="text-[11px] font-bold uppercase tracking-wide text-[#9a9aad]">
+          Watching on serika.moe
+        </h4>
+        <span className="flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#c8c8d8]">
+          <span className={`w-1.5 h-1.5 rounded-full ${cfg.dot}`} />
+          {cfg.label}
+        </span>
+      </div>
+
+      {/* 16:9 wide thumbnail */}
+      <div className="relative mx-3 aspect-video overflow-hidden rounded-lg border border-white/[0.06]">
         {activity.posterUrl ? (
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={activity.posterUrl}
             alt={activity.titleName}
-            className="w-12 h-16 rounded-md object-cover shrink-0 border border-white/[0.06]"
+            className={`h-full w-full object-cover transition-[filter,opacity] duration-300 ${
+              state === "paused" ? "brightness-[0.6] saturate-50" : ""
+            }`}
           />
         ) : (
-          <div className="w-12 h-16 rounded-md shrink-0 bg-gradient-to-br from-[#8B5CF6] to-[#4F46E5]" />
+          <div className="h-full w-full bg-gradient-to-br from-[#8B5CF6] to-[#4F46E5]" />
         )}
 
-        <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-white truncate" title={activity.titleName}>
+        {/* Bottom gradient + title overlay */}
+        <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-2.5 pt-8">
+          <p className="truncate text-sm font-semibold text-white drop-shadow" title={activity.titleName}>
             {activity.titleName}
           </p>
-          {line2 && <p className="text-xs text-[#c8c8d8] truncate mt-0.5" title={line2}>{line2}</p>}
-
-          {duration > 0 && (
-            <div className="mt-2">
-              <div className="h-1 rounded-full bg-white/10 overflow-hidden">
-                <div
-                  className="h-full rounded-full bg-[#8B5CF6] transition-[width] duration-1000 ease-linear"
-                  style={{ width: `${pct}%` }}
-                />
-              </div>
-              <div className="flex justify-between text-[10px] text-[#9a9aad] mt-1 tabular-nums">
-                <span>{formatTime(current)}</span>
-                <span>{formatTime(duration)}</span>
-              </div>
-            </div>
+          {line2 && (
+            <p className="truncate text-[11px] text-white/75" title={line2}>
+              {line2}
+            </p>
           )}
         </div>
+
+        {/* Center play/pause state badge */}
+        <div className="absolute inset-0 flex items-center justify-center">
+          <div
+            className={`flex items-center justify-center rounded-full bg-black/45 backdrop-blur-sm transition-opacity duration-300 ${
+              state === "playing" ? "h-9 w-9 opacity-0" : "h-11 w-11 opacity-100"
+            }`}
+          >
+            {state === "finished" ? (
+              <CheckCircle2 className="h-6 w-6 text-[#22c55e]" />
+            ) : (
+              <Pause className="h-5 w-5 fill-white text-white" />
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Progress */}
+      <div className="px-3 pb-3 pt-2.5">
+        {duration > 0 ? (
+          <>
+            <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+              <div
+                className={`h-full rounded-full transition-[width] duration-1000 ease-linear ${
+                  state === "finished" ? "bg-[#22c55e]" : state === "paused" ? "bg-[#9a9aad]" : "bg-[#8B5CF6]"
+                }`}
+                style={{ width: `${pct}%` }}
+              />
+            </div>
+            <div className="mt-1.5 flex justify-between text-[10px] tabular-nums text-[#9a9aad]">
+              <span>{formatTime(current)}</span>
+              <span>{formatTime(duration)}</span>
+            </div>
+          </>
+        ) : (
+          <div className="flex items-center gap-1.5 text-[11px] text-[#9a9aad]">
+            {cfg.icon}
+            {cfg.label}
+          </div>
+        )}
       </div>
     </div>
   );

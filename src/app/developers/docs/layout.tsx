@@ -5,7 +5,7 @@ import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { docNav } from "@/lib/constants/docs-nav";
-import { Search, Menu, X, ChevronRight, ExternalLink } from "lucide-react";
+import { Search, Menu, X, ExternalLink } from "lucide-react";
 
 export default function DocsLayout({
   children,
@@ -35,7 +35,7 @@ export default function DocsLayout({
   }, [search]);
 
   return (
-    <div className="flex-1 flex overflow-hidden">
+    <div className="flex-1 flex relative">
       {/* Mobile sidebar toggle */}
       <button
         onClick={() => setSidebarOpen(!sidebarOpen)}
@@ -44,16 +44,25 @@ export default function DocsLayout({
         {sidebarOpen ? <X className="size-5" /> : <Menu className="size-5" />}
       </button>
 
+      {/* Overlay for mobile */}
+      {sidebarOpen && (
+        <div
+          className="fixed inset-0 bg-black/60 z-30 md:hidden backdrop-blur-sm"
+          onClick={() => setSidebarOpen(false)}
+        />
+      )}
+
       {/* Sidebar */}
       <aside
         className={cn(
-          "w-72 border-r border-white/[0.06] bg-[#0d0d0d] flex flex-col shrink-0 overflow-y-auto",
-          "fixed md:static inset-y-0 left-0 z-40 transition-transform md:translate-x-0",
+          "w-64 border-r border-white/[0.06] bg-[#0d0d0d] flex flex-col shrink-0",
+          "fixed md:sticky top-0 left-0 z-40 transition-transform md:translate-x-0",
+          "h-screen md:h-[calc(100vh-3.5rem)]",
           sidebarOpen ? "translate-x-0" : "-translate-x-full"
         )}
       >
         {/* Search */}
-        <div className="p-4 border-b border-white/[0.06] sticky top-0 bg-[#0d0d0d] z-10">
+        <div className="p-3 border-b border-white/[0.06] shrink-0">
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 size-4 text-[#555]" />
             <input
@@ -61,16 +70,16 @@ export default function DocsLayout({
               value={search}
               onChange={(e) => setSearch(e.target.value)}
               placeholder="Search docs..."
-              className="w-full bg-[#1a1a1a] border border-white/[0.08] rounded-md pl-10 pr-4 py-2 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#8B5CF6]/50"
+              className="w-full bg-[#1a1a1a] border border-white/[0.08] rounded-lg pl-10 pr-4 py-2 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#8B5CF6]/50 transition-colors"
             />
           </div>
         </div>
 
         {/* Navigation */}
-        <nav className="flex-1 p-3">
+        <nav className="flex-1 overflow-y-auto p-2 docs-sidebar-scroll">
           {filteredNav.map((section) => (
-            <div key={section.title} className="mb-6">
-              <h3 className="text-xs font-bold text-[#666] uppercase tracking-wide px-3 mb-2">
+            <div key={section.title} className="mb-4">
+              <h3 className="text-[11px] font-bold text-[#555] uppercase tracking-wider px-3 mb-1.5">
                 {section.title}
               </h3>
               {section.items.map((item) => {
@@ -82,18 +91,15 @@ export default function DocsLayout({
                     href={href}
                     onClick={() => setSidebarOpen(false)}
                     className={cn(
-                      "flex items-center gap-2 px-3 py-1.5 rounded-md text-sm transition-colors mb-0.5",
+                      "flex items-center gap-2 px-3 py-1.5 rounded-md text-[13px] transition-colors mb-0.5",
                       active
-                        ? "bg-[#8B5CF6]/15 text-[#a78bfa] font-medium"
-                        : "text-[#999] hover:text-white hover:bg-white/5"
+                        ? "bg-[#8B5CF6]/12 text-[#a78bfa] font-medium"
+                        : "text-[#949ba4] hover:text-white hover:bg-white/[0.04]"
                     )}
                   >
-                    <ChevronRight
-                      className={cn("size-3 shrink-0", active ? "text-[#8B5CF6]" : "text-[#333]")}
-                    />
                     {item.label}
                     {item.badge && (
-                      <span className="ml-auto text-[10px] bg-[#5865F2] text-white px-1.5 py-0.5 rounded">
+                      <span className="ml-auto text-[10px] bg-[#5865F2] text-white px-1.5 py-0.5 rounded font-medium">
                         {item.badge}
                       </span>
                     )}
@@ -105,27 +111,19 @@ export default function DocsLayout({
         </nav>
 
         {/* Footer */}
-        <div className="p-4 border-t border-white/[0.06]">
+        <div className="p-3 border-t border-white/[0.06] shrink-0">
           <Link
             href="/developers/applications"
-            className="text-xs text-[#666] hover:text-white transition-colors flex items-center gap-1"
+            className="text-xs text-[#666] hover:text-white transition-colors flex items-center gap-1.5"
           >
             <ExternalLink className="size-3" /> Go to Applications
           </Link>
         </div>
       </aside>
 
-      {/* Overlay for mobile */}
-      {sidebarOpen && (
-        <div
-          className="fixed inset-0 bg-black/50 z-30 md:hidden"
-          onClick={() => setSidebarOpen(false)}
-        />
-      )}
-
       {/* Main content */}
       <div className="flex-1 overflow-y-auto">
-        <div className="max-w-3xl mx-auto px-6 py-10">{children}</div>
+        <div className="max-w-3xl mx-auto px-6 md:px-10 py-8 md:py-12">{children}</div>
       </div>
     </div>
   );

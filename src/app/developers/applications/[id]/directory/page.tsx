@@ -18,12 +18,20 @@ export default function DirectoryPage() {
   useEffect(() => {
     if (app) {
       setShortDesc(app.description || "");
+      setLongDesc(app.description || "");
+      setCategory(app.tags?.[0] || "");
+      setHeroImage(app.icon || "");
     }
   }, [app]);
 
   const handleSave = async () => {
-    await saveApp({ description: shortDesc });
-    toast.success("Directory page saved");
+    const tags = category ? [category] : [];
+    const ok = await saveApp({
+      description: shortDesc,
+      tags,
+      coverImage: heroImage || undefined,
+    });
+    if (ok) toast.success("Directory page saved");
   };
 
   if (loading) {

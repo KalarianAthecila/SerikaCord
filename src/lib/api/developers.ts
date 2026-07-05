@@ -58,6 +58,7 @@ function sanitizeApp(app: any) {
     termsOfServiceUrl: app.termsOfServiceUrl,
     privacyPolicyUrl: app.privacyPolicyUrl,
     flags: app.flags,
+    gatewayIntents: app.gatewayIntents,
     createdAt: app.createdAt,
     updatedAt: app.updatedAt,
   };
@@ -192,7 +193,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const allowed: string[] = [
     'name', 'description', 'icon', 'coverImage', 'botPublic', 'botRequireCodeGrant',
     'redirectUris', 'scopes', 'installParams', 'customInstallUrl', 'tags',
-    'termsOfServiceUrl', 'privacyPolicyUrl', 'rpcOrigins',
+    'termsOfServiceUrl', 'privacyPolicyUrl', 'rpcOrigins', 'gatewayIntents',
   ];
 
   for (const key of allowed) {
@@ -391,6 +392,33 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
     events: webhook.events,
     active: webhook.active,
   }};
+})
+
+.patch('/applications/:id/webhooks/:webhookId', async ({ headers, cookie, params, body, set }) => {
+  const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+  if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
+
+  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+
+  const webhook = await AppWebhook.findById(params.webhookId);
+  if (!webhook || webhook.applicationId.toString() !== params.id) {
+    set.status = 404; return { error: 'Webhook not found' };
+  }
+
+  const patch = body as any;
+  if (patch.active !== undefined) webhook.active = patch.active;
+  if (patch.events !== undefined) webhook.events = patch.events;
+  if (patch.name !== undefined) webhook.name = patch.name;
+  if (patch.url !== undefined) webhook.url = patch.url;
+
+  await webhook.save();
+  return {
+    id: webhook._id.toString(),
+    name: webhook.name,
+    url: webhook.url,
+    events: webhook.events,
+    active: webhook.active,
+  };
 })
 
 .delete('/applications/:id/webhooks/:webhookId', async ({ headers, cookie, params, set }) => {

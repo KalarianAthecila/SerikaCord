@@ -3,7 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getPrevNext } from "@/lib/constants/docs-nav";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Info, AlertTriangle, AlertCircle, Copy } from "lucide-react";
+import { useState } from "react";
 
 export function DocPage({
   title,
@@ -21,10 +22,10 @@ export function DocPage({
   return (
     <article>
       <header className="mb-8 pb-6 border-b border-white/[0.06]">
-        <h1 className="text-3xl font-bold text-white mb-2">{title}</h1>
-        {description && <p className="text-[#888] text-base">{description}</p>}
+        <h1 className="text-2xl md:text-3xl font-bold text-white mb-2 tracking-tight">{title}</h1>
+        {description && <p className="text-[#949ba4] text-base leading-relaxed">{description}</p>}
       </header>
-      <div className="text-[#ccc] text-sm leading-relaxed space-y-4 doc-content">
+      <div className="text-[#dbdee1] text-[15px] leading-relaxed space-y-4 doc-content">
         {children}
       </div>
 
@@ -33,9 +34,9 @@ export function DocPage({
         {prev ? (
           <Link
             href={`/developers/docs/${prev.slug}`}
-            className="flex items-center gap-2 text-sm text-[#888] hover:text-white transition-colors group"
+            className="flex items-center gap-3 text-sm text-[#949ba4] hover:text-white transition-colors group rounded-lg p-2 -ml-2 hover:bg-white/[0.03]"
           >
-            <ChevronLeft className="size-4 group-hover:-translate-x-0.5 transition-transform" />
+            <ChevronLeft className="size-5 group-hover:-translate-x-0.5 transition-transform shrink-0" />
             <div>
               <p className="text-xs text-[#555]">Previous</p>
               <p className="font-medium">{prev.label}</p>
@@ -47,13 +48,13 @@ export function DocPage({
         {next ? (
           <Link
             href={`/developers/docs/${next.slug}`}
-            className="flex items-center gap-2 text-sm text-[#888] hover:text-white transition-colors group text-right"
+            className="flex items-center gap-3 text-sm text-[#949ba4] hover:text-white transition-colors group text-right rounded-lg p-2 -mr-2 hover:bg-white/[0.03]"
           >
             <div>
               <p className="text-xs text-[#555]">Next</p>
               <p className="font-medium">{next.label}</p>
             </div>
-            <ChevronRight className="size-4 group-hover:translate-x-0.5 transition-transform" />
+            <ChevronRight className="size-5 group-hover:translate-x-0.5 transition-transform shrink-0" />
           </Link>
         ) : (
           <div />
@@ -64,10 +65,28 @@ export function DocPage({
 }
 
 export function CodeBlock({ children, lang = "bash" }: { children: string; lang?: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = () => {
+    navigator.clipboard.writeText(children);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
   return (
-    <pre className="bg-[#0d0d0d] border border-white/[0.08] rounded-lg p-4 overflow-x-auto my-4">
-      <code className={`language-${lang} text-xs font-mono text-[#ccc]`}>{children}</code>
-    </pre>
+    <div className="my-4 rounded-lg border border-white/[0.08] overflow-hidden bg-[#0d0d0d]">
+      <div className="flex items-center justify-between px-4 py-2 border-b border-white/[0.06] bg-white/[0.02]">
+        <span className="text-xs font-mono text-[#666] uppercase tracking-wide">{lang}</span>
+        <button
+          onClick={handleCopy}
+          className="text-xs text-[#666] hover:text-white transition-colors flex items-center gap-1.5"
+        >
+          {copied ? "Copied!" : "Copy"}
+          <Copy className="size-3" />
+        </button>
+      </div>
+      <pre className="p-4 overflow-x-auto">
+        <code className={`language-${lang} text-[13px] font-mono text-[#dbdee1] leading-relaxed`}>{children}</code>
+      </pre>
+    </div>
   );
 }
 
@@ -81,22 +100,22 @@ export function Endpoint({
   children: React.ReactNode;
 }) {
   const methodColors: Record<string, string> = {
-    GET: "bg-green-500/15 text-green-400",
-    POST: "bg-blue-500/15 text-blue-400",
-    PUT: "bg-yellow-500/15 text-yellow-400",
-    PATCH: "bg-orange-500/15 text-orange-400",
-    DELETE: "bg-red-500/15 text-red-400",
+    GET: "bg-emerald-500/15 text-emerald-400 border-emerald-500/20",
+    POST: "bg-blue-500/15 text-blue-400 border-blue-500/20",
+    PUT: "bg-amber-500/15 text-amber-400 border-amber-500/20",
+    PATCH: "bg-orange-500/15 text-orange-400 border-orange-500/20",
+    DELETE: "bg-red-500/15 text-red-400 border-red-500/20",
   };
 
   return (
-    <div className="my-4 rounded-lg border border-white/[0.08] overflow-hidden">
-      <div className="flex items-center gap-3 bg-[#1a1a1a] px-4 py-2.5 border-b border-white/[0.06]">
-        <span className={`text-xs font-bold px-2 py-0.5 rounded ${methodColors[method] || "bg-white/10 text-white"}`}>
+    <div className="my-4 rounded-lg border border-white/[0.08] overflow-hidden bg-[#111214]">
+      <div className="flex items-center gap-3 bg-[#161719] px-4 py-3 border-b border-white/[0.06]">
+        <span className={`text-xs font-bold px-2.5 py-1 rounded border ${methodColors[method] || "bg-white/10 text-white border-white/10"}`}>
           {method}
         </span>
-        <code className="text-sm font-mono text-[#ccc]">{path}</code>
+        <code className="text-sm font-mono text-[#dbdee1]">{path}</code>
       </div>
-      <div className="p-4 text-xs text-[#aaa]">{children}</div>
+      <div className="p-4 text-[13px] text-[#949ba4] leading-relaxed">{children}</div>
     </div>
   );
 }
@@ -111,32 +130,43 @@ export function Callout({
   children: React.ReactNode;
 }) {
   const styles = {
-    info: "border-[#5865F2]/30 bg-[#5865F2]/5",
-    warning: "border-yellow-500/30 bg-yellow-500/5",
-    danger: "border-red-500/30 bg-red-500/5",
+    info: "border-[#5865F2]/20 bg-[#5865F2]/[0.06]",
+    warning: "border-amber-500/20 bg-amber-500/[0.06]",
+    danger: "border-red-500/20 bg-red-500/[0.06]",
   };
   const titleColors = {
     info: "text-[#5865F2]",
-    warning: "text-yellow-400",
+    warning: "text-amber-400",
     danger: "text-red-400",
   };
+  const icons = {
+    info: Info,
+    warning: AlertTriangle,
+    danger: AlertCircle,
+  };
+  const Icon = icons[type];
 
   return (
     <div className={`rounded-lg border p-4 my-4 ${styles[type]}`}>
-      {title && <p className={`text-sm font-semibold mb-1 ${titleColors[type]}`}>{title}</p>}
-      <div className="text-xs text-[#aaa]">{children}</div>
+      {title && (
+        <p className={`text-sm font-semibold mb-1.5 flex items-center gap-2 ${titleColors[type]}`}>
+          <Icon className="size-4 shrink-0" />
+          {title}
+        </p>
+      )}
+      <div className="text-[13px] text-[#949ba4] leading-relaxed">{children}</div>
     </div>
   );
 }
 
 export function Table({ headers, rows }: { headers: string[]; rows: string[][] }) {
   return (
-    <div className="overflow-x-auto my-4">
-      <table className="w-full text-xs">
+    <div className="overflow-x-auto my-4 rounded-lg border border-white/[0.08]">
+      <table className="w-full text-[13px]">
         <thead>
-          <tr className="border-b border-white/[0.08]">
+          <tr className="border-b border-white/[0.08] bg-white/[0.02]">
             {headers.map((h, i) => (
-              <th key={i} className="text-left py-2 px-3 font-semibold text-[#888]">
+              <th key={i} className="text-left py-2.5 px-4 font-semibold text-[#949ba4]">
                 {h}
               </th>
             ))}
@@ -144,9 +174,9 @@ export function Table({ headers, rows }: { headers: string[]; rows: string[][] }
         </thead>
         <tbody>
           {rows.map((row, i) => (
-            <tr key={i} className="border-b border-white/[0.04]">
+            <tr key={i} className="border-b border-white/[0.04] last:border-0 hover:bg-white/[0.02] transition-colors">
               {row.map((cell, j) => (
-                <td key={j} className="py-2 px-3 text-[#ccc]">
+                <td key={j} className="py-2.5 px-4 text-[#dbdee1]">
                   {cell}
                 </td>
               ))}
@@ -160,7 +190,7 @@ export function Table({ headers, rows }: { headers: string[]; rows: string[][] }
 
 export function H2({ children, id }: { children: React.ReactNode; id?: string }) {
   return (
-    <h2 id={id} className="text-xl font-bold text-white mt-8 mb-3 scroll-mt-20">
+    <h2 id={id} className="text-xl font-bold text-white mt-10 mb-3 scroll-mt-20 tracking-tight">
       {children}
     </h2>
   );
@@ -175,15 +205,15 @@ export function H3({ children, id }: { children: React.ReactNode; id?: string })
 }
 
 export function P({ children }: { children: React.ReactNode }) {
-  return <p className="text-sm text-[#ccc] leading-relaxed my-3">{children}</p>;
+  return <p className="text-[15px] text-[#dbdee1] leading-relaxed my-3">{children}</p>;
 }
 
 export function UL({ children }: { children: React.ReactNode }) {
-  return <ul className="text-sm text-[#ccc] list-disc list-inside space-y-1 my-3">{children}</ul>;
+  return <ul className="text-[15px] text-[#dbdee1] list-disc list-inside space-y-1.5 my-3 pl-2">{children}</ul>;
 }
 
 export function InlineCode({ children }: { children: React.ReactNode }) {
-  return <code className="bg-[#1a1a1a] border border-white/[0.06] rounded px-1.5 py-0.5 text-xs font-mono text-[#a78bfa]">{children}</code>;
+  return <code className="bg-[#1e1f22] border border-white/[0.06] rounded px-1.5 py-0.5 text-[13px] font-mono text-[#a78bfa]">{children}</code>;
 }
 
 export function Strong({ children }: { children: React.ReactNode }) {
@@ -192,7 +222,7 @@ export function Strong({ children }: { children: React.ReactNode }) {
 
 export function Link2({ href, children }: { href: string; children: React.ReactNode }) {
   return (
-    <Link href={href} className="text-[#8B5CF6] hover:underline">
+    <Link href={href} className="text-[#8B5CF6] hover:underline decoration-[#8B5CF6]/30">
       {children}
     </Link>
   );

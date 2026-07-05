@@ -157,7 +157,13 @@ function normalizeSettingsPatch(patch: Record<string, any>) {
 }
 
 function mergeDeep<T extends Record<string, any>>(base: T, patch: Record<string, any>): T {
-  const output = { ...base } as Record<string, any>;
+  const output: Record<string, any> = {};
+  // Copy base, skipping undefined values to prevent Mongoose cast errors
+  for (const [key, value] of Object.entries(base || {})) {
+    if (value !== undefined) {
+      output[key] = value;
+    }
+  }
   for (const [key, value] of Object.entries(patch || {})) {
     if (value && typeof value === 'object' && !Array.isArray(value)) {
       output[key] = mergeDeep((output[key] || {}) as Record<string, any>, value);

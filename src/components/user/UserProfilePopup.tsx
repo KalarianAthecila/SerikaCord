@@ -286,7 +286,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
             showCloseButton={false}
           >
             <div className="w-12 h-1 bg-[#444444] rounded-full mt-3 mb-1 mx-auto shrink-0" />
-            <div className="overflow-y-auto">{renderProfileCard()}</div>
+            <div className="overflow-y-auto flex-1 min-h-0">{renderProfileCard()}</div>
           </DialogContent>
         </Dialog>
       ) : (

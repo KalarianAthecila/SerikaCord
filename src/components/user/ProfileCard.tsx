@@ -229,6 +229,13 @@ export function ProfileCard({
             className="absolute inset-0 bg-cover bg-center"
             style={{ backgroundImage: `url(${user.banner})` }}
           />
+        ) : user.customization?.profileGradient && user.customization.profileGradient.length >= 2 ? (
+          <div
+            className="absolute inset-0"
+            style={{ background: `linear-gradient(135deg, ${user.customization.profileGradient.join(', ')})` }}
+          />
+        ) : user.customization?.profileColor ? (
+          <div className="absolute inset-0" style={{ backgroundColor: user.customization.profileColor }} />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#4F46E5]" />
         )}

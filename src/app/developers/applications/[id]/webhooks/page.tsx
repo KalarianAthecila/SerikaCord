@@ -10,9 +10,22 @@ interface Webhook {
   id: string;
   url: string;
   name: string;
-  channelId?: string;
+  events?: string[];
+  active?: boolean;
   createdAt: string;
 }
+
+const WEBHOOK_EVENTS = [
+  "application.command.create",
+  "application.command.delete",
+  "application.command.update",
+  "message.create",
+  "message.update",
+  "message.delete",
+  "guild.join",
+  "guild.leave",
+  "user.update",
+];
 
 export default function WebhooksPage() {
   const params = useParams();
@@ -22,8 +35,10 @@ export default function WebhooksPage() {
   const [showAdd, setShowAdd] = useState(false);
   const [newName, setNewName] = useState("");
   const [newUrl, setNewUrl] = useState("");
+  const [newEvents, setNewEvents] = useState<string[]>([]);
   const [creating, setCreating] = useState(false);
   const [copiedId, setCopiedId] = useState<string | null>(null);
+  const [togglingId, setTogglingId] = useState<string | null>(null);
 
   useEffect(() => {
     fetchWebhooks();
@@ -37,8 +52,14 @@ export default function WebhooksPage() {
         setWebhooks(data.webhooks || []);
       }
     } catch {
-      // Demo mode
+      // ignore
     }
+  };
+
+  const toggleEvent = (event: string) => {
+    setNewEvents((prev) =>
+      prev.includes(event) ? prev.filter((e) => e !== event) : [...prev, event]
+    );
   };
 
   const handleCreate = async () => {
@@ -48,17 +69,19 @@ export default function WebhooksPage() {
       const res = await fetch(`/api/developers/applications/${appId}/webhooks`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newName.trim(), url: newUrl.trim() }),
+        body: JSON.stringify({ name: newName.trim(), url: newUrl.trim(), events: newEvents }),
       });
       if (res.ok) {
         const data = await res.json();
         setWebhooks([...webhooks, data.webhook]);
         setNewName("");
         setNewUrl("");
+        setNewEvents([]);
         setShowAdd(false);
         toast.success("Webhook created!");
       } else {
-        toast.error("Failed to create webhook");
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to create webhook");
       }
     } catch {
       toast.error("Failed to create webhook");
@@ -76,9 +99,33 @@ export default function WebhooksPage() {
       if (res.ok) {
         setWebhooks(webhooks.filter((w) => w.id !== id));
         toast.success("Webhook deleted");
+      } else {
+        const err = await res.json().catch(() => ({}));
+        toast.error(err.error || "Failed to delete webhook");
       }
     } catch {
       toast.error("Failed to delete webhook");
+    }
+  };
+
+  const handleToggleActive = async (id: string, current: boolean) => {
+    setTogglingId(id);
+    try {
+      const res = await fetch(`/api/developers/applications/${appId}/webhooks/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ active: !current }),
+      });
+      if (res.ok) {
+        setWebhooks(webhooks.map((w) => w.id === id ? { ...w, active: !current } : w));
+        toast.success(`Webhook ${!current ? "activated" : "deactivated"}`);
+      } else {
+        toast.error("Failed to toggle webhook");
+      }
+    } catch {
+      toast.error("Failed to toggle webhook");
+    } finally {
+      setTogglingId(null);
     }
   };
 
@@ -107,14 +154,14 @@ export default function WebhooksPage() {
         </div>
         <button
           onClick={() => setShowAdd(!showAdd)}
-          className="flex items-center gap-2 px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white text-sm font-medium rounded-md transition-colors"
+          className="flex items-center gap-2 px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white text-sm font-medium rounded-lg transition-colors"
         >
           <Plus className="size-4" /> Add Webhook
         </button>
       </div>
 
       {showAdd && (
-        <div className="mb-6 rounded-lg border border-white/[0.08] bg-white/[0.02] p-4 space-y-3">
+        <div className="mb-6 rounded-xl border border-white/[0.08] bg-white/[0.02] p-4 space-y-4">
           <div>
             <label className="block text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
               Name
@@ -124,7 +171,7 @@ export default function WebhooksPage() {
               value={newName}
               onChange={(e) => setNewName(e.target.value)}
               placeholder="My Webhook"
-              className="w-full bg-[#1a1a1a] border border-white/[0.08] rounded-md px-4 py-2.5 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#8B5CF6]/50"
+              className="w-full bg-[#1a1a1a] border border-white/[0.08] rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#8B5CF6]/50"
             />
           </div>
           <div>
@@ -136,13 +183,33 @@ export default function WebhooksPage() {
               value={newUrl}
               onChange={(e) => setNewUrl(e.target.value)}
               placeholder="https://your-site.com/webhook"
-              className="w-full bg-[#1a1a1a] border border-white/[0.08] rounded-md px-4 py-2.5 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#8B5CF6]/50"
+              className="w-full bg-[#1a1a1a] border border-white/[0.08] rounded-lg px-4 py-2.5 text-sm text-white placeholder:text-[#555] focus:outline-none focus:border-[#8B5CF6]/50"
             />
+          </div>
+          <div>
+            <label className="block text-xs font-semibold text-[#888] uppercase tracking-wide mb-2">
+              Events
+            </label>
+            <div className="flex flex-wrap gap-2">
+              {WEBHOOK_EVENTS.map((event) => (
+                <button
+                  key={event}
+                  onClick={() => toggleEvent(event)}
+                  className={`px-3 py-1.5 text-xs rounded-lg border transition-colors ${
+                    newEvents.includes(event)
+                      ? "bg-[#8B5CF6]/20 border-[#8B5CF6]/50 text-[#8B5CF6]"
+                      : "bg-[#1a1a1a] border-white/[0.08] text-[#888] hover:text-white"
+                  }`}
+                >
+                  {event}
+                </button>
+              ))}
+            </div>
           </div>
           <button
             onClick={handleCreate}
             disabled={creating || !newName.trim() || !newUrl.trim()}
-            className="flex items-center gap-2 px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] disabled:opacity-40 text-white text-sm font-medium rounded-md transition-colors"
+            className="flex items-center gap-2 px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] disabled:opacity-40 text-white text-sm font-medium rounded-lg transition-colors"
           >
             {creating ? <Loader2 className="size-4 animate-spin" /> : null}
             Create Webhook
@@ -156,33 +223,65 @@ export default function WebhooksPage() {
           <p className="text-[#888] text-sm">No webhooks yet. Add one to receive events.</p>
         </div>
       ) : (
-        <div className="space-y-2">
+        <div className="space-y-3">
           {webhooks.map((webhook) => (
             <div
               key={webhook.id}
-              className="group flex items-center gap-4 rounded-lg border border-white/[0.06] bg-white/[0.02] p-4"
+              className="group rounded-xl border border-white/[0.06] bg-white/[0.02] p-4"
             >
-              <div className="size-10 rounded-lg bg-[#1a1a1a] flex items-center justify-center shrink-0">
-                <Webhook className="size-5 text-[#8B5CF6]" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <h3 className="font-semibold text-sm">{webhook.name}</h3>
-                <div className="flex items-center gap-2 mt-1">
-                  <code className="text-xs text-[#777] truncate font-mono">{webhook.url}</code>
-                  <button
-                    onClick={() => copyUrl(webhook.id, webhook.url)}
-                    className="p-1 rounded hover:bg-white/10 text-[#888] hover:text-white transition-colors shrink-0"
-                  >
-                    {copiedId === webhook.id ? <Check className="size-3 text-green-400" /> : <Copy className="size-3" />}
-                  </button>
+              <div className="flex items-center gap-4">
+                <div className="size-10 rounded-lg bg-[#1a1a1a] flex items-center justify-center shrink-0">
+                  <Webhook className="size-5 text-[#8B5CF6]" />
                 </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-semibold text-sm">{webhook.name}</h3>
+                    <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium ${
+                      webhook.active ? "bg-green-500/10 text-green-400" : "bg-[#333] text-[#888]"
+                    }`}>
+                      {webhook.active ? "Active" : "Inactive"}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 mt-1">
+                    <code className="text-xs text-[#777] truncate font-mono">{webhook.url}</code>
+                    <button
+                      onClick={() => copyUrl(webhook.id, webhook.url)}
+                      className="p-1 rounded hover:bg-white/10 text-[#888] hover:text-white transition-colors shrink-0"
+                    >
+                      {copiedId === webhook.id ? <Check className="size-3 text-green-400" /> : <Copy className="size-3" />}
+                    </button>
+                  </div>
+                </div>
+                <button
+                  onClick={() => handleToggleActive(webhook.id, webhook.active ?? true)}
+                  disabled={togglingId === webhook.id}
+                  className={`relative w-11 h-6 rounded-full transition-colors shrink-0 ${
+                    webhook.active ? "bg-[#8B5CF6]" : "bg-[#333]"
+                  }`}
+                >
+                  {togglingId === webhook.id && <Loader2 className="size-3 animate-spin absolute inset-0 m-auto text-white" />}
+                  <span
+                    className={`absolute top-0.5 left-0.5 size-5 bg-white rounded-full transition-transform ${
+                      webhook.active ? "translate-x-5" : ""
+                    }`}
+                  />
+                </button>
+                <button
+                  onClick={() => handleDelete(webhook.id)}
+                  className="p-2 rounded-lg hover:bg-red-500/10 text-[#888] hover:text-red-400 transition-colors"
+                >
+                  <Trash2 className="size-4" />
+                </button>
               </div>
-              <button
-                onClick={() => handleDelete(webhook.id)}
-                className="p-2 rounded-md hover:bg-red-500/10 text-[#888] hover:text-red-400 transition-colors"
-              >
-                <Trash2 className="size-4" />
-              </button>
+              {webhook.events && webhook.events.length > 0 && (
+                <div className="flex flex-wrap gap-1.5 mt-3 pt-3 border-t border-white/[0.04]">
+                  {webhook.events.map((event) => (
+                    <span key={event} className="text-[10px] px-2 py-0.5 rounded bg-white/[0.04] text-[#888]">
+                      {event}
+                    </span>
+                  ))}
+                </div>
+              )}
             </div>
           ))}
         </div>

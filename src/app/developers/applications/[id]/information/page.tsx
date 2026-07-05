@@ -25,8 +25,8 @@ export default function InformationPage() {
   }, [app]);
 
   const handleSave = async () => {
-    await saveApp({ name, description, tags });
-    toast.success("Changes saved");
+    const ok = await saveApp({ name, description, tags });
+    if (ok) toast.success("Changes saved");
   };
 
   const copyId = () => {
