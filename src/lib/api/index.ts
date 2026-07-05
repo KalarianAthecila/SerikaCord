@@ -18,6 +18,7 @@ import { voiceRoutes } from './voice';
 import { gifRoutes } from './gifs';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
+import { getMoeActivity } from '@/lib/services/moeActivity';
 import { Types } from 'mongoose';
 
 // Helper to safely compare IDs (handles both ObjectId and string)
@@ -234,6 +235,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       avatar: user.avatar,
       banner: user.banner,
       bio: user.bio,
+      pronouns: user.pronouns,
       status: user.status,
       customStatus: user.customStatus,
       isPremium: user.isPremium,
@@ -242,6 +244,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       badges: user.badges || [],
       isVerified: user.isVerified,
       settings: user.settings,
+      customization: user.customization || {},
+      gifFavorites: user.gifFavorites || [],
       createdAt: user.createdAt,
     };
   })
@@ -259,6 +263,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       avatar: user.avatar,
       banner: user.banner,
       bio: user.bio,
+      pronouns: user.pronouns,
       status: user.status,
       customStatus: user.customStatus,
       isPremium: user.isPremium,
@@ -267,6 +272,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       badges: user.badges || [],
       isVerified: user.isVerified,
       settings: user.settings,
+      customization: user.customization || {},
+      gifFavorites: user.gifFavorites || [],
       createdAt: user.createdAt,
     };
   })
@@ -521,7 +528,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
         return { error: 'User not found in local database' };
       }
 
-      const { displayName, bio, pronouns, customStatus, status, settings } = body as Record<string, any>;
+      const { displayName, bio, pronouns, customStatus, status, settings, customization, gifFavorites } = body as Record<string, any>;
       const prevStatus = user.status;
 
       if (displayName !== undefined) user.displayName = displayName;
@@ -545,6 +552,12 @@ const userRoutes = new Elysia({ prefix: '/users' })
           return { error: normalizedPatch.error };
         }
         user.settings = normalizeUserSettingsShape(mergeDeep(currentSettings, normalizedPatch.patch || {})) as any;
+      }
+      if (customization !== undefined && typeof customization === 'object') {
+        user.customization = mergeDeep((user.customization || {}) as Record<string, any>, customization) as any;
+      }
+      if (gifFavorites !== undefined && Array.isArray(gifFavorites)) {
+        user.gifFavorites = gifFavorites.slice(0, 100).map((url: unknown) => String(url || '')).filter(Boolean);
       }
 
       await user.save();
@@ -584,6 +597,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
         t.Literal('invisible'),
       ])),
       settings: t.Optional(t.Object({}, { additionalProperties: true })),
+      customization: t.Optional(t.Object({}, { additionalProperties: true })),
+      gifFavorites: t.Optional(t.Array(t.String())),
     }),
   })
   .post('/me/presence/heartbeat', async ({ headers, cookie, set }) => {
@@ -862,15 +877,39 @@ const userRoutes = new Elysia({ prefix: '/users' })
       avatar: targetUser.avatar,
       banner: targetUser.banner,
       bio: targetUser.bio,
+      pronouns: targetUser.pronouns,
       badges: targetUser.badges || [],
       status: getPublicPresenceStatus(targetUser),
       customStatus: targetUser.customStatus,
       isPremium: targetUser.isPremium,
       isSystem: targetUser.isSystem || false,
+      customization: targetUser.customization || {},
       createdAt: targetUser.createdAt,
       isFriend,
       friendRequestSent,
     };
+  }, {
+    params: t.Object({
+      userId: t.String(),
+    }),
+  })
+  // Live "now watching on serika.moe" presence for a user (Discord-Spotify style).
+  // The user id here is also the Serika account id, which serika.moe keys the
+  // link by. Respects the target user's "show activity" privacy setting.
+  .get('/:userId/activity', async ({ params, set }) => {
+    const targetUser = await User.findById(params.userId).select('settings');
+    if (!targetUser) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    const showActivity = targetUser.settings?.privacy?.showActivity ?? true;
+    if (!showActivity) {
+      return { activity: null };
+    }
+
+    const activity = await getMoeActivity(params.userId.toString());
+    return { activity };
   }, {
     params: t.Object({
       userId: t.String(),
@@ -1030,6 +1069,12 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     if (compareIds(targetUser._id, user._id)) {
       set.status = 400;
       return { error: 'You cannot send a friend request to yourself' };
+    }
+
+    // Block friend requests to system users
+    if (targetUser.isSystem) {
+      set.status = 403;
+      return { error: 'You cannot send a friend request to a system user' };
     }
 
     // Check if already friends

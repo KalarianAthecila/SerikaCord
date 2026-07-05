@@ -1,8 +1,9 @@
 "use client";
 
 import { useState, useCallback, useMemo } from "react";
-import { Crown } from "lucide-react";
+import { Crown, Play } from "lucide-react";
 import { useServer } from "@/contexts/ServerContext";
+import { useMoeActivity } from "@/hooks/useMoeActivity";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
@@ -172,6 +173,9 @@ interface MemberItemProps {
 function MemberItem({ member, serverId }: MemberItemProps) {
   const isOffline = member.status === "offline";
   const roleColor = member.highestRole?.color;
+  // Only poll live activity for members who are actually around.
+  const moeActivity = useMoeActivity(member.id, { enabled: !isOffline });
+  const subtitle = member.customStatus || null;
 
   return (
     <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
@@ -206,6 +210,16 @@ function MemberItem({ member, serverId }: MemberItemProps) {
               <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
             )}
           </div>
+          {moeActivity ? (
+            <div className="flex items-center gap-1 text-xs text-[#8B5CF6] truncate">
+              <Play className="w-2.5 h-2.5 shrink-0 fill-current" />
+              <span className="truncate">Watching {moeActivity.titleName}</span>
+            </div>
+          ) : (
+            subtitle && (
+              <div className="text-xs text-[var(--text-secondary)] truncate">{subtitle}</div>
+            )
+          )}
         </div>
       </button>
     </MemberProfilePopup>

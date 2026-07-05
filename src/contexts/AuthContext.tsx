@@ -26,6 +26,18 @@ interface User {
   badges?: BadgeId[];
   createdAt?: string;
   settings?: Record<string, any>;
+  customization?: {
+    profileColor?: string;
+    profileAccentColor?: string;
+    profileGradient?: string[];
+    displayNameStyle?: {
+      font?: 'default' | 'serif' | 'mono' | 'rounded' | 'cursive' | 'bold';
+      effect?: 'solid' | 'gradient' | 'neon' | 'toon' | 'pop';
+      color?: string;
+      gradient?: string[];
+    };
+  };
+  gifFavorites?: string[];
 }
 
 interface AuthContextType {

@@ -44,6 +44,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
 import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
+import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 import { toast } from "sonner";
 
 interface UserSettingsDialogProps {
@@ -89,6 +90,14 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const [pronouns, setPronouns] = useState("");
   const [customStatus, setCustomStatus] = useState("");
   const [status, setStatus] = useState("online");
+  const [displayNameStyle, setDisplayNameStyle] = useState<{
+    font?: 'default' | 'serif' | 'mono' | 'rounded' | 'cursive' | 'bold';
+    effect?: 'solid' | 'gradient' | 'neon' | 'toon' | 'pop';
+    color?: string;
+    gradient?: string[];
+  }>({ font: 'default', effect: 'solid', color: '', gradient: [] });
+  const [profileColor, setProfileColor] = useState("");
+  const [profileGradient, setProfileGradient] = useState<string[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [hasChanges, setHasChanges] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
@@ -201,6 +210,9 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       setPronouns(user.pronouns || "");
       setCustomStatus(user.customStatus || "");
       setStatus(user.status || "online");
+      setDisplayNameStyle(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] });
+      setProfileColor(user.customization?.profileColor || "");
+      setProfileGradient(user.customization?.profileGradient || []);
     }
   }, [user]);
 
@@ -287,10 +299,13 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
         bio !== (user.bio || "") ||
         pronouns !== (user.pronouns || "") ||
         customStatus !== (user.customStatus || "") ||
-        status !== (user.status || "online");
+        status !== (user.status || "online") ||
+        JSON.stringify(displayNameStyle) !== JSON.stringify(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] }) ||
+        profileColor !== (user.customization?.profileColor || "") ||
+        JSON.stringify(profileGradient) !== JSON.stringify(user.customization?.profileGradient || []);
       setHasChanges(changed);
     }
-  }, [displayName, bio, pronouns, customStatus, status, user]);
+  }, [displayName, bio, pronouns, customStatus, status, displayNameStyle, profileColor, profileGradient, user]);
 
   // Handle escape key
   useEffect(() => {
@@ -315,6 +330,11 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
           pronouns,
           customStatus,
           status,
+          customization: {
+            displayNameStyle,
+            profileColor,
+            profileGradient,
+          },
         }),
       });
 
@@ -326,6 +346,12 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
           pronouns,
           customStatus,
           status: status as "online" | "idle" | "dnd" | "offline",
+          customization: {
+            ...(user?.customization || {}),
+            displayNameStyle,
+            profileColor,
+            profileGradient,
+          },
         });
         setHasChanges(false);
         toast.success("Profile saved!");
@@ -1151,6 +1177,207 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             maxLength={190}
                           />
                         </div>
+
+                        <div>
+                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                            Custom Status
+                          </label>
+                          <Input
+                            value={customStatus}
+                            onChange={(e) => setCustomStatus(e.target.value)}
+                            className="bg-[var(--bg-app)] border-none text-white h-10"
+                            placeholder="What's on your mind?"
+                            maxLength={128}
+                          />
+                        </div>
+
+                        {/* Display Name Style */}
+                        <div>
+                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                            Display Name Style
+                          </label>
+                          <div className="bg-[var(--bg-app)] rounded-lg p-4 space-y-4">
+                            <div>
+                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Font</span>
+                              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                                {([
+                                  { value: 'default', label: 'Default' },
+                                  { value: 'serif', label: 'Serif' },
+                                  { value: 'mono', label: 'Mono' },
+                                  { value: 'rounded', label: 'Rounded' },
+                                  { value: 'cursive', label: 'Cursive' },
+                                  { value: 'bold', label: 'Bold' },
+                                ] as const).map((font) => (
+                                  <button
+                                    key={font.value}
+                                    onClick={() => setDisplayNameStyle((s) => ({ ...s, font: font.value }))}
+                                    className={cn(
+                                      "px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
+                                      displayNameStyle.font === font.value
+                                        ? "bg-[#8B5CF6] text-white"
+                                        : "bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-white"
+                                    )}
+                                  >
+                                    {font.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            <div>
+                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Effect</span>
+                              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                                {([
+                                  { value: 'solid', label: 'Solid' },
+                                  { value: 'gradient', label: 'Gradient' },
+                                  { value: 'neon', label: 'Neon' },
+                                  { value: 'toon', label: 'Toon' },
+                                  { value: 'pop', label: 'Pop' },
+                                ] as const).map((effect) => (
+                                  <button
+                                    key={effect.value}
+                                    onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: effect.value }))}
+                                    className={cn(
+                                      "px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
+                                      displayNameStyle.effect === effect.value
+                                        ? "bg-[#8B5CF6] text-white"
+                                        : "bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-white"
+                                    )}
+                                  >
+                                    {effect.label}
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+
+                            {displayNameStyle.effect === 'gradient' ? (
+                              <div>
+                                <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Gradient Colors (2-3)</span>
+                                <div className="flex gap-2 flex-wrap">
+                                  {[0, 1, 2].map((i) => (
+                                    <div key={i} className="flex items-center gap-1.5">
+                                      <input
+                                        type="color"
+                                        value={displayNameStyle.gradient?.[i] || '#8B5CF6'}
+                                        onChange={(e) => {
+                                          const next = [...(displayNameStyle.gradient || [])];
+                                          next[i] = e.target.value;
+                                          setDisplayNameStyle((s) => ({ ...s, gradient: next.filter(Boolean) }));
+                                        }}
+                                        className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
+                                      />
+                                      {i < 2 && (
+                                        <button
+                                          onClick={() => {
+                                            const next = [...(displayNameStyle.gradient || [])];
+                                            next.splice(i + 1, 0, '#6366F1');
+                                            setDisplayNameStyle((s) => ({ ...s, gradient: next }));
+                                          }}
+                                          className="text-xs text-[var(--text-secondary)] hover:text-white"
+                                        >
+                                          +
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            ) : (
+                              <div>
+                                <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Color</span>
+                                <div className="flex items-center gap-2">
+                                  <input
+                                    type="color"
+                                    value={displayNameStyle.color || '#8B5CF6'}
+                                    onChange={(e) => setDisplayNameStyle((s) => ({ ...s, color: e.target.value }))}
+                                    className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
+                                  />
+                                  <button
+                                    onClick={() => setDisplayNameStyle((s) => ({ ...s, color: '' }))}
+                                    className="text-xs text-[var(--text-secondary)] hover:text-white"
+                                  >
+                                    Reset
+                                  </button>
+                                </div>
+                              </div>
+                            )}
+
+                            <div className="pt-2 border-t border-[var(--border-subtle)]">
+                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Preview</span>
+                              <div className="bg-[var(--bg-card)] rounded-md p-3">
+                                <span
+                                  className={cn("text-lg font-bold", getDisplayNameStyleClasses(displayNameStyle))}
+                                  style={getDisplayNameStyleInline(displayNameStyle)}
+                                >
+                                  {displayName || user?.username || 'Display Name'}
+                                </span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Profile Color */}
+                        <div>
+                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                            Profile Color
+                          </label>
+                          <div className="bg-[var(--bg-app)] rounded-lg p-4 space-y-3">
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="color"
+                                value={profileColor || '#8B5CF6'}
+                                onChange={(e) => setProfileColor(e.target.value)}
+                                className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
+                              />
+                              <button
+                                onClick={() => setProfileColor('')}
+                                className="text-xs text-[var(--text-secondary)] hover:text-white"
+                              >
+                                Reset
+                              </button>
+                            </div>
+                            <div>
+                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Gradient Background (optional)</span>
+                              <div className="flex gap-2 flex-wrap">
+                                {[0, 1, 2].map((i) => (
+                                  <div key={i} className="flex items-center gap-1.5">
+                                    <input
+                                      type="color"
+                                      value={profileGradient[i] || '#8B5CF6'}
+                                      onChange={(e) => {
+                                        const next = [...profileGradient];
+                                        next[i] = e.target.value;
+                                        setProfileGradient(next.filter(Boolean));
+                                      }}
+                                      className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
+                                    />
+                                    {i < 2 && (
+                                      <button
+                                        onClick={() => {
+                                          const next = [...profileGradient];
+                                          next.splice(i + 1, 0, '#6366F1');
+                                          setProfileGradient(next);
+                                        }}
+                                        className="text-xs text-[var(--text-secondary)] hover:text-white"
+                                      >
+                                        +
+                                      </button>
+                                    )}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="pt-2 border-t border-[var(--border-subtle)]">
+                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Preview</span>
+                              <div
+                                className="rounded-md p-3 h-16"
+                                style={getProfileBackgroundStyle({ profileColor, profileGradient })}
+                              >
+                                <span className="text-sm text-white font-medium">Profile card background</span>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
                       </div>
                     </div>
 
@@ -1175,8 +1402,15 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               </AvatarFallback>
                             </Avatar>
                           </div>
-                          <div className="pt-10 bg-[#111214] rounded-lg p-3 mt-2">
-                            <h3 className="font-bold text-white">{displayName || user?.username}</h3>
+                          <div className="pt-10 bg-[#111214] rounded-lg p-3 mt-2"
+                            style={getProfileBackgroundStyle({ profileColor, profileGradient })}
+                          >
+                            <h3
+                              className={cn("font-bold text-white", getDisplayNameStyleClasses(displayNameStyle))}
+                              style={getDisplayNameStyleInline(displayNameStyle)}
+                            >
+                              {displayName || user?.username}
+                            </h3>
                             <div className="flex items-center gap-1 text-sm text-[var(--text-secondary)]">
                               <span>{user?.username}</span>
                               {pronouns && (

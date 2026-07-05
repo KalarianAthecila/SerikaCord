@@ -33,6 +33,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
+import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 
 interface UserProfileProps {
   user: {
@@ -54,6 +55,16 @@ interface UserProfileProps {
     isStaff?: boolean;
     isPartnerOwner?: boolean;
     isPremium?: boolean;
+    customization?: {
+      profileColor?: string;
+      profileGradient?: string[];
+      displayNameStyle?: {
+        font?: 'default' | 'serif' | 'mono' | 'rounded' | 'cursive' | 'bold';
+        effect?: 'solid' | 'gradient' | 'neon' | 'toon' | 'pop';
+        color?: string;
+        gradient?: string[];
+      };
+    };
   };
   isOpen: boolean;
   onClose: () => void;
@@ -289,11 +300,14 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
 
       {/* User Info Card */}
       <div className="px-4 pb-4">
-        <div className="bg-[#111214] rounded-xl p-4 mt-3">
+        <div className="bg-[#111214] rounded-xl p-4 mt-3" style={getProfileBackgroundStyle(user.customization)}>
           {/* Name & Badges */}
           <div className="flex items-start justify-between mb-1">
             <div>
-              <h2 className="text-xl font-bold text-white flex items-center gap-2 flex-wrap">
+              <h2
+                className={cn("text-xl font-bold text-white flex items-center gap-2 flex-wrap", getDisplayNameStyleClasses(user.customization?.displayNameStyle))}
+                style={getDisplayNameStyleInline(user.customization?.displayNameStyle)}
+              >
                 {user.displayName}
                 {user.badges && user.badges.length > 0 && (
                   <BadgeList badges={user.badges} size="md" maxDisplay={user.badges.length} expandable={false} />

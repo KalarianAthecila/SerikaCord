@@ -13,7 +13,7 @@ export function SystemPill({ isSystem, className }: SystemPillProps) {
   return (
     <span
       className={cn(
-        "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none bg-blue-500/20 text-blue-400 whitespace-nowrap",
+        "inline-flex items-center self-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none bg-blue-500/20 text-blue-400 whitespace-nowrap",
         className
       )}
     >

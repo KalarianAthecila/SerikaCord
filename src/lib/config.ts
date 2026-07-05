@@ -9,6 +9,10 @@ export const config = {
   // Accounts API (external auth service)
   ACCOUNTS_API_URL: process.env.ACCOUNTS_URL || 'https://accounts.serika.dev',
   ACCOUNTS_SERVICE_KEY: process.env.AUTH_INTERNAL_KEY || process.env.AUTH_SERVICE_INTERNAL_KEY || 'serika-internal-auth-key-change-in-production',
+
+  // SerikaMoe (streaming) — live "now watching" presence source
+  SERIKA_MOE_URL: process.env.SERIKA_MOE_URL || 'https://serika.moe',
+  SERIKA_MOE_SERVICE_KEY: process.env.SERIKA_MOE_SERVICE_KEY || process.env.SERIKA_SERVICE_KEY || '',
   
   // Database
   MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/serikacord',

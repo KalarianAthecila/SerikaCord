@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield } from "lucide-react";
+import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield, UserPlus, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
 import { MessageBar, type MessageBarHandle } from "@/components/chat/MessageBar";
@@ -38,6 +38,8 @@ interface Recipient extends MessageAuthor {
   customStatus?: string;
   bio?: string;
   createdAt?: string;
+  isFriend?: boolean;
+  friendRequestSent?: boolean;
 }
 
 export default function DMConversationPage() {
@@ -155,6 +157,25 @@ export default function DMConversationPage() {
     chat.signalTyping(value);
   };
 
+  const handleAddFriend = async () => {
+    if (!recipient?.username) return;
+    try {
+      const response = await fetch(`/api/friends/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: recipient.username }),
+      });
+      if (response.ok) {
+        setRecipient((prev) => prev ? { ...prev, friendRequestSent: true } : prev);
+      } else {
+        const data = await response.json().catch(() => null);
+        console.error("Failed to send friend request:", data?.error);
+      }
+    } catch {
+      console.error("Failed to send friend request");
+    }
+  };
+
   if (authLoading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-[var(--bg-app)]">
@@ -223,7 +244,7 @@ export default function DMConversationPage() {
             </div>
 
             <div className="flex items-center gap-2 min-w-0">
-              <span className="font-semibold text-[var(--text-primary)] truncate">
+              <span className="font-semibold text-[var(--text-primary)] truncate self-center">
                 {recipientName || "Loading..."}
               </span>
               <SystemPill isSystem={recipient?.isSystem} />
@@ -293,7 +314,7 @@ export default function DMConversationPage() {
           {recipient?.isSystem ? (
             <div className="flex items-center gap-2 px-4 py-3 bg-[var(--bg-card)]/50 border border-[var(--border-subtle)] rounded-md text-[var(--text-secondary)] text-sm">
               <Shield className="w-4 h-4 text-blue-400 flex-shrink-0" />
-              <span>this is official and this user is a system user used to inform users about stuff happening on serika</span>
+              <span>This is an official Serika system account used to share important updates and announcements with the community.</span>
             </div>
           ) : (
             <MessageBar
@@ -364,6 +385,28 @@ export default function DMConversationPage() {
 
                   {recipient.customStatus && (
                     <p className="text-sm text-[var(--text-secondary)] mt-2">{recipient.customStatus}</p>
+                  )}
+
+                  {!recipient.isSystem && !recipient.isFriend && (
+                    <div className="mt-3">
+                      {recipient.friendRequestSent ? (
+                        <button
+                          disabled
+                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--bg-hover)] text-[var(--text-secondary)] text-sm font-medium cursor-not-allowed"
+                        >
+                          <Clock className="w-4 h-4" />
+                          Pending
+                        </button>
+                      ) : (
+                        <button
+                          onClick={() => void handleAddFriend()}
+                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all"
+                        >
+                          <UserPlus className="w-4 h-4" />
+                          Add Friend
+                        </button>
+                      )}
+                    </div>
                   )}
 
                   <div className="h-px bg-[var(--border-subtle)] my-4" />

@@ -17,12 +17,16 @@ import {
   Crown,
   Plus,
   X,
+  Clock,
 } from "lucide-react";
 import { toast } from "sonner";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority } from "@/lib/constants/badges";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
 import { hasPermissionBit } from "@/lib/roles/bitfield";
+import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
+import { useMoeActivity } from "@/hooks/useMoeActivity";
+import { NowWatchingCard } from "@/components/user/NowWatchingCard";
 
 export interface ProfileCardUser {
   id: string;
@@ -41,6 +45,16 @@ export interface ProfileCardUser {
   isOwner?: boolean;
   isFriend?: boolean;
   friendRequestSent?: boolean;
+  customization?: {
+    profileColor?: string;
+    profileGradient?: string[];
+    displayNameStyle?: {
+      font?: 'default' | 'serif' | 'mono' | 'rounded' | 'cursive' | 'bold';
+      effect?: 'solid' | 'gradient' | 'neon' | 'toon' | 'pop';
+      color?: string;
+      gradient?: string[];
+    };
+  };
 }
 
 const STATUS_COLORS: Record<string, string> = {
@@ -135,6 +149,7 @@ export function ProfileCard({
 
   const status = user.status ?? "offline";
   const displayName = user.displayName || user.username;
+  const moeActivity = useMoeActivity(user.id);
 
   const handleCopyUsername = async () => {
     try {
@@ -203,7 +218,10 @@ export function ProfileCard({
   const badges = user.badges?.length ? getBadgesByPriority(user.badges as string[]) : [];
 
   return (
-    <div className={cn("w-[340px] rounded-xl overflow-hidden bg-[#0c0c10] border border-white/[0.06] shadow-2xl", className)}>
+    <div
+      className={cn("w-[340px] rounded-xl overflow-hidden bg-[#0c0c10] border border-white/[0.06] shadow-2xl", className)}
+      style={getProfileBackgroundStyle(user.customization)}
+    >
       {/* Banner — tall, Discord-profile style */}
       <div className="relative h-[120px]">
         {user.banner ? (
@@ -247,15 +265,24 @@ export function ProfileCard({
                 Message
               </button>
               {!isFriend && (
-                <button
-                  onClick={handleAddFriend}
-                  disabled={friendRequestSent}
-                  aria-label="Add friend"
-                  title={friendRequestSent ? "Friend request sent" : "Add Friend"}
-                  className="p-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] active:scale-[0.97] text-white transition-all disabled:opacity-50"
-                >
-                  {friendRequestSent ? <Check className="w-4 h-4 text-[#23A559]" /> : <UserPlus className="w-4 h-4" />}
-                </button>
+                friendRequestSent ? (
+                  <button
+                    disabled
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.06] text-[#9a9aad] text-sm font-medium cursor-not-allowed"
+                  >
+                    <Clock className="w-4 h-4" />
+                    Pending
+                  </button>
+                ) : (
+                  <button
+                    onClick={handleAddFriend}
+                    aria-label="Add friend"
+                    title="Add Friend"
+                    className="p-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] active:scale-[0.97] text-white transition-all"
+                  >
+                    <UserPlus className="w-4 h-4" />
+                  </button>
+                )
               )}
             </>
           )}
@@ -264,7 +291,12 @@ export function ProfileCard({
         {/* Identity */}
         <div className="mt-4">
           <div className="flex items-center gap-2">
-            <h3 className="text-xl font-bold text-white leading-tight truncate">{displayName}</h3>
+            <h3
+              className={cn("text-xl font-bold text-white leading-tight truncate", getDisplayNameStyleClasses(user.customization?.displayNameStyle))}
+              style={getDisplayNameStyleInline(user.customization?.displayNameStyle)}
+            >
+              {displayName}
+            </h3>
             {showOwnerCrown && user.isOwner && (
               <span title="Server Owner" className="shrink-0 text-[#F59E0B]">
                 <Crown className="w-4 h-4" />
@@ -306,6 +338,13 @@ export function ProfileCard({
         {badges.length > 0 && (
           <div className="mt-3">
             <BadgeList badges={badges.map((b) => b.id) as UIBadgeId[]} size="sm" maxDisplay={badges.length} expandable={false} />
+          </div>
+        )}
+
+        {/* Now watching on serika.moe (Discord-Spotify style) */}
+        {moeActivity && (
+          <div className="mt-4">
+            <NowWatchingCard activity={moeActivity} />
           </div>
         )}
 

@@ -1,5 +1,6 @@
 import { Elysia, t } from 'elysia';
-import { authenticateRequest } from '@/lib/services/auth';
+import { authenticateRequest, invalidateUserCache } from '@/lib/services/auth';
+import { User } from '@/lib/models';
 
 type GifItem = {
   id: string;
@@ -229,5 +230,68 @@ export const gifRoutes = new Elysia({ prefix: '/gifs' })
     query: t.Object({
       q: t.Optional(t.String()),
       limit: t.Optional(t.String()),
+    }),
+  })
+  .get('/favorites', async ({ headers, cookie, set }) => {
+    const { user, error } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: error || 'Unauthorized' };
+    }
+    const dbUser = await User.findById(user._id || (user as unknown as { id: string }).id);
+    return { favorites: dbUser?.gifFavorites || [] };
+  })
+  .post('/favorites', async ({ headers, cookie, body, set }) => {
+    const { user, error } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: error || 'Unauthorized' };
+    }
+    const { url } = body as { url: string };
+    if (!url || typeof url !== 'string') {
+      set.status = 400;
+      return { error: 'GIF URL is required' };
+    }
+    const userId = user._id || (user as unknown as { id: string }).id;
+    const dbUser = await User.findById(userId);
+    if (!dbUser) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+    const favorites = new Set(dbUser.gifFavorites || []);
+    favorites.add(url);
+    dbUser.gifFavorites = Array.from(favorites).slice(0, 100);
+    await dbUser.save();
+    await invalidateUserCache(userId.toString());
+    return { favorites: dbUser.gifFavorites };
+  }, {
+    body: t.Object({
+      url: t.String(),
+    }),
+  })
+  .delete('/favorites', async ({ headers, cookie, body, set }) => {
+    const { user, error } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: error || 'Unauthorized' };
+    }
+    const { url } = body as { url: string };
+    if (!url || typeof url !== 'string') {
+      set.status = 400;
+      return { error: 'GIF URL is required' };
+    }
+    const userId = user._id || (user as unknown as { id: string }).id;
+    const dbUser = await User.findById(userId);
+    if (!dbUser) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+    dbUser.gifFavorites = (dbUser.gifFavorites || []).filter((item: string) => item !== url);
+    await dbUser.save();
+    await invalidateUserCache(userId.toString());
+    return { favorites: dbUser.gifFavorites };
+  }, {
+    body: t.Object({
+      url: t.String(),
     }),
   });

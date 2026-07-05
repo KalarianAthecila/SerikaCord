@@ -22,7 +22,7 @@ export function StaffPill({ badges, className }: StaffPillProps) {
       return (
         <span
           className={cn(
-            "inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none bg-[#8B5CF6]/20 text-[#A78BFA] whitespace-nowrap",
+            "inline-flex items-center self-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none bg-[#8B5CF6]/20 text-[#A78BFA] whitespace-nowrap",
             className
           )}
         >

@@ -7,11 +7,20 @@ export type BadgeId =
   | 'server_owner' | 'active_developer'
   | 'serikacord_developer' | 'serikacord_contributor' | 'serikacord_tester';
 
+export interface IUserDisplayNameStyle {
+  font?: 'default' | 'serif' | 'mono' | 'rounded' | 'cursive' | 'bold';
+  effect?: 'solid' | 'gradient' | 'neon' | 'toon' | 'pop';
+  color?: string;
+  gradient?: string[];
+}
+
 export interface IUserCustomization {
   profileColor?: string;          // Primary profile color (Serika+ only)
   profileAccentColor?: string;    // Accent color for profile
+  profileGradient?: string[];     // Gradient colors for profile card background
   aboutMeStyle?: 'default' | 'card' | 'minimal';
   bannerAnimation?: 'none' | 'parallax' | 'pulse' | 'gradient';
+  displayNameStyle?: IUserDisplayNameStyle;
   theme?: 'dark' | 'light' | 'oled' | 'custom';
   customTheme?: {
     primary?: string;
@@ -53,6 +62,9 @@ export interface IUser extends Document {
   
   // Customization (Serika+ features)
   customization: IUserCustomization;
+  
+  // GIF favorites
+  gifFavorites: string[];
   
   // Flags
   isBot: boolean;
@@ -270,6 +282,7 @@ const UserSchema = new Schema<IUser>({
   customization: {
     profileColor: { type: String, default: null },
     profileAccentColor: { type: String, default: null },
+    profileGradient: [{ type: String }],
     aboutMeStyle: {
       type: String,
       enum: ['default', 'card', 'minimal'],
@@ -279,6 +292,12 @@ const UserSchema = new Schema<IUser>({
       type: String,
       enum: ['none', 'parallax', 'pulse', 'gradient'],
       default: 'none',
+    },
+    displayNameStyle: {
+      font: { type: String, default: 'default' },
+      effect: { type: String, enum: ['solid', 'gradient', 'neon', 'toon', 'pop'], default: 'solid' },
+      color: { type: String, default: null },
+      gradient: [{ type: String }],
     },
     theme: {
       type: String,
@@ -291,6 +310,10 @@ const UserSchema = new Schema<IUser>({
       accent: { type: String, default: null },
     },
   },
+  gifFavorites: [{
+    type: String,
+    default: [],
+  }],
   isBot: {
     type: Boolean,
     default: false,
