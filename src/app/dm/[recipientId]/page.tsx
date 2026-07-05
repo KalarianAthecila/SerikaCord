@@ -77,7 +77,7 @@ export default function DMConversationPage() {
     emojiLookup: availableServerEmojis,
     onShouldScrollToBottom: () => {
       if (messageListRef.current?.isAtBottom()) {
-        setTimeout(() => messageListRef.current?.scrollToBottom(), 50);
+        requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
       }
     },
   });
@@ -305,6 +305,7 @@ export default function DMConversationPage() {
           onReplyFocus={focusComposer}
           welcomeHeader={welcomeHeader}
           emptyText={`Say hi to ${recipientName || "your friend"}!`}
+          resetKey={recipientId}
         />
 
         <TypingIndicator text={chat.typingStatusText} className="pb-1" />

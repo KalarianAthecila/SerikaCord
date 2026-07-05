@@ -368,38 +368,26 @@ export function GifPicker({ onGifSelect, className }: GifPickerProps) {
     }
   }, []);
 
-  // Fetch GIFs from collection
-  const fetchCollectionGifs = useCallback(async (collectionId: string, page = 1, append = false) => {
-    if (page === 1) setIsLoading(true);
-    else setIsLoadingMore(true);
+  // Fetch GIFs from a collection — uses the /collections/:id endpoint which
+  // returns the collection with all its GIFs in one response (no pagination).
+  const fetchCollectionGifs = useCallback(async (collectionId: string) => {
+    setIsLoading(true);
     
     try {
       const response = await fetch(
-        `${SERIKA_GIFS_API}/gifs?collection=${encodeURIComponent(collectionId)}&limit=${GIF_PAGE_SIZE}&page=${page}`
+        `${SERIKA_GIFS_API}/collections/${encodeURIComponent(collectionId)}`
       );
       
       if (response.ok) {
         const data = await response.json();
-        const formattedGifs = formatGifs(data.gifs || []);
+        const collection = data.collection || data;
+        const formattedGifs = formatGifs(collection.gifs || collection.items || []);
         
-        if (append) {
-          const seen = new Set(gifsRef.current.map(g => g.id));
-          const unique = formattedGifs.filter(g => !seen.has(g.id));
-          if (unique.length === 0) {
-            noNewItemsRef.current = true;
-            setTotalPages(page);
-            return;
-          }
-          gifsRef.current = [...gifsRef.current, ...unique];
-          setGifs(gifsRef.current);
-        } else {
-          gifsRef.current = formattedGifs;
-          noNewItemsRef.current = false;
-          setGifs(formattedGifs);
-        }
-        
-        setTotalPages(resolveTotalPages(data.pagination?.totalPages, page, formattedGifs.length, GIF_PAGE_SIZE));
-        setCurrentPage(page);
+        gifsRef.current = formattedGifs;
+        noNewItemsRef.current = true;
+        setGifs(formattedGifs);
+        setTotalPages(1);
+        setCurrentPage(1);
       }
     } catch (error) {
       console.error("Failed to fetch collection GIFs:", error);
@@ -516,7 +504,7 @@ export function GifPicker({ onGifSelect, className }: GifPickerProps) {
         if (selectedCategory?.type === "tag") {
           fetchByTag((selectedCategory.item as Tag).slug, nextPage, true);
         } else if (selectedCategory?.type === "collection") {
-          fetchCollectionGifs((selectedCategory.item as Collection).id, nextPage, true);
+          fetchCollectionGifs((selectedCategory.item as Collection).id);
         }
         break;
     }
@@ -589,7 +577,7 @@ export function GifPicker({ onGifSelect, className }: GifPickerProps) {
     if (type === "tag") {
       fetchByTag((item as Tag).slug, 1);
     } else {
-      fetchCollectionGifs((item as Collection).id, 1);
+      fetchCollectionGifs((item as Collection).id);
     }
   };
 

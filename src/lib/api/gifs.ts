@@ -162,6 +162,15 @@ export const gifRoutes = new Elysia({ prefix: '/gifs' })
       page: t.Optional(t.String()),
     }),
   })
+  .get('/collections/:id', async ({ headers, cookie, params, set }) => {
+    const { user, error } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: error || 'Unauthorized' };
+    }
+
+    return proxySerikaJson(`/collections/${encodeURIComponent(params.id)}`, {}, set);
+  })
   .get('/tags', async ({ headers, cookie, query, set }) => {
     const { user, error } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user) {

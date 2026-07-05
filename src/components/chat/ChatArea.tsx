@@ -385,7 +385,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     onIncomingMessage: handleIncomingMessage,
     onShouldScrollToBottom: () => {
       if (messageListRef.current?.isAtBottom()) {
-        setTimeout(() => messageListRef.current?.scrollToBottom(), 50);
+        requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
       }
     },
   });
@@ -826,6 +826,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         onMediaClick={lightbox.openMediaViewer}
         onReplyFocus={focusComposer}
         welcomeHeader={welcomeHeader}
+        resetKey={currentChannel?.id}
       />
 
       <TypingIndicator text={chat.typingStatusText} />

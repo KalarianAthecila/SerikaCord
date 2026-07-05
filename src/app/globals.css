@@ -300,6 +300,8 @@ html.theme-midnight body {
   overscroll-behavior: contain;
   /* Keep newly-appended messages from yanking the viewport around. */
   overflow-anchor: none;
+  /* Smooth scrolling for programmatic scrollTo calls. */
+  scroll-behavior: smooth;
 }
 
 /* Thin, unobtrusive scrollbar shared by chat + dialog scroll areas. */

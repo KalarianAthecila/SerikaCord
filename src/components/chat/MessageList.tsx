@@ -4,6 +4,7 @@ import {
   useCallback,
   useEffect,
   useImperativeHandle,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -24,6 +25,7 @@ export interface MessageListHandle {
   scrollToBottom: (behavior?: ScrollBehavior) => void;
   scrollToMessage: (messageId: string) => void;
   isAtBottom: () => boolean;
+  forceScrollToBottom: () => void;
 }
 
 interface MentionUser {
@@ -63,6 +65,8 @@ interface MessageListProps<M extends ChatMessage> {
   className?: string;
   /** Called whenever bottom-adjacency changes (e.g. for unread indicators). */
   onAtBottomChange?: (atBottom: boolean) => void;
+  /** When this key changes, scroll state is reset and the list force-scrolls to bottom. */
+  resetKey?: string;
 }
 
 function MessageListInner<M extends ChatMessage>(
@@ -88,6 +92,7 @@ function MessageListInner<M extends ChatMessage>(
     emptyText = "No messages yet. Be the first to say something!",
     className,
     onAtBottomChange,
+    resetKey,
   }: MessageListProps<M>,
   ref: Ref<MessageListHandle>
 ) {
@@ -95,12 +100,26 @@ function MessageListInner<M extends ChatMessage>(
   const endRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
   const prevScrollHeightRef = useRef(0);
+  const pendingScrollRestoreRef = useRef(false);
+  const forceScrollRef = useRef(false);
+  const scrollRafRef = useRef<number | null>(null);
   const [newMessagesCount, setNewMessagesCount] = useState(0);
   const messageCount = useMemo(
     () => groups.reduce((total, group) => total + group.messages.length, 0),
     [groups]
   );
   const prevMessageCountRef = useRef(0);
+
+  // Reset scroll state when channel/DM changes so the list scrolls to bottom
+  // even if the message count happens to be identical to the previous context.
+  useEffect(() => {
+    if (resetKey === undefined) return;
+    prevMessageCountRef.current = 0;
+    isAtBottomRef.current = true;
+    forceScrollRef.current = true;
+    // Defer to avoid synchronous setState in effect
+    Promise.resolve().then(() => setNewMessagesCount(0));
+  }, [resetKey]);
 
   // Latest mutable handlers behind stable identities so memoized rows
   // don't re-render on every parent render.
@@ -110,7 +129,9 @@ function MessageListInner<M extends ChatMessage>(
   });
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
-    endRef.current?.scrollIntoView({ behavior, block: "end" });
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollTo({ top: viewport.scrollHeight, behavior });
   }, []);
 
   const scrollToMessage = useCallback((messageId: string) => {
@@ -119,53 +140,85 @@ function MessageListInner<M extends ChatMessage>(
       ?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, []);
 
+  const forceScrollToBottom = useCallback(() => {
+    forceScrollRef.current = true;
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
       scrollToBottom,
       scrollToMessage,
       isAtBottom: () => isAtBottomRef.current,
+      forceScrollToBottom,
     }),
-    [scrollToBottom, scrollToMessage]
+    [scrollToBottom, scrollToMessage, forceScrollToBottom]
   );
 
+  // Scroll restoration after loading older messages — runs synchronously
+  // after DOM mutation but before paint, so the user never sees a jump.
+  useLayoutEffect(() => {
+    if (!pendingScrollRestoreRef.current) return;
+    pendingScrollRestoreRef.current = false;
+    const viewport = viewportRef.current;
+    if (viewport && prevScrollHeightRef.current) {
+      viewport.scrollTop += viewport.scrollHeight - prevScrollHeightRef.current;
+      prevScrollHeightRef.current = 0;
+    }
+    prevMessageCountRef.current = messageCount;
+  }, [messageCount]);
+
   // Auto-scroll on new messages when pinned to bottom; otherwise count them.
-  useEffect(() => {
+  // useLayoutEffect ensures instant scroll (no flash) on initial load and
+  // force-scroll; RAF-deferred smooth scroll for subsequent new messages.
+  useLayoutEffect(() => {
+    if (pendingScrollRestoreRef.current) return; // handled above
     const prevCount = prevMessageCountRef.current;
     prevMessageCountRef.current = messageCount;
-    if (messageCount > prevCount) {
-      if (isAtBottomRef.current) {
-        scrollToBottom(prevCount === 0 ? "auto" : "smooth");
+    if (messageCount <= prevCount) return;
+
+    const shouldForce = forceScrollRef.current;
+    forceScrollRef.current = false;
+
+    if (shouldForce || isAtBottomRef.current) {
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      // Instant scroll for initial load or force-scroll; smooth otherwise.
+      if (prevCount === 0 || shouldForce) {
+        viewport.scrollTop = viewport.scrollHeight;
       } else {
-        setNewMessagesCount((c) => c + (messageCount - prevCount));
+        // Defer smooth scroll to after paint so the browser animates properly.
+        requestAnimationFrame(() => {
+          viewport.scrollTo({ top: viewport.scrollHeight, behavior: "smooth" });
+        });
       }
+    } else {
+      setNewMessagesCount((c) => c + (messageCount - prevCount));
     }
-  }, [messageCount, scrollToBottom]);
+  }, [messageCount]);
 
   // Scroll listener: bottom detection + top pagination with scroll restore.
+  // Throttled via requestAnimationFrame for smoother performance.
   const handleScroll = useCallback(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const { scrollTop, scrollHeight, clientHeight } = viewport;
-    const atBottom = scrollHeight - scrollTop - clientHeight < 80;
-    if (atBottom !== isAtBottomRef.current) {
-      isAtBottomRef.current = atBottom;
-      latestRef.current.onAtBottomChange?.(atBottom);
-    }
-    if (atBottom) setNewMessagesCount(0);
+    if (scrollRafRef.current !== null) return;
+    scrollRafRef.current = requestAnimationFrame(() => {
+      scrollRafRef.current = null;
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      const { scrollTop, scrollHeight, clientHeight } = viewport;
+      const atBottom = scrollHeight - scrollTop - clientHeight < 80;
+      if (atBottom !== isAtBottomRef.current) {
+        isAtBottomRef.current = atBottom;
+        latestRef.current.onAtBottomChange?.(atBottom);
+      }
+      if (atBottom) setNewMessagesCount(0);
 
-    if (scrollTop < 100 && hasMoreOlder && !isLoadingMore) {
-      prevScrollHeightRef.current = viewport.scrollHeight;
-      void latestRef.current.loadOlderMessages().then((didLoad) => {
-        if (!didLoad) return;
-        requestAnimationFrame(() => {
-          const vp = viewportRef.current;
-          if (vp && prevScrollHeightRef.current) {
-            vp.scrollTop += vp.scrollHeight - prevScrollHeightRef.current;
-          }
-        });
-      });
-    }
+      if (scrollTop < 100 && hasMoreOlder && !isLoadingMore) {
+        prevScrollHeightRef.current = viewport.scrollHeight;
+        pendingScrollRestoreRef.current = true;
+        void latestRef.current.loadOlderMessages();
+      }
+    });
   }, [hasMoreOlder, isLoadingMore]);
 
   // Stable handlers for memoized rows.
@@ -217,15 +270,8 @@ function MessageListInner<M extends ChatMessage>(
                     onClick={() => {
                       const viewport = viewportRef.current;
                       prevScrollHeightRef.current = viewport?.scrollHeight ?? 0;
-                      void latestRef.current.loadOlderMessages().then((didLoad) => {
-                        if (!didLoad) return;
-                        requestAnimationFrame(() => {
-                          const vp = viewportRef.current;
-                          if (vp && prevScrollHeightRef.current) {
-                            vp.scrollTop += vp.scrollHeight - prevScrollHeightRef.current;
-                          }
-                        });
-                      });
+                      pendingScrollRestoreRef.current = true;
+                      void latestRef.current.loadOlderMessages();
                     }}
                     className="px-4 py-1.5 rounded-full text-sm text-[var(--accent-color)] bg-[var(--accent-color)]/10 hover:bg-[var(--accent-color)]/20 transition-colors"
                   >
