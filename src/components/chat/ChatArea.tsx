@@ -43,9 +43,11 @@ import {
 } from "@/lib/services/notificationUX";
 import { useMentions, type MentionData } from "@/hooks/useMentions";
 import { useChatSession } from "@/hooks/useChatSession";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { formatMessageTimestamp } from "@/lib/chat/messages";
+import { getCommandSuggestions, type SlashCommand } from "@/lib/chat/slashCommands";
 import type { ChatMessage } from "@/lib/chat/types";
 
 type Message = ChatMessage;
@@ -66,12 +68,13 @@ interface MentionRole {
 
 interface MentionSuggestion {
   id: string;
-  kind: "user" | "role" | "everyone" | "here" | "emoji";
+  kind: "user" | "role" | "everyone" | "here" | "emoji" | "command";
   label: string;
   description?: string;
   color?: string;
   imageUrl?: string;
   animated?: boolean;
+  usage?: string;
 }
 
 function escapeRegex(input: string): string {
@@ -97,7 +100,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const isMobile = useIsMobile();
   const messageBarRef = useRef<MessageBarHandle>(null);
   const messageListRef = useRef<MessageListHandle>(null);
-  const [confirmedNsfwChannels, setConfirmedNsfwChannels] = useState<Set<string>>(new Set());
 
   // Server emojis and stickers
   const [serverEmojis, setServerEmojis] = useState<Array<{
@@ -392,6 +394,55 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     },
   });
 
+  const { executeCommand } = useSlashCommands({
+    serverId: currentServer?.id,
+    channelId: currentChannel?.id,
+    clearMessages: useCallback((count: number, userId?: string) => {
+      chat.setMessages((prev) => {
+        if (userId) {
+          // Remove last N messages from a specific user
+          let remaining = count;
+          const result = [...prev].reverse().filter((m) => {
+            if (m.authorId === userId && remaining > 0) {
+              remaining--;
+              return false;
+            }
+            return true;
+          });
+          return result.reverse();
+        }
+        // Remove last N messages
+        return prev.slice(0, Math.max(0, prev.length - count));
+      });
+    }, [chat]),
+  });
+
+  const handleSend = useCallback(async () => {
+    const composer = messageBarRef.current?.getComposer();
+    const rawContent = composer?.getText() ?? "";
+    const trimmed = rawContent.trim();
+
+    // Intercept slash commands
+    if (trimmed.startsWith("/")) {
+      const result = await executeCommand(trimmed);
+      if (result.handled) {
+        // Clear the composer if the command was consumed
+        if (result.ttsText) {
+          // TTS: speak then send the text as a normal message
+          composer?.clear();
+          await chat.sendMessage({ contentOverride: result.ttsText });
+        } else {
+          composer?.clear();
+          chat.resetTyping();
+        }
+        return;
+      }
+    }
+
+    // Normal send
+    void chat.sendMessage();
+  }, [executeCommand, chat]);
+
   const lightbox = useMediaLightbox(chat.mediaGallery);
 
   const runMessageSearch = useCallback(async (query: string) => {
@@ -440,6 +491,30 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       const caretPosition =
         explicitCaretPosition ?? messageBarRef.current?.getComposer()?.getCaret() ?? draft.length;
       const beforeCursor = draft.slice(0, caretPosition);
+
+      // Slash command autocomplete: `/query` at the start of the message (no spaces)
+      const slashMatch = beforeCursor.match(/^\/([a-zA-Z0-9_]*)$/);
+      if (slashMatch) {
+        const query = slashMatch[1];
+        const isServer = !!currentServer;
+        const commands = getCommandSuggestions(query, isServer);
+        if (commands.length > 0) {
+          const cmdStart = 1; // position after the '/'
+          mentionRangeRef.current = { start: cmdStart, end: caretPosition };
+          setMentionSuggestions(
+            commands.map((cmd: SlashCommand) => ({
+              id: cmd.name,
+              kind: "command" as const,
+              label: cmd.name,
+              description: cmd.description,
+              usage: cmd.usage,
+            })),
+          );
+          setActiveMentionIndex(0);
+          return;
+        }
+      }
+
       const mentionMatch = beforeCursor.match(/(^|[\s\n])@([^\s@]{0,40})$/m);
 
       if (!mentionMatch) {
@@ -540,7 +615,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       setMentionSuggestions(nextSuggestions);
       setActiveMentionIndex(0);
     },
-    [mentionRoles, mentionUsers, allServerEmojis]
+    [mentionRoles, mentionUsers, allServerEmojis, currentServer]
   );
 
   const insertMentionFromSuggestion = useCallback(
@@ -561,6 +636,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           url: suggestion.imageUrl || "",
           animated: suggestion.animated,
         });
+      } else if (suggestion.kind === "command") {
+        // Replace /query with /command + space
+        composer.replaceRange(0, activeRange.end, `/${suggestion.label} `);
       } else {
         const mentionToken =
           suggestion.kind === "user"
@@ -635,7 +713,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void chat.sendMessage();
+      void handleSend();
     }
   };
 
@@ -675,60 +753,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     );
   }
 
-  const isNsfw = currentChannel?.isNsfw;
-  const isConfirmed = confirmedNsfwChannels.has(currentChannel.id);
 
-  if (isNsfw && !isConfirmed) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center bg-[#09090b] text-[#fafafa] p-6 text-center select-none">
-        <div className="max-w-md w-full p-8 rounded-2xl border border-red-500/10 bg-red-950/5 backdrop-blur-md shadow-2xl space-y-6">
-          <div className="mx-auto w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20 animate-pulse">
-            <span className="text-xl font-bold text-red-500">18+</span>
-          </div>
-          <div className="space-y-2">
-            <h2 className="text-2xl font-bold tracking-tight text-red-400">
-              Age-Restricted Channel
-            </h2>
-            <p className="text-sm text-zinc-400 leading-relaxed font-sans">
-              This channel has been marked as NSFW (Not Safe For Work). You must be 18 years or older to view the content inside.
-            </p>
-          </div>
-          <div className="flex flex-col sm:flex-row gap-3 pt-2">
-            <Button
-              variant="outline"
-              onClick={() => {
-                if (currentServer) {
-                  const safeChannel = channels.find((c) => !c.isNsfw && c.type !== "category");
-                  if (safeChannel) {
-                    router.push(`/channels/${currentServer.id}/${safeChannel.id}`);
-                  } else {
-                    router.push(`/channels/${currentServer.id}`);
-                  }
-                } else {
-                  router.push("/channels/me");
-                }
-              }}
-              className="flex-1 bg-transparent hover:bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white"
-            >
-              No, Go Back
-            </Button>
-            <Button
-              onClick={() => {
-                setConfirmedNsfwChannels((prev) => {
-                  const next = new Set(prev);
-                  next.add(currentChannel.id);
-                  return next;
-                });
-              }}
-              className="flex-1 bg-red-600 hover:bg-red-500 text-white font-medium shadow-lg shadow-red-600/20"
-            >
-              Yes, I am 18 or older
-            </Button>
-          </div>
-        </div>
-      </div>
-    );
-  }
 
   const welcomeHeader = (
     <div className="px-4 pb-4 mb-4 border-b border-[var(--app-border)]">
@@ -892,7 +917,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         ref={messageBarRef}
         placeholder={`Message #${currentChannel?.name ?? ""}`}
         ariaLabel={`Message #${currentChannel?.name ?? ""}`}
-        onSend={() => void chat.sendMessage()}
+        onSend={() => void handleSend()}
         onChange={handleComposerChange}
         onKeyDown={handleKeyDown}
         onCaretMove={(text, caret) => updateMentionSuggestions(text, caret)}

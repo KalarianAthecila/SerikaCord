@@ -68,6 +68,9 @@ export interface IServer extends Document {
   discoveryDescription?: string;
   discoveryCategories: string[];
   
+  // Age restriction
+  isAgeGated: boolean;
+  
   // Invite
   vanityUrlCode?: string;
   vanityUrlUses: number;
@@ -251,6 +254,10 @@ const ServerSchema = new Schema<IServer>({
   discoveryCategories: [{
     type: String,
   }],
+  isAgeGated: {
+    type: Boolean,
+    default: false,
+  },
   vanityUrlCode: {
     type: String,
     unique: true,

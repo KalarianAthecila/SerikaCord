@@ -18,6 +18,12 @@ import {
   FileText,
   Reply,
   Music,
+  Hash,
+  Ban,
+  UserMinus,
+  Volume2,
+  Clock,
+  Eraser,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -28,6 +34,15 @@ import {
 } from "@/components/ui/popover";
 import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
 import { RichComposer, type RichComposerHandle, type ComposerEmoji } from "@/components/chat/RichComposer";
+
+const COMMAND_ICONS: Record<string, React.ReactNode> = {
+  clear: <Eraser className="w-3 h-3" />,
+  kick: <UserMinus className="w-3 h-3" />,
+  ban: <Ban className="w-3 h-3" />,
+  timeout: <Clock className="w-3 h-3" />,
+  nick: <Hash className="w-3 h-3" />,
+  tts: <Volume2 className="w-3 h-3" />,
+};
 
 export interface MessageBarAttachment {
   id: string;
@@ -64,12 +79,13 @@ interface ServerSticker {
 
 interface MentionSuggestion {
   id: string;
-  kind: "user" | "role" | "everyone" | "here" | "emoji";
+  kind: "user" | "role" | "everyone" | "here" | "emoji" | "command";
   label: string;
   description?: string;
   color?: string;
   imageUrl?: string;
   animated?: boolean;
+  usage?: string;
 }
 
 interface ReplyTarget {
@@ -460,37 +476,47 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
           <div className="bg-[var(--app-surface)] rounded-lg border border-[var(--app-border)] shadow-[var(--app-elev-1)] overflow-hidden">
             {/* Mention suggestions overlay */}
             {mentionSuggestions.length > 0 && (
-              <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-20 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-alt)] shadow-[var(--app-elev-2)] overflow-hidden">
-                {mentionSuggestions.map((suggestion, index) => (
-                  <button
-                    key={`${suggestion.kind}-${suggestion.id}`}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      onMentionSelect?.(suggestion);
-                    }}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
-                      index === activeMentionIndex
-                        ? "bg-[var(--app-accent)]/20 text-[var(--text-primary)]"
-                        : "hover:bg-[var(--app-surface)] text-[var(--text-primary)]"
-                    )}
-                  >
-                    <span className="flex items-center gap-2 min-w-0 text-sm">
-                      {suggestion.kind === "emoji" ? (
-                        <>
-                          <img src={suggestion.imageUrl} alt="" className="w-5 h-5 object-contain shrink-0" loading="lazy" />
-                          <span className="truncate">:{suggestion.label}:</span>
-                        </>
-                      ) : (
-                        <span className="truncate">@{suggestion.label}</span>
+              <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-20 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-alt)] shadow-[var(--app-elev-2)] overflow-hidden max-h-64 overflow-y-auto">
+                {mentionSuggestions.map((suggestion, index) => {
+                  const cmdIcon = suggestion.kind === "command" ? COMMAND_ICONS[suggestion.id as keyof typeof COMMAND_ICONS] : null;
+                  return (
+                    <button
+                      key={`${suggestion.kind}-${suggestion.id}`}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        onMentionSelect?.(suggestion);
+                      }}
+                      className={cn(
+                        "w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+                        index === activeMentionIndex
+                          ? "bg-[var(--app-accent)]/20 text-[var(--text-primary)]"
+                          : "hover:bg-[var(--app-surface)] text-[var(--text-primary)]"
                       )}
-                    </span>
-                    <span className="text-xs text-[var(--app-muted)] truncate">
-                      {suggestion.kind === "role" ? "Role" : suggestion.description}
-                    </span>
-                  </button>
-                ))}
+                    >
+                      <span className="flex items-center gap-2 min-w-0 text-sm">
+                        {suggestion.kind === "emoji" ? (
+                          <>
+                            <img src={suggestion.imageUrl} alt="" className="w-5 h-5 object-contain shrink-0" loading="lazy" />
+                            <span className="truncate">:{suggestion.label}:</span>
+                          </>
+                        ) : suggestion.kind === "command" ? (
+                          <>
+                            <span className="flex items-center justify-center w-5 h-5 shrink-0 rounded bg-[#8B5CF6]/15 text-[#a78bfa]">
+                              {cmdIcon}
+                            </span>
+                            <span className="truncate font-mono text-[#a78bfa]">/{suggestion.label}</span>
+                          </>
+                        ) : (
+                          <span className="truncate">@{suggestion.label}</span>
+                        )}
+                      </span>
+                      <span className="text-xs text-[var(--app-muted)] truncate shrink-0">
+                        {suggestion.kind === "command" ? suggestion.usage : suggestion.kind === "role" ? "Role" : suggestion.description}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
 

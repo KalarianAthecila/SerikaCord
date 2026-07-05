@@ -397,6 +397,62 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       nsfw: t.Optional(t.Boolean()),
     }),
   })
+  // Bulk reorder channels (drag & drop)
+  .patch('/:serverId/channels/reorder', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      set.status = 403;
+      return { error: 'You do not have permission to reorder channels' };
+    }
+
+    const { channels: channelUpdates } = body;
+    if (!Array.isArray(channelUpdates) || channelUpdates.length === 0) {
+      set.status = 400;
+      return { error: 'No channel updates provided' };
+    }
+
+    // Bulk update each channel's position and parentId
+    const bulkOps = channelUpdates.map((update: { id: string; position: number; parentId?: string | null }) => ({
+      updateOne: {
+        filter: { _id: update.id, serverId: server._id },
+        update: {
+          $set: {
+            position: update.position,
+            ...(update.parentId !== undefined ? { parentId: update.parentId || null } : {}),
+          },
+        },
+      },
+    }));
+
+    await Channel.bulkWrite(bulkOps);
+
+    // Fetch fresh channel list
+    const updatedChannels = await Channel.find({ serverId: server._id }).sort({ position: 1 });
+
+    return { success: true, channels: updatedChannels };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      channels: t.Array(t.Object({
+        id: t.String(),
+        position: t.Number({ minimum: 0 }),
+        parentId: t.Optional(t.Union([t.String(), t.Null()])),
+      })),
+    }),
+  })
   // Get server details
   .get('/:serverId', async ({ headers, cookie, params, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -838,7 +894,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You do not have permission to edit this server' };
     }
 
-    const { name, description, icon, banner, systemChannelId, rulesChannelId, afkChannelId, afkTimeout, verificationLevel, explicitContentFilter } = body;
+    const { name, description, icon, banner, systemChannelId, rulesChannelId, afkChannelId, afkTimeout, verificationLevel, explicitContentFilter, isAgeGated } = body;
 
     if (name !== undefined) server.name = sanitizeInput(name);
     if (description !== undefined) server.description = sanitizeInput(description);
@@ -850,6 +906,17 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     if (afkTimeout !== undefined) server.afkTimeout = afkTimeout;
     if (verificationLevel !== undefined) server.verificationLevel = verificationLevel;
     if (explicitContentFilter !== undefined) server.explicitContentFilter = explicitContentFilter;
+
+    // Age-gated servers cannot be partnered or discoverable
+    if (isAgeGated !== undefined) {
+      server.isAgeGated = isAgeGated;
+      if (isAgeGated) {
+        server.isPartnered = false;
+        server.partneredAt = undefined;
+        server.isDiscoverable = false;
+        server.discoverableAt = undefined;
+      }
+    }
 
     // Keep extended settings document in sync with legacy fields
     server.settings = {
@@ -911,6 +978,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
         t.Literal('members_without_roles'),
         t.Literal('all_members'),
       ])),
+      isAgeGated: t.Optional(t.Boolean()),
     }),
   })
   // Delete server
@@ -1128,14 +1196,19 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       userId?: PopulatedMemberUser | null;
       roles?: PopulatedRole[];
       joinedAt?: Date;
+      nickname?: string | null;
+      avatar?: string | null;
+      banner?: string | null;
     });
 
     const userData = member.userId as unknown as { bio?: string; banner?: string; badges?: string[] } | null;
 
     return {
       ...normalized,
+      nickname: member.nickname || null,
+      avatarOverride: member.avatar || null,
       bio: userData?.bio || null,
-      banner: userData?.banner || null,
+      banner: member.banner || userData?.banner || null,
       badges: userData?.badges || [],
       isOwner: server ? server.ownerId.equals(member.userId as unknown as Types.ObjectId) : false,
     };
@@ -1143,6 +1216,56 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     params: t.Object({
       serverId: t.String(),
       memberUserId: t.String(),
+    }),
+  })
+  // Update server member profile for current user
+  .patch('/:serverId/members/@me', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const member = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: user._id,
+    });
+
+    if (!member) {
+      set.status = 404;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const { nickname, avatar, banner } = body;
+
+    if (nickname !== undefined) {
+      member.nickname = nickname ? sanitizeInput(nickname) : undefined;
+    }
+    if (avatar !== undefined) {
+      member.avatar = avatar || undefined;
+    }
+    if (banner !== undefined) {
+      member.banner = banner || undefined;
+    }
+
+    await member.save();
+
+    return {
+      success: true,
+      member: {
+        nickname: member.nickname || null,
+        avatar: member.avatar || null,
+        banner: member.banner || null,
+      },
+    };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      nickname: t.Optional(t.Union([t.String({ maxLength: 32 }), t.Null()])),
+      avatar: t.Optional(t.Union([t.String(), t.Null()])),
+      banner: t.Optional(t.Union([t.String(), t.Null()])),
     }),
   })
   // Leave server

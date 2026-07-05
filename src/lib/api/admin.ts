@@ -389,6 +389,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const newPartnerStatus = !server.isPartnered;
+
+    // Age-gated servers cannot be partnered
+    if (newPartnerStatus && server.isAgeGated) {
+      set.status = 400;
+      return { error: 'Age-gated servers cannot be partnered' };
+    }
+
     server.isPartnered = newPartnerStatus;
     server.partneredAt = newPartnerStatus ? new Date() : undefined;
     await server.save();
@@ -420,6 +427,12 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     if (!server) {
       set.status = 404;
       return { error: 'Server not found' };
+    }
+
+    // Age-gated servers cannot be discoverable
+    if (!server.isDiscoverable && server.isAgeGated) {
+      set.status = 400;
+      return { error: 'Age-gated servers cannot be discoverable' };
     }
 
     server.isDiscoverable = !server.isDiscoverable;

@@ -281,6 +281,11 @@ export function ChannelSidebar({
 
   // State for collapsed categories
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  // Reset collapsed categories on server switch
+  useEffect(() => {
+    setCollapsedCategories(new Set());
+  }, [currentServer?.id]);
   const [dmChannels, setDmChannels] = useState<DMChannel[]>([]);
   const [externalVoiceParticipants, setExternalVoiceParticipants] = useState<Map<string, VoiceParticipant[]>>(new Map());
   const pathname = usePathname();

@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -85,8 +86,19 @@ const statusOptions = [
 export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogProps) {
   const { user, logout, updateUser, refresh } = useAuth();
   const { settings: themeSettings, applyUserSettingsPatch, updateSettings } = useTheme();
+  const { servers } = useServer();
   const [activeTab, setActiveTab] = useState<SettingsTab>("profiles");
   const [displayName, setDisplayName] = useState("");
+  const [profileTab, setProfileTab] = useState<"main" | "server">("main");
+  const [selectedServerId, setSelectedServerId] = useState<string>("");
+  const [serverNickname, setServerNickname] = useState("");
+  const [serverAvatar, setServerAvatar] = useState<string | null>(null);
+  const [serverBanner, setServerBanner] = useState<string | null>(null);
+  const [serverMemberLoading, setServerMemberLoading] = useState(false);
+
+  const [initialServerNickname, setInitialServerNickname] = useState("");
+  const [initialServerAvatar, setInitialServerAvatar] = useState<string | null>(null);
+  const [initialServerBanner, setInitialServerBanner] = useState<string | null>(null);
   const [bio, setBio] = useState("");
   const [pronouns, setPronouns] = useState("");
   const [customStatus, setCustomStatus] = useState("");
@@ -292,9 +304,46 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     applyUserSettingsPatch(userSettings);
   }, [userSettings, applyUserSettingsPatch]);
 
+  // Initialize selected server when profile tab is opened or servers change
+  useEffect(() => {
+    if (servers.length > 0 && !selectedServerId) {
+      setSelectedServerId(servers[0].id);
+    }
+  }, [servers, selectedServerId]);
+
+  // Fetch server-specific profile whenever selectedServerId or profileTab changes
+  useEffect(() => {
+    const fetchServerProfile = async () => {
+      if (profileTab !== "server" || !selectedServerId || !user?.id) return;
+      setServerMemberLoading(true);
+      try {
+        const res = await fetch(`/api/servers/${selectedServerId}/members/${user.id}`);
+        if (res.ok) {
+          const member = await res.json();
+          const nick = member.nickname || "";
+          const av = member.avatarOverride || null;
+          const ban = member.banner || null;
+
+          setServerNickname(nick);
+          setServerAvatar(av);
+          setServerBanner(ban);
+
+          setInitialServerNickname(nick);
+          setInitialServerAvatar(av);
+          setInitialServerBanner(ban);
+        }
+      } catch (err) {
+        console.error("Failed to fetch server profile:", err);
+      } finally {
+        setServerMemberLoading(false);
+      }
+    };
+    fetchServerProfile();
+  }, [profileTab, selectedServerId, user?.id]);
+
   // Track changes
   useEffect(() => {
-    if (user) {
+    if (profileTab === "main" && user) {
       const changed =
         displayName !== (user.displayName || "") ||
         bio !== (user.bio || "") ||
@@ -305,8 +354,31 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
         profileColor !== (user.customization?.profileColor || "") ||
         JSON.stringify(profileGradient) !== JSON.stringify(user.customization?.profileGradient || []);
       setHasChanges(changed);
+    } else if (profileTab === "server") {
+      const changed =
+        serverNickname !== initialServerNickname ||
+        serverAvatar !== initialServerAvatar ||
+        serverBanner !== initialServerBanner;
+      setHasChanges(changed);
     }
-  }, [displayName, bio, pronouns, customStatus, status, displayNameStyle, profileColor, profileGradient, user]);
+  }, [
+    displayName,
+    bio,
+    pronouns,
+    customStatus,
+    status,
+    displayNameStyle,
+    profileColor,
+    profileGradient,
+    user,
+    profileTab,
+    serverNickname,
+    initialServerNickname,
+    serverAvatar,
+    initialServerAvatar,
+    serverBanner,
+    initialServerBanner,
+  ]);
 
   // Handle escape key
   useEffect(() => {
@@ -322,44 +394,69 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const handleSave = async () => {
     setIsSaving(true);
     try {
-      const response = await fetch("/api/users/me", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          displayName,
-          bio,
-          pronouns,
-          customStatus,
-          status,
-          customization: {
-            displayNameStyle,
-            profileColor,
-            profileGradient,
-          },
-        }),
-      });
-
-      if (response.ok) {
-        // Update local state immediately
-        updateUser({
-          displayName,
-          bio,
-          pronouns,
-          customStatus,
-          status: status as "online" | "idle" | "dnd" | "offline",
-          customization: {
-            ...(user?.customization || {}),
-            displayNameStyle,
-            profileColor,
-            profileGradient,
-          },
+      if (profileTab === "main") {
+        const response = await fetch("/api/users/me", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            displayName,
+            bio,
+            pronouns,
+            customStatus,
+            status,
+            customization: {
+              displayNameStyle,
+              profileColor,
+              profileGradient,
+            },
+          }),
         });
-        setHasChanges(false);
-        toast.success("Profile saved!");
-        // Refresh to get full updated data
-        await refresh();
+
+        if (response.ok) {
+          // Update local state immediately
+          updateUser({
+            displayName,
+            bio,
+            pronouns,
+            customStatus,
+            status: status as "online" | "idle" | "dnd" | "offline",
+            customization: {
+              ...(user?.customization || {}),
+              displayNameStyle,
+              profileColor,
+              profileGradient,
+            },
+          });
+          setHasChanges(false);
+          toast.success("Profile saved!");
+          // Refresh to get full updated data
+          await refresh();
+        } else {
+          toast.error("Failed to save profile");
+        }
       } else {
-        toast.error("Failed to save profile");
+        // Save server profile
+        const response = await fetch(`/api/servers/${selectedServerId}/members/@me`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            nickname: serverNickname || null,
+            avatar: serverAvatar || null,
+            banner: serverBanner || null,
+          }),
+        });
+
+        if (response.ok) {
+          setInitialServerNickname(serverNickname);
+          setInitialServerAvatar(serverAvatar);
+          setInitialServerBanner(serverBanner);
+          setHasChanges(false);
+          toast.success("Server profile saved!");
+          await refresh();
+        } else {
+          const data = await response.json();
+          toast.error(data.error || "Failed to save server profile");
+        }
       }
     } catch (error) {
       console.error("Failed to save settings:", error);
@@ -432,7 +529,13 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const handleCropComplete = async (croppedBlob: Blob) => {
     const isAvatar = cropperType === "avatar";
     const setUploading = isAvatar ? setIsUploadingAvatar : setIsUploadingBanner;
-    const endpoint = isAvatar ? "/api/upload/avatar" : "/api/upload/banner";
+    
+    let endpoint = isAvatar ? "/api/upload/avatar" : "/api/upload/banner";
+    if (profileTab === "server" && selectedServerId) {
+      endpoint = isAvatar 
+        ? `/api/upload/server/${selectedServerId}/avatar`
+        : `/api/upload/server/${selectedServerId}/banner`;
+    }
 
     setUploading(true);
     const formData = new FormData();
@@ -446,10 +549,18 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
       if (response.ok) {
         const data = await response.json();
-        if (isAvatar) {
-          updateUser({ avatar: data.url });
+        if (profileTab === "main") {
+          if (isAvatar) {
+            updateUser({ avatar: data.url });
+          } else {
+            updateUser({ banner: data.url });
+          }
         } else {
-          updateUser({ banner: data.url });
+          if (isAvatar) {
+            setServerAvatar(data.url);
+          } else {
+            setServerBanner(data.url);
+          }
         }
         toast.success(`${isAvatar ? "Avatar" : "Banner"} updated!`);
         await refresh();
@@ -1049,10 +1160,38 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
                   {/* Tabs */}
                   <div className="flex gap-6 border-b border-[var(--border-subtle)] mb-6">
-                    <button className="pb-3 text-[var(--text-primary)] font-medium border-b-2 border-[#8B5CF6]">
+                    <button
+                      onClick={() => {
+                        if (!hasChanges) {
+                          setProfileTab("main");
+                        } else {
+                          toast.error("Please save or reset your changes first.");
+                        }
+                      }}
+                      className={cn(
+                        "pb-3 font-medium border-b-2 transition-colors",
+                        profileTab === "main"
+                          ? "text-[var(--text-primary)] border-[#8B5CF6]"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      )}
+                    >
                       Main Profile
                     </button>
-                    <button className="pb-3 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+                    <button
+                      onClick={() => {
+                        if (!hasChanges) {
+                          setProfileTab("server");
+                        } else {
+                          toast.error("Please save or reset your changes first.");
+                        }
+                      }}
+                      className={cn(
+                        "pb-3 font-medium border-b-2 transition-colors",
+                        profileTab === "server"
+                          ? "text-[var(--text-primary)] border-[#8B5CF6]"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      )}
+                    >
                       Per-server Profiles
                     </button>
                   </div>
@@ -1060,388 +1199,545 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                   {/* Profile Preview Card */}
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
                     <div>
-                      {/* Banner promo for premium */}
-                      {!user?.isPremium && (
-                        <div className="bg-gradient-to-r from-[#5865F2] to-[#8B5CF6] rounded-lg p-4 mb-6 relative overflow-hidden">
-                          <div className="relative z-10">
-                            <h3 className="text-white font-bold mb-1">Give your profile a fresh look</h3>
-                            <p className="text-sm text-white/80 mb-3">
-                              Check out the latest avatar decorations, profile effects, and nameplates.
-                            </p>
-                            <button className="px-4 py-2 bg-white text-[#5865F2] font-medium rounded hover:bg-gray-100 transition-colors">
-                              Go to Shop
-                            </button>
+                      {/* Main Profile Form */}
+                      {profileTab === "main" && (
+                        <div className="space-y-6">
+                          {/* Banner promo for premium */}
+                          {!user?.isPremium && (
+                            <div className="bg-gradient-to-r from-[#5865F2] to-[#8B5CF6] rounded-lg p-4 mb-6 relative overflow-hidden">
+                              <div className="relative z-10">
+                                <h3 className="text-white font-bold mb-1">Give your profile a fresh look</h3>
+                                <p className="text-sm text-white/80 mb-3">
+                                  Check out the latest avatar decorations, profile effects, and nameplates.
+                                </p>
+                                <button className="px-4 py-2 bg-white text-[#5865F2] font-medium rounded hover:bg-gray-100 transition-colors">
+                                  Go to Shop
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
+                          {/* Avatar & Banner Upload */}
+                          <div className="space-y-4 mb-6">
+                            <div className="flex gap-4">
+                              <div className="flex-1">
+                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                  Avatar
+                                </label>
+                                <div
+                                  onClick={() => avatarInputRef.current?.click()}
+                                  className="relative w-20 h-20 rounded-full bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
+                                >
+                                  {user?.avatar ? (
+                                    <img src={user.avatar} alt="Avatar" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-[#666]">
+                                      <Camera className="w-6 h-6" />
+                                    </div>
+                                  )}
+                                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    {isUploadingAvatar ? (
+                                      <Loader2 className="w-6 h-6 animate-spin text-white" />
+                                    ) : (
+                                      <Camera className="w-6 h-6 text-white" />
+                                    )}
+                                  </div>
+                                </div>
+                                <input
+                                  ref={avatarInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={handleAvatarSelect}
+                                />
+                              </div>
+                              <div className="flex-1">
+                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                  Banner
+                                </label>
+                                <div
+                                  onClick={() => bannerInputRef.current?.click()}
+                                  className="relative w-full h-20 rounded-lg bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
+                                >
+                                  {user?.banner ? (
+                                    <img src={user.banner} alt="Banner" className="w-full h-full object-cover" />
+                                  ) : (
+                                    <div className="w-full h-full flex items-center justify-center text-[#666]">
+                                      <Image className="w-6 h-6" />
+                                    </div>
+                                  )}
+                                  <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                    {isUploadingBanner ? (
+                                      <Loader2 className="w-6 h-6 animate-spin text-white" />
+                                    ) : (
+                                      <Camera className="w-6 h-6 text-white" />
+                                    )}
+                                  </div>
+                                </div>
+                                <input
+                                  ref={bannerInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={handleBannerSelect}
+                                />
+                              </div>
+                            </div>
+                          </div>
+
+                          <div className="space-y-4">
+                            <div>
+                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                Display Name
+                              </label>
+                              <Input
+                                value={displayName}
+                                onChange={(e) => setDisplayName(e.target.value)}
+                                className="bg-[var(--bg-app)] border-none text-white h-10"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                Pronouns
+                              </label>
+                              <Input
+                                value={pronouns}
+                                onChange={(e) => setPronouns(e.target.value)}
+                                className="bg-[var(--bg-app)] border-none text-white h-10"
+                                placeholder="Add your pronouns"
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                About Me
+                              </label>
+                              <Textarea
+                                value={bio}
+                                onChange={(e) => setBio(e.target.value)}
+                                className="bg-[var(--bg-app)] border-none text-white min-h-[100px] resize-none"
+                                maxLength={190}
+                              />
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                Custom Status
+                              </label>
+                              <Input
+                                value={customStatus}
+                                onChange={(e) => setCustomStatus(e.target.value)}
+                                className="bg-[var(--bg-app)] border-none text-white h-10"
+                                placeholder="What's on your mind?"
+                                maxLength={128}
+                              />
+                            </div>
+
+                            {/* Display Name Style */}
+                            <div className="mt-8">
+                              <h2 className="text-[16px] font-bold text-white mb-4">Change Display Name Style</h2>
+                              <div className="bg-[#2B2D31] rounded-lg p-5">
+                                {/* Font */}
+                                <div className="mb-6">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <span className="text-[14px] font-bold text-white">Choose Font</span>
+                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, font: 'default' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Font"><RotateCcw className="w-4 h-4" /></button>
+                                  </div>
+                                  <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
+                                    {([
+                                      { value: 'default', label: 'Default' },
+                                      { value: 'serif', label: 'Serif' },
+                                      { value: 'mono', label: 'Mono' },
+                                      { value: 'rounded', label: 'Rounded' },
+                                      { value: 'cursive', label: 'Cursive' },
+                                      { value: 'bold', label: 'Bold' },
+                                    ] as const).map((font) => {
+                                      const isSelected = displayNameStyle.font === font.value;
+                                      return (
+                                        <button
+                                          key={font.value}
+                                          onClick={() => setDisplayNameStyle((s) => ({ ...s, font: font.value }))}
+                                          className={cn(
+                                            "h-14 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-all border-2",
+                                            isSelected
+                                              ? "border-[#5865F2] bg-[#2B2D31] text-white"
+                                              : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338] hover:text-white"
+                                          )}
+                                        >
+                                          <span
+                                            className={cn(
+                                              "text-[18px] leading-none",
+                                              getDisplayNameStyleClasses({ font: font.value })
+                                            )}
+                                            style={getDisplayNameStyleInline({ font: font.value })}
+                                          >
+                                            {font.label}
+                                          </span>
+                                          <span className="text-[10px] text-[#949ba4] font-medium uppercase tracking-wide">
+                                            Aa
+                                          </span>
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+
+                                {/* Effect */}
+                                <div className="mb-6">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <span className="text-[14px] font-bold text-white">Choose Effect</span>
+                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: 'solid' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Effect"><RotateCcw className="w-4 h-4" /></button>
+                                  </div>
+                                  <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
+                                    {([
+                                      { value: 'solid', label: 'Solid' },
+                                      { value: 'gradient', label: 'Gradient' },
+                                      { value: 'neon', label: 'Neon' },
+                                      { value: 'toon', label: 'Toon' },
+                                      { value: 'pop', label: 'Pop' },
+                                    ] as const).map((effect) => (
+                                      <button
+                                        key={effect.value}
+                                        onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: effect.value }))}
+                                        className={cn(
+                                          "h-[52px] rounded-lg flex items-center justify-center text-[15px] font-medium transition-all border-2",
+                                          displayNameStyle.effect === effect.value
+                                            ? "border-[#5865F2] bg-[#2B2D31]"
+                                            : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338]"
+                                        )}
+                                      >
+                                        <span
+                                          className={cn(
+                                            "truncate px-2",
+                                            getDisplayNameStyleClasses({ effect: effect.value, color: effect.value !== 'gradient' ? displayNameStyle.color : undefined, gradient: effect.value === 'gradient' ? displayNameStyle.gradient : undefined })
+                                          )}
+                                          style={getDisplayNameStyleInline({ effect: effect.value, color: displayNameStyle.color || '#fff', gradient: displayNameStyle.gradient?.length ? displayNameStyle.gradient : ['#8B5CF6', '#3B82F6'] })}
+                                        >
+                                          {effect.label}
+                                        </span>
+                                      </button>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Color */}
+                                <div>
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <span className="text-[14px] font-bold text-white">Choose Color</span>
+                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, color: '', gradient: [] }))} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2.5">
+                                    {/* Custom Color Picker */}
+                                    <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: displayNameStyle.effect === 'gradient' ? (displayNameStyle.gradient?.[0] || '#8B5CF6') : (displayNameStyle.color || '#8B5CF6') }}>
+                                      <input
+                                        type="color"
+                                        value={displayNameStyle.effect === 'gradient' ? (displayNameStyle.gradient?.[0] || '#8B5CF6') : (displayNameStyle.color || '#8B5CF6')}
+                                        onChange={(e) => {
+                                          if (displayNameStyle.effect === 'gradient') {
+                                            setDisplayNameStyle((s) => ({ ...s, gradient: [e.target.value, s.gradient?.[1] || '#6366F1'] }));
+                                          } else {
+                                            setDisplayNameStyle((s) => ({ ...s, color: e.target.value }));
+                                          }
+                                        }}
+                                        className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0"
+                                      />
+                                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                        <Pencil className="w-3.5 h-3.5 text-white drop-shadow-md" />
+                                      </div>
+                                    </label>
+                                    <div className="w-px h-8 bg-[#3f4148] mx-1" />
+                                    
+                                    {displayNameStyle.effect === 'gradient' ? (
+                                      [
+                                        ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
+                                        ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
+                                        ['#FF9800', '#FF5722'], ['#4CAF50', '#8BC34A'], ['#9C27B0', '#673AB7'], ['#3F51B5', '#2196F3'],
+                                        ['#00BCD4', '#009688'], ['#CDDC39', '#FFEB3B'], ['#FFC107', '#FF5722']
+                                      ].map((grad, i) => {
+                                        const isSelected = JSON.stringify(displayNameStyle.gradient) === JSON.stringify(grad);
+                                        return (
+                                          <button
+                                            key={i}
+                                            onClick={() => setDisplayNameStyle((s) => ({ ...s, gradient: grad }))}
+                                            className="w-8 h-8 rounded-full transition-all relative overflow-hidden ring-2"
+                                            style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}
+                                          >
+                                            {isSelected && (
+                                              <div className="absolute inset-0 flex items-center justify-center">
+                                                <Check className="w-3.5 h-3.5 text-white drop-shadow-md" />
+                                              </div>
+                                            )}
+                                          </button>
+                                        );
+                                      })
+                                    ) : (
+                                      [
+                                        '#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6',
+                                        '#D946EF', '#FF1744', '#00E676', '#00B0FF', '#D500F9', '#FF9800', '#9C27B0'
+                                      ].map((col, i) => {
+                                        const isSelected = displayNameStyle.color === col;
+                                        return (
+                                          <button
+                                            key={i}
+                                            onClick={() => setDisplayNameStyle((s) => ({ ...s, color: col }))}
+                                            className="w-8 h-8 rounded-full transition-all relative ring-2"
+                                            style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}
+                                          >
+                                            {isSelected && (
+                                              <div className="absolute inset-0 flex items-center justify-center">
+                                                <Check className="w-3.5 h-3.5 text-white drop-shadow-md" />
+                                              </div>
+                                            )}
+                                          </button>
+                                        );
+                                      })
+                                    )}
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+
+                            {/* Profile Color */}
+                            <div className="mt-8">
+                              <h2 className="text-[16px] font-bold text-white mb-4">Profile Color</h2>
+                              <div className="bg-[#2B2D31] rounded-lg p-5">
+                                {/* Color */}
+                                <div className="mb-6">
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <span className="text-[14px] font-bold text-white">Choose Color</span>
+                                    <button onClick={() => setProfileColor('')} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2.5">
+                                    <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileColor || '#8B5CF6' }}>
+                                      <input type="color" value={profileColor || '#8B5CF6'} onChange={(e) => setProfileColor(e.target.value)} className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0" />
+                                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Pencil className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>
+                                    </label>
+                                    <div className="w-px h-8 bg-[#3f4148] mx-1" />
+                                    {[
+                                      '#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6',
+                                      '#D946EF', '#FF1744', '#00E676', '#00B0FF', '#D500F9', '#FF9800', '#9C27B0'
+                                    ].map((col, i) => {
+                                      const isSelected = profileColor === col;
+                                      return (
+                                        <button key={i} onClick={() => setProfileColor(col)} className="w-8 h-8 rounded-full transition-all relative" style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}>
+                                          {isSelected && <div className="absolute inset-0 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                </div>
+                                {/* Gradient Background */}
+                                <div>
+                                  <div className="flex items-center gap-2 mb-3">
+                                    <span className="text-[14px] font-bold text-white">Gradient Background (Optional)</span>
+                                    <button onClick={() => setProfileGradient([])} className="text-[#B5BAC1] hover:text-white" title="Reset Gradient"><RotateCcw className="w-4 h-4" /></button>
+                                  </div>
+                                  <div className="flex flex-wrap gap-2.5 mb-3">
+                                    {[
+                                      ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
+                                      ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
+                                      ['#FF9800', '#FF5722'], ['#4CAF50', '#8BC34A'], ['#9C27B0', '#673AB7'], ['#3F51B5', '#2196F3'],
+                                      ['#00BCD4', '#009688'], ['#CDDC39', '#FFEB3B'], ['#FFC107', '#FF5722']
+                                    ].map((grad, i) => {
+                                      const isSelected = JSON.stringify(profileGradient) === JSON.stringify(grad);
+                                      return (
+                                        <button key={i} onClick={() => setProfileGradient(grad)} className="w-8 h-8 rounded-full transition-all relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}>
+                                          {isSelected && <div className="absolute inset-0 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                  {/* Custom gradient color pickers */}
+                                  <div className="flex items-center gap-3 p-3 bg-[#1e1f22] rounded-lg">
+                                    <div className="flex items-center gap-2">
+                                      <label className="text-xs text-[#B5BAC1] font-medium">From</label>
+                                      <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[0] || '#8B5CF6' }}>
+                                        <input
+                                          type="color"
+                                          value={profileGradient[0] || '#8B5CF6'}
+                                          onChange={(e) => {
+                                            const end = profileGradient[1] || '#6366F1';
+                                            setProfileGradient([e.target.value, end]);
+                                          }}
+                                          className="absolute inset-0 opacity-0 cursor-pointer"
+                                        />
+                                      </label>
+                                    </div>
+                                    <div className="flex-1 h-2 rounded-full" style={{ background: profileGradient.length >= 2 ? `linear-gradient(90deg, ${profileGradient.join(', ')})` : 'linear-gradient(90deg, #8B5CF6, #6366F1)' }} />
+                                    <div className="flex items-center gap-2">
+                                      <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[1] || '#6366F1' }}>
+                                        <input
+                                          type="color"
+                                          value={profileGradient[1] || '#6366F1'}
+                                          onChange={(e) => {
+                                            const start = profileGradient[0] || '#8B5CF6';
+                                            setProfileGradient([start, e.target.value]);
+                                          }}
+                                          className="absolute inset-0 opacity-0 cursor-pointer"
+                                        />
+                                      </label>
+                                      <label className="text-xs text-[#B5BAC1] font-medium">To</label>
+                                    </div>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
                           </div>
                         </div>
                       )}
 
-                      {/* Avatar & Banner Upload */}
-                      <div className="space-y-4 mb-6">
-                        <div className="flex gap-4">
-                          <div className="flex-1">
-                            <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                              Avatar
-                            </label>
-                            <div
-                              onClick={() => avatarInputRef.current?.click()}
-                              className="relative w-20 h-20 rounded-full bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
-                            >
-                              {user?.avatar ? (
-                                <img src={user.avatar} alt="Avatar" className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[#666]">
-                                  <Camera className="w-6 h-6" />
-                                </div>
+                      {/* Server Profile Form */}
+                      {profileTab === "server" && (
+                        <div className="space-y-6">
+                          {/* Server Dropdown Selector */}
+                          <div>
+                            <div className="flex items-center justify-between mb-2">
+                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">
+                                Select Server
+                              </label>
+                              {hasChanges && (
+                                <span className="text-xs text-amber-500 font-medium animate-pulse">
+                                  Save changes before switching servers
+                                </span>
                               )}
-                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                {isUploadingAvatar ? (
-                                  <Loader2 className="w-6 h-6 animate-spin text-white" />
-                                ) : (
-                                  <Camera className="w-6 h-6 text-white" />
-                                )}
-                              </div>
                             </div>
-                            <input
-                              ref={avatarInputRef}
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={handleAvatarSelect}
-                            />
-                          </div>
-                          <div className="flex-1">
-                            <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                              Banner
-                            </label>
-                            <div
-                              onClick={() => bannerInputRef.current?.click()}
-                              className="relative w-full h-20 rounded-lg bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
+                            <select
+                              value={selectedServerId}
+                              onChange={(e) => setSelectedServerId(e.target.value)}
+                              disabled={hasChanges}
+                              className="w-full bg-[var(--bg-app)] border border-[var(--border-subtle)] text-white h-10 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                             >
-                              {user?.banner ? (
-                                <img src={user.banner} alt="Banner" className="w-full h-full object-cover" />
-                              ) : (
-                                <div className="w-full h-full flex items-center justify-center text-[#666]">
-                                  <Image className="w-6 h-6" />
-                                </div>
-                              )}
-                              <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                {isUploadingBanner ? (
-                                  <Loader2 className="w-6 h-6 animate-spin text-white" />
-                                ) : (
-                                  <Camera className="w-6 h-6 text-white" />
-                                )}
-                              </div>
-                            </div>
-                            <input
-                              ref={bannerInputRef}
-                              type="file"
-                              accept="image/*"
-                              className="hidden"
-                              onChange={handleBannerSelect}
-                            />
+                              {servers.map((srv: any) => (
+                                <option key={srv.id} value={srv.id}>
+                                  {srv.name}
+                                </option>
+                              ))}
+                            </select>
                           </div>
-                        </div>
-                      </div>
 
-                      <div className="space-y-4">
-                        <div>
-                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                            Display Name
-                          </label>
-                          <Input
-                            value={displayName}
-                            onChange={(e) => setDisplayName(e.target.value)}
-                            className="bg-[var(--bg-app)] border-none text-white h-10"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                            Pronouns
-                          </label>
-                          <Input
-                            value={pronouns}
-                            onChange={(e) => setPronouns(e.target.value)}
-                            className="bg-[var(--bg-app)] border-none text-white h-10"
-                            placeholder="Add your pronouns"
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                            About Me
-                          </label>
-                          <Textarea
-                            value={bio}
-                            onChange={(e) => setBio(e.target.value)}
-                            className="bg-[var(--bg-app)] border-none text-white min-h-[100px] resize-none"
-                            maxLength={190}
-                          />
-                        </div>
-
-                        <div>
-                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                            Custom Status
-                          </label>
-                          <Input
-                            value={customStatus}
-                            onChange={(e) => setCustomStatus(e.target.value)}
-                            className="bg-[var(--bg-app)] border-none text-white h-10"
-                            placeholder="What's on your mind?"
-                            maxLength={128}
-                          />
-                        </div>
-
-                        {/* Display Name Style */}
-                        <div className="mt-8">
-                          <h2 className="text-[16px] font-bold text-white mb-4">Change Display Name Style</h2>
-                          <div className="bg-[#2B2D31] rounded-lg p-5">
-                            {/* Font */}
-                            <div className="mb-6">
-                              <div className="flex items-center gap-2 mb-3">
-                                <span className="text-[14px] font-bold text-white">Choose Font</span>
-                                <button onClick={() => setDisplayNameStyle((s) => ({ ...s, font: 'default' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Font"><RotateCcw className="w-4 h-4" /></button>
-                              </div>
-                              <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
-                                {([
-                                  { value: 'default', label: 'Default' },
-                                  { value: 'serif', label: 'Serif' },
-                                  { value: 'mono', label: 'Mono' },
-                                  { value: 'rounded', label: 'Rounded' },
-                                  { value: 'cursive', label: 'Cursive' },
-                                  { value: 'bold', label: 'Bold' },
-                                ] as const).map((font) => {
-                                  const isSelected = displayNameStyle.font === font.value;
-                                  return (
-                                    <button
-                                      key={font.value}
-                                      onClick={() => setDisplayNameStyle((s) => ({ ...s, font: font.value }))}
-                                      className={cn(
-                                        "h-14 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-all border-2",
-                                        isSelected
-                                          ? "border-[#5865F2] bg-[#2B2D31] text-white"
-                                          : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338] hover:text-white"
-                                      )}
-                                    >
-                                      <span
-                                        className={cn(
-                                          "text-[18px] leading-none",
-                                          getDisplayNameStyleClasses({ font: font.value })
-                                        )}
-                                        style={getDisplayNameStyleInline({ font: font.value })}
-                                      >
-                                        {font.label}
-                                      </span>
-                                      <span className="text-[10px] text-[#949ba4] font-medium uppercase tracking-wide">
-                                        Aa
-                                      </span>
-                                    </button>
-                                  );
-                                })}
-                              </div>
+                          {serverMemberLoading ? (
+                            <div className="py-8 flex flex-col items-center justify-center text-[var(--text-secondary)]">
+                              <Loader2 className="w-8 h-8 animate-spin text-[#8B5CF6] mb-2" />
+                              <span className="text-sm font-medium">Loading server profile...</span>
                             </div>
-
-                            {/* Effect */}
-                            <div className="mb-6">
-                              <div className="flex items-center gap-2 mb-3">
-                                <span className="text-[14px] font-bold text-white">Choose Effect</span>
-                                <button onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: 'solid' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Effect"><RotateCcw className="w-4 h-4" /></button>
+                          ) : (
+                            <div className="space-y-6">
+                              {/* Nickname Input */}
+                              <div>
+                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                  Server Nickname
+                                </label>
+                                <Input
+                                  value={serverNickname}
+                                  onChange={(e) => setServerNickname(e.target.value)}
+                                  className="bg-[var(--bg-app)] border-none text-white h-10"
+                                  placeholder={displayName || user?.username || ""}
+                                  maxLength={32}
+                                />
                               </div>
-                              <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
-                                {([
-                                  { value: 'solid', label: 'Solid' },
-                                  { value: 'gradient', label: 'Gradient' },
-                                  { value: 'neon', label: 'Neon' },
-                                  { value: 'toon', label: 'Toon' },
-                                  { value: 'pop', label: 'Pop' },
-                                ] as const).map((effect) => (
-                                  <button
-                                    key={effect.value}
-                                    onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: effect.value }))}
-                                    className={cn(
-                                      "h-[52px] rounded-lg flex items-center justify-center text-[15px] font-medium transition-all border-2",
-                                      displayNameStyle.effect === effect.value
-                                        ? "border-[#5865F2] bg-[#2B2D31]"
-                                        : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338]"
-                                    )}
+
+                              {/* Server Avatar Override */}
+                              <div>
+                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                  Server Avatar Override
+                                </label>
+                                <div className="flex items-center gap-4">
+                                  <div
+                                    onClick={() => avatarInputRef.current?.click()}
+                                    className="relative w-20 h-20 rounded-full bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
                                   >
-                                    <span
-                                      className={cn(
-                                        "truncate px-2",
-                                        getDisplayNameStyleClasses({ effect: effect.value, color: effect.value !== 'gradient' ? displayNameStyle.color : undefined, gradient: effect.value === 'gradient' ? displayNameStyle.gradient : undefined })
+                                    {serverAvatar || user?.avatar ? (
+                                      <img src={serverAvatar || user?.avatar} alt="Avatar" className="w-full h-full object-cover" />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-[#666]">
+                                        <Camera className="w-6 h-6" />
+                                      </div>
+                                    )}
+                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                      {isUploadingAvatar ? (
+                                        <Loader2 className="w-6 h-6 animate-spin text-white" />
+                                      ) : (
+                                        <Camera className="w-6 h-6 text-white" />
                                       )}
-                                      style={getDisplayNameStyleInline({ effect: effect.value, color: displayNameStyle.color || '#fff', gradient: displayNameStyle.gradient?.length ? displayNameStyle.gradient : ['#8B5CF6', '#3B82F6'] })}
-                                    >
-                                      {effect.label}
-                                    </span>
-                                  </button>
-                                ))}
-                              </div>
-                            </div>
-
-                            {/* Color */}
-                            <div>
-                              <div className="flex items-center gap-2 mb-3">
-                                <span className="text-[14px] font-bold text-white">Choose Color</span>
-                                <button onClick={() => setDisplayNameStyle((s) => ({ ...s, color: '', gradient: [] }))} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
-                              </div>
-                              <div className="flex flex-wrap gap-2.5">
-                                {/* Custom Color Picker */}
-                                <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: displayNameStyle.effect === 'gradient' ? (displayNameStyle.gradient?.[0] || '#8B5CF6') : (displayNameStyle.color || '#8B5CF6') }}>
-                                  <input
-                                    type="color"
-                                    value={displayNameStyle.effect === 'gradient' ? (displayNameStyle.gradient?.[0] || '#8B5CF6') : (displayNameStyle.color || '#8B5CF6')}
-                                    onChange={(e) => {
-                                      if (displayNameStyle.effect === 'gradient') {
-                                        setDisplayNameStyle((s) => ({ ...s, gradient: [e.target.value, s.gradient?.[1] || '#6366F1'] }));
-                                      } else {
-                                        setDisplayNameStyle((s) => ({ ...s, color: e.target.value }));
-                                      }
-                                    }}
-                                    className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0"
-                                  />
-                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-                                    <Pencil className="w-3.5 h-3.5 text-white drop-shadow-md" />
+                                    </div>
                                   </div>
-                                </label>
-                                <div className="w-px h-8 bg-[#3f4148] mx-1" />
-                                
-                                {displayNameStyle.effect === 'gradient' ? (
-                                  [
-                                    ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
-                                    ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
-                                    ['#FF9800', '#FF5722'], ['#4CAF50', '#8BC34A'], ['#9C27B0', '#673AB7'], ['#3F51B5', '#2196F3'],
-                                    ['#00BCD4', '#009688'], ['#CDDC39', '#FFEB3B'], ['#FFC107', '#FF5722']
-                                  ].map((grad, i) => {
-                                    const isSelected = JSON.stringify(displayNameStyle.gradient) === JSON.stringify(grad);
-                                    return (
-                                      <button
-                                        key={i}
-                                        onClick={() => setDisplayNameStyle((s) => ({ ...s, gradient: grad }))}
-                                        className="w-8 h-8 rounded-full transition-all relative overflow-hidden ring-2"
-                                        style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}
-                                      >
-                                        {isSelected && (
-                                          <div className="absolute inset-0 flex items-center justify-center">
-                                            <Check className="w-3.5 h-3.5 text-white drop-shadow-md" />
-                                          </div>
-                                        )}
-                                      </button>
-                                    );
-                                  })
-                                ) : (
-                                  [
-                                    '#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6',
-                                    '#D946EF', '#FF1744', '#00E676', '#00B0FF', '#D500F9', '#FF9800', '#9C27B0'
-                                  ].map((col, i) => {
-                                    const isSelected = displayNameStyle.color === col;
-                                    return (
-                                      <button
-                                        key={i}
-                                        onClick={() => setDisplayNameStyle((s) => ({ ...s, color: col }))}
-                                        className="w-8 h-8 rounded-full transition-all relative ring-2"
-                                        style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}
-                                      >
-                                        {isSelected && (
-                                          <div className="absolute inset-0 flex items-center justify-center">
-                                            <Check className="w-3.5 h-3.5 text-white drop-shadow-md" />
-                                          </div>
-                                        )}
-                                      </button>
-                                    );
-                                  })
-                                )}
+                                  {serverAvatar && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setServerAvatar(null);
+                                      }}
+                                      className="text-xs text-red-400 hover:text-red-300 hover:underline font-medium transition-colors"
+                                    >
+                                      Reset to Global
+                                    </button>
+                                  )}
+                                </div>
+                                <input
+                                  ref={avatarInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={handleAvatarSelect}
+                                />
                               </div>
-                            </div>
-                          </div>
-                        </div>
 
-                        {/* Profile Color */}
-                        <div className="mt-8">
-                          <h2 className="text-[16px] font-bold text-white mb-4">Profile Color</h2>
-                          <div className="bg-[#2B2D31] rounded-lg p-5">
-                            {/* Color */}
-                            <div className="mb-6">
-                              <div className="flex items-center gap-2 mb-3">
-                                <span className="text-[14px] font-bold text-white">Choose Color</span>
-                                <button onClick={() => setProfileColor('')} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
-                              </div>
-                              <div className="flex flex-wrap gap-2.5">
-                                <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileColor || '#8B5CF6' }}>
-                                  <input type="color" value={profileColor || '#8B5CF6'} onChange={(e) => setProfileColor(e.target.value)} className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0" />
-                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Pencil className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>
+                              {/* Server Banner Override */}
+                              <div>
+                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                  Server Banner Override
                                 </label>
-                                <div className="w-px h-8 bg-[#3f4148] mx-1" />
-                                {[
-                                  '#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6',
-                                  '#D946EF', '#FF1744', '#00E676', '#00B0FF', '#D500F9', '#FF9800', '#9C27B0'
-                                ].map((col, i) => {
-                                  const isSelected = profileColor === col;
-                                  return (
-                                    <button key={i} onClick={() => setProfileColor(col)} className="w-8 h-8 rounded-full transition-all relative" style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}>
-                                      {isSelected && <div className="absolute inset-0 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>}
+                                <div className="flex flex-col gap-2">
+                                  <div
+                                    onClick={() => bannerInputRef.current?.click()}
+                                    className="relative w-full h-20 rounded-lg bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
+                                  >
+                                    {serverBanner || user?.banner ? (
+                                      <img src={serverBanner || user?.banner} alt="Banner" className="w-full h-full object-cover" />
+                                    ) : (
+                                      <div className="w-full h-full flex items-center justify-center text-[#666]">
+                                        <Image className="w-6 h-6" />
+                                      </div>
+                                    )}
+                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                      {isUploadingBanner ? (
+                                        <Loader2 className="w-6 h-6 animate-spin text-white" />
+                                      ) : (
+                                        <Camera className="w-6 h-6 text-white" />
+                                      )}
+                                    </div>
+                                  </div>
+                                  {serverBanner && (
+                                    <button
+                                      onClick={(e) => {
+                                        e.stopPropagation();
+                                        setServerBanner(null);
+                                      }}
+                                      className="text-xs text-red-400 hover:text-red-300 hover:underline font-medium transition-colors self-start"
+                                    >
+                                      Reset to Global
                                     </button>
-                                  );
-                                })}
+                                  )}
+                                </div>
+                                <input
+                                  ref={bannerInputRef}
+                                  type="file"
+                                  accept="image/*"
+                                  className="hidden"
+                                  onChange={handleBannerSelect}
+                                />
+                              </div>
+
+                              <div className="p-4 bg-zinc-900/40 rounded-xl border border-zinc-800 text-xs text-[var(--text-secondary)] leading-relaxed space-y-1">
+                                <p className="font-semibold text-zinc-300">About Server Profiles</p>
+                                <p>Custom nickname, avatar overrides, and banners apply only to the selected server.</p>
+                                <p>Global attributes (about me, custom status, and name styles) will fall back to your main profile settings.</p>
                               </div>
                             </div>
-                            {/* Gradient Background */}
-                            <div>
-                              <div className="flex items-center gap-2 mb-3">
-                                <span className="text-[14px] font-bold text-white">Gradient Background (Optional)</span>
-                                <button onClick={() => setProfileGradient([])} className="text-[#B5BAC1] hover:text-white" title="Reset Gradient"><RotateCcw className="w-4 h-4" /></button>
-                              </div>
-                              <div className="flex flex-wrap gap-2.5 mb-3">
-                                {[
-                                  ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
-                                  ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
-                                  ['#FF9800', '#FF5722'], ['#4CAF50', '#8BC34A'], ['#9C27B0', '#673AB7'], ['#3F51B5', '#2196F3'],
-                                  ['#00BCD4', '#009688'], ['#CDDC39', '#FFEB3B'], ['#FFC107', '#FF5722']
-                                ].map((grad, i) => {
-                                  const isSelected = JSON.stringify(profileGradient) === JSON.stringify(grad);
-                                  return (
-                                    <button key={i} onClick={() => setProfileGradient(grad)} className="w-8 h-8 rounded-full transition-all relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}>
-                                      {isSelected && <div className="absolute inset-0 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>}
-                                    </button>
-                                  );
-                                })}
-                              </div>
-                              {/* Custom gradient color pickers */}
-                              <div className="flex items-center gap-3 p-3 bg-[#1e1f22] rounded-lg">
-                                <div className="flex items-center gap-2">
-                                  <label className="text-xs text-[#B5BAC1] font-medium">From</label>
-                                  <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[0] || '#8B5CF6' }}>
-                                    <input
-                                      type="color"
-                                      value={profileGradient[0] || '#8B5CF6'}
-                                      onChange={(e) => {
-                                        const end = profileGradient[1] || '#6366F1';
-                                        setProfileGradient([e.target.value, end]);
-                                      }}
-                                      className="absolute inset-0 opacity-0 cursor-pointer"
-                                    />
-                                  </label>
-                                </div>
-                                <div className="flex-1 h-2 rounded-full" style={{ background: profileGradient.length >= 2 ? `linear-gradient(90deg, ${profileGradient.join(', ')})` : 'linear-gradient(90deg, #8B5CF6, #6366F1)' }} />
-                                <div className="flex items-center gap-2">
-                                  <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[1] || '#6366F1' }}>
-                                    <input
-                                      type="color"
-                                      value={profileGradient[1] || '#6366F1'}
-                                      onChange={(e) => {
-                                        const start = profileGradient[0] || '#8B5CF6';
-                                        setProfileGradient([start, e.target.value]);
-                                      }}
-                                      className="absolute inset-0 opacity-0 cursor-pointer"
-                                    />
-                                  </label>
-                                  <label className="text-xs text-[#B5BAC1] font-medium">To</label>
-                                </div>
-                              </div>
-                            </div>
-                          </div>
+                          )}
                         </div>
-                      </div>
+                      )}
                     </div>
 
                     {/* Preview */}
@@ -1452,8 +1748,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         <div
                           className="h-[100px] relative"
                           style={{
-                            background: user?.banner
-                              ? `url(${user.banner}) center/cover`
+                            background: (profileTab === "server" ? (serverBanner || user?.banner) : user?.banner)
+                              ? `url(${profileTab === "server" ? (serverBanner || user?.banner) : user?.banner}) center/cover`
                               : profileGradient.length >= 2
                                 ? `linear-gradient(135deg, ${profileGradient.join(', ')})`
                                 : profileColor
@@ -1473,9 +1769,9 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                           {/* Avatar */}
                           <div className="-mt-8 mb-2">
                             <Avatar className="w-[80px] h-[80px] border-[6px] border-[#111214] rounded-full">
-                              <AvatarImage src={user?.avatar} />
+                              <AvatarImage src={profileTab === "server" ? (serverAvatar || user?.avatar) : user?.avatar} />
                               <AvatarFallback className="bg-[#8B5CF6] text-white text-2xl font-bold">
-                                {(displayName || user?.username)?.charAt(0).toUpperCase() || "?"}
+                                {(profileTab === "server" ? (serverNickname || displayName || user?.username) : (displayName || user?.username))?.charAt(0).toUpperCase() || "?"}
                               </AvatarFallback>
                             </Avatar>
                           </div>
@@ -1485,7 +1781,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               className={cn("text-lg font-bold leading-tight", getDisplayNameStyleClasses(displayNameStyle))}
                               style={getDisplayNameStyleInline(displayNameStyle)}
                             >
-                              {displayName || user?.username}
+                              {profileTab === "server" ? (serverNickname || displayName || user?.username) : (displayName || user?.username)}
                             </h3>
                             <div className="flex items-center gap-1.5 text-sm text-[#949ba4] mt-0.5">
                               <span>{user?.username}</span>
@@ -2768,12 +3064,21 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               <div className="flex gap-2">
                 <button
                   onClick={() => {
-                    if (user) {
-                      setDisplayName(user.displayName || "");
-                      setBio(user.bio || "");
-                      setPronouns(user.pronouns || "");
-                      setCustomStatus(user.customStatus || "");
-                      setStatus(user.status || "online");
+                    if (profileTab === "main") {
+                      if (user) {
+                        setDisplayName(user.displayName || "");
+                        setBio(user.bio || "");
+                        setPronouns(user.pronouns || "");
+                        setCustomStatus(user.customStatus || "");
+                        setStatus(user.status || "online");
+                        setDisplayNameStyle(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] });
+                        setProfileColor(user.customization?.profileColor || "");
+                        setProfileGradient(user.customization?.profileGradient || []);
+                      }
+                    } else {
+                      setServerNickname(initialServerNickname);
+                      setServerAvatar(initialServerAvatar);
+                      setServerBanner(initialServerBanner);
                     }
                   }}
                   className="px-4 py-1.5 text-sm text-white hover:underline"

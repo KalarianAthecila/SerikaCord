@@ -183,6 +183,148 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       file: t.File(),
     }),
   })
+  // Upload server member avatar
+  .post('/server/:serverId/avatar', async ({ headers, cookie, params, body, request, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user._id });
+    if (!member) {
+      set.status = 404;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const ip = getClientIP(request);
+    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    if (!rateLimit.success) {
+      set.status = 429;
+      return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
+    }
+
+    const { file } = body;
+    if (!file) {
+      set.status = 400;
+      return { error: 'No file provided' };
+    }
+
+    if (!isValidImageType(file.type)) {
+      set.status = 400;
+      return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
+    }
+
+    if (file.size > config.MAX_AVATAR_SIZE) {
+      set.status = 400;
+      return { error: `File too large. Maximum size is ${config.MAX_AVATAR_SIZE / 1024 / 1024}MB.` };
+    }
+
+    try {
+      if (member.avatar && member.avatar.includes(config.B2_BUCKET_NAME)) {
+        try {
+          await storage.deleteByUrl(member.avatar);
+        } catch (e) {
+          console.error('Failed to delete old server avatar:', e);
+        }
+      }
+
+      const result = await storage.uploadFromFormData(file, 'avatars', {
+        userId: user._id.toString(),
+        serverId: params.serverId,
+      });
+
+      member.avatar = result.url;
+      await member.save();
+
+      return {
+        success: true,
+        url: result.url,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to upload avatar';
+      set.status = 500;
+      return { error: message };
+    }
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      file: t.File(),
+    }),
+  })
+  // Upload server member banner
+  .post('/server/:serverId/banner', async ({ headers, cookie, params, body, request, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user._id });
+    if (!member) {
+      set.status = 404;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const ip = getClientIP(request);
+    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    if (!rateLimit.success) {
+      set.status = 429;
+      return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
+    }
+
+    const { file } = body;
+    if (!file) {
+      set.status = 400;
+      return { error: 'No file provided' };
+    }
+
+    if (!isValidImageType(file.type)) {
+      set.status = 400;
+      return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
+    }
+
+    if (file.size > config.MAX_BANNER_SIZE) {
+      set.status = 400;
+      return { error: `File too large. Maximum size is ${config.MAX_BANNER_SIZE / 1024 / 1024}MB.` };
+    }
+
+    try {
+      if (member.banner && member.banner.includes(config.B2_BUCKET_NAME)) {
+        try {
+          await storage.deleteByUrl(member.banner);
+        } catch (e) {
+          console.error('Failed to delete old server banner:', e);
+        }
+      }
+
+      const result = await storage.uploadFromFormData(file, 'banners', {
+        userId: user._id.toString(),
+        serverId: params.serverId,
+      });
+
+      member.banner = result.url;
+      await member.save();
+
+      return {
+        success: true,
+        url: result.url,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to upload banner';
+      set.status = 500;
+      return { error: message };
+    }
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      file: t.File(),
+    }),
+  })
   // Upload server icon
   .post('/server/:serverId/icon', async ({ headers, cookie, params, body, request, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);

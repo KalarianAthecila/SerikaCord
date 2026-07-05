@@ -9,7 +9,6 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
-import { usePolling } from "@/hooks/usePolling";
 
 interface MemberRole {
   id: string;
@@ -68,43 +67,7 @@ function sortMembersByName(items: Member[]): Member[] {
 }
 
 export function MemberSidebar() {
-  const { currentServer } = useServer();
-  const [members, setMembers] = useState<Member[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
-  const lastServerIdRef = useRef<string | null>(null);
-
-  const fetchMembers = useCallback(async () => {
-    if (!currentServer) return;
-
-    const serverChanged = lastServerIdRef.current !== currentServer.id;
-    if (serverChanged) {
-      setIsLoading(true);
-      setMembers([]);
-      lastServerIdRef.current = currentServer.id;
-    }
-
-    try {
-      const response = await fetch(`/api/servers/${currentServer.id}/members?limit=1000`);
-      if (response.ok) {
-        const data = await response.json();
-        const rawMembers = Array.isArray(data) ? data : data?.members || [];
-        setMembers(rawMembers as Member[]);
-      } else {
-        setMembers([]);
-      }
-    } catch (error) {
-      console.error("Failed to fetch members:", error);
-      if (serverChanged) {
-        setMembers([]);
-      }
-    } finally {
-      setIsLoading(false);
-    }
-  }, [currentServer]);
-
-  // Visibility-aware poll: refresh immediately, pause when tab is hidden,
-  // and refetch the moment the tab regains focus.
-  usePolling(() => void fetchMembers(), 30000, !!currentServer, currentServer?.id);
+  const { currentServer, members, isMembersLoading: isLoading } = useServer();
 
   const groupedOnlineMembers = useMemo(() => {
     const onlineMembers = sortMembersByName(members.filter((member) => member.status !== "offline"));

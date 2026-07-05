@@ -578,7 +578,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       // Invalidate user cache so fresh data is fetched
       await invalidateUserCache(userId.toString());
 
-      if (status !== undefined && status !== prevStatus) {
+      const changedProfile = customStatus !== undefined || displayName !== undefined || customization !== undefined || (status !== undefined && status !== prevStatus);
+      if (changedProfile) {
         const friendIds = (user.friends || []).map((f: Types.ObjectId | string) =>
           f instanceof Types.ObjectId ? f.toString() : f
         );
@@ -586,6 +587,9 @@ const userRoutes = new Elysia({ prefix: '/users' })
           type: 'presence:update',
           userId: user._id.toString(),
           status: getPublicPresenceStatus(user),
+          customStatus: user.customStatus || null,
+          displayName: user.displayName || user.username,
+          customization: user.customization || null,
           timestamp: Date.now(),
         });
       }

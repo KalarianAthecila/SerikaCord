@@ -24,6 +24,7 @@ import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
 import { PinnedMessagesDialog } from "@/components/chat/PinnedMessagesDialog";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { useChatSession } from "@/hooks/useChatSession";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { ChatMessage, MessageAuthor } from "@/lib/chat/types";
@@ -82,6 +83,30 @@ export default function DMConversationPage() {
       }
     },
   });
+
+  const { executeCommand } = useSlashCommands({});
+
+  const handleSend = useCallback(async () => {
+    const composer = messageBarRef.current?.getComposer();
+    const rawContent = composer?.getText() ?? "";
+    const trimmed = rawContent.trim();
+
+    if (trimmed.startsWith("/")) {
+      const result = await executeCommand(trimmed);
+      if (result.handled) {
+        if (result.ttsText) {
+          composer?.clear();
+          await chat.sendMessage({ contentOverride: result.ttsText });
+        } else {
+          composer?.clear();
+          chat.resetTyping();
+        }
+        return;
+      }
+    }
+
+    void chat.sendMessage();
+  }, [executeCommand, chat]);
 
   const lightbox = useMediaLightbox(chat.mediaGallery);
 
@@ -150,7 +175,7 @@ export default function DMConversationPage() {
   const handleKeyPress = (e: React.KeyboardEvent) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void chat.sendMessage();
+      void handleSend();
     }
   };
 
@@ -323,7 +348,7 @@ export default function DMConversationPage() {
               ref={messageBarRef}
               placeholder={`Message @${recipientName || "..."}`}
               ariaLabel={`Message @${recipientName || "..."}`}
-              onSend={() => void chat.sendMessage()}
+              onSend={() => void handleSend()}
               onChange={handleMessageInputChange}
               onKeyDown={handleKeyPress}
               onEmojiSelect={chat.handleEmojiSelect}

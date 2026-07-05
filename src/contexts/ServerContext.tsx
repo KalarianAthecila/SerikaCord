@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef, useTransition } from "react";
+import { usePolling } from "@/hooks/usePolling";
 
 interface Server {
   id: string;
@@ -10,6 +11,7 @@ interface Server {
   ownerId: string;
   isOwner?: boolean;
   isPartnered?: boolean;
+  isAgeGated?: boolean;
   description?: string;
   memberCount?: number;
   systemChannelId?: string | null;
@@ -55,7 +57,11 @@ interface ServerContextType {
   joinServer: (inviteCode: string) => Promise<void>;
   leaveServer: (serverId: string) => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
-  updateChannel: (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null }) => Promise<void>;
+  updateChannel: (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number }) => Promise<void>;
+  reorderChannels: (serverId: string, channelUpdates: Array<{ id: string; position: number; parentId?: string | null }>) => Promise<void>;
+  members: any[];
+  isMembersLoading: boolean;
+  fetchMembers: (serverId: string) => Promise<void>;
 }
 
 const ServerContext = createContext<ServerContextType | undefined>(undefined);
@@ -66,6 +72,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [members, setMembers] = useState<any[]>([]);
+  const [isMembersLoading, setIsMembersLoading] = useState(false);
+  const lastMembersServerIdRef = useRef<string | null>(null);
   const [isTransitioning, startTransition] = useTransition();
   const channelCacheRef = useRef<Map<string, Channel[]>>(new Map());
 
@@ -164,6 +173,34 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const fetchMembers = useCallback(async (serverId: string) => {
+    if (!serverId) return;
+    const isSwitch = lastMembersServerIdRef.current !== serverId;
+    if (isSwitch) {
+      setIsMembersLoading(true);
+      setMembers([]);
+      lastMembersServerIdRef.current = serverId;
+    }
+
+    try {
+      const response = await fetch(`/api/servers/${serverId}/members?limit=1000`);
+      if (response.ok) {
+        const data = await response.json();
+        const rawMembers = Array.isArray(data) ? data : data?.members || [];
+        setMembers(rawMembers);
+      } else {
+        setMembers([]);
+      }
+    } catch (error) {
+      console.error("Failed to fetch members:", error);
+      if (isSwitch) {
+        setMembers([]);
+      }
+    } finally {
+      setIsMembersLoading(false);
+    }
+  }, []);
+
   const createServer = async (name: string, icon?: File): Promise<Server> => {
     let iconUrl: string | undefined;
     
@@ -255,7 +292,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateChannel = async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null }) => {
+  const updateChannel = async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number }) => {
     const response = await fetch(`/api/channels/${channelId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -282,6 +319,35 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
   };
 
+  const reorderChannels = async (serverId: string, channelUpdates: Array<{ id: string; position: number; parentId?: string | null }>) => {
+    const response = await fetch(`/api/servers/${serverId}/channels/reorder`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ channels: channelUpdates }),
+    });
+
+    if (!response.ok) {
+      const responseData = await response.json();
+      throw new Error(responseData.error || "Failed to reorder channels");
+    }
+
+    const data = await response.json();
+    if (data.channels) {
+      const transformedChannels: Channel[] = data.channels.map((c: any) => ({
+        id: c._id || c.id,
+        name: c.name,
+        type: c.type,
+        serverId: c.serverId,
+        position: c.position,
+        parentId: c.parentId || null,
+        isNsfw: c.nsfw || c.isNsfw,
+        topic: c.topic,
+      }));
+      setChannels(transformedChannels);
+      channelCacheRef.current.set(serverId, transformedChannels);
+    }
+  };
+
   useEffect(() => {
     fetchServers();
   }, [fetchServers]);
@@ -289,8 +355,23 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (currentServer) {
       fetchChannels(currentServer.id);
+      fetchMembers(currentServer.id);
+    } else {
+      setMembers([]);
+      lastMembersServerIdRef.current = null;
     }
-  }, [currentServer, fetchChannels]);
+  }, [currentServer, fetchChannels, fetchMembers]);
+
+  usePolling(
+    () => {
+      if (currentServer) {
+        fetchMembers(currentServer.id);
+      }
+    },
+    30000,
+    !!currentServer,
+    currentServer?.id
+  );
 
   // Use currentServerState for the provider
   const currentServerValue = currentServer;
@@ -314,6 +395,10 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         leaveServer,
         deleteChannel,
         updateChannel,
+        reorderChannels,
+        members,
+        isMembersLoading,
+        fetchMembers,
       }}
     >
       {children}

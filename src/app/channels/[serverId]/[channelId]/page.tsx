@@ -7,6 +7,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { ChatArea } from "@/components/chat/ChatArea";
 import { MemberSidebar } from "@/components/chat/MemberSidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Button } from "@/components/ui/button";
 import { Loader2, Mic, MicOff, Video, VideoOff, Volume2, PhoneOff, Users, Monitor, MonitorOff, Headphones, ScreenShare, Maximize2, Music } from "lucide-react";
 import { toast } from "sonner";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
@@ -587,6 +588,33 @@ export default function ChannelPage() {
   const serverId = params.serverId as string;
   const channelId = params.channelId as string;
 
+  const [confirmedNsfwChannels, setConfirmedNsfwChannels] = useState<Set<string>>(() => {
+    if (typeof window !== "undefined") {
+      try {
+        const stored = sessionStorage.getItem("confirmedNsfwChannels");
+        return stored ? new Set(JSON.parse(stored)) : new Set();
+      } catch {
+        return new Set();
+      }
+    }
+    return new Set();
+  });
+
+  const confirmChannel = (id: string) => {
+    setConfirmedNsfwChannels((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      if (typeof window !== "undefined") {
+        try {
+          sessionStorage.setItem("confirmedNsfwChannels", JSON.stringify(Array.from(next)));
+        } catch {
+          // ignore
+        }
+      }
+      return next;
+    });
+  };
+
   // Detect mobile
   useEffect(() => {
     const checkMobile = () => setIsMobile(window.innerWidth < 768);
@@ -625,6 +653,55 @@ export default function ChannelPage() {
       setCurrentChannel(null);
     }
   }, [channelId, channels, currentChannel, setCurrentChannel]);
+
+  const isNsfw = currentChannel?.isNsfw;
+  const isConfirmed = currentChannel ? confirmedNsfwChannels.has(currentChannel.id) : false;
+
+  if (isNsfw && !isConfirmed && currentChannel) {
+    return (
+      <div className="flex-1 flex flex-col items-center justify-center bg-[#09090b] text-[#fafafa] p-6 text-center select-none">
+        <div className="max-w-md w-full p-8 rounded-2xl border border-red-500/10 bg-red-950/5 backdrop-blur-md shadow-2xl space-y-6">
+          <div className="mx-auto w-16 h-16 rounded-full bg-red-500/10 flex items-center justify-center border border-red-500/20 animate-pulse">
+            <span className="text-xl font-bold text-red-500">18+</span>
+          </div>
+          <div className="space-y-2">
+            <h2 className="text-2xl font-bold tracking-tight text-red-400">
+              Age-Restricted Channel
+            </h2>
+            <p className="text-sm text-zinc-400 leading-relaxed font-sans">
+              This channel has been marked as NSFW (Not Safe For Work). You must be 18 years or older to view the content inside.
+            </p>
+          </div>
+          <div className="flex flex-col sm:flex-row gap-3 pt-2">
+            <Button
+              variant="outline"
+              onClick={() => {
+                if (currentServer) {
+                  const safeChannel = channels.find((c) => !c.isNsfw && c.type !== "category");
+                  if (safeChannel) {
+                    router.push(`/channels/${currentServer.id}/${safeChannel.id}`);
+                  } else {
+                    router.push(`/channels/${currentServer.id}`);
+                  }
+                } else {
+                  router.push("/channels/me");
+                }
+              }}
+              className="flex-1 bg-transparent hover:bg-zinc-900 border-zinc-800 text-zinc-300 hover:text-white"
+            >
+              No, Go Back
+            </Button>
+            <Button
+              onClick={() => confirmChannel(currentChannel.id)}
+              className="flex-1 bg-red-600 hover:bg-red-500 text-white font-medium shadow-lg shadow-red-600/20"
+            >
+              Yes, I am 18 or older
+            </Button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Voice channel experience
   if (currentChannel?.type === "voice") {
