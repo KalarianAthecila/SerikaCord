@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield, UserPlus, Clock } from "lucide-react";
+import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield, UserPlus, Clock, StickyNote } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 import Link from "next/link";
@@ -28,6 +28,7 @@ import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { ChatMessage, MessageAuthor } from "@/lib/chat/types";
+import { ProfileCard, type ProfileCardUser } from "@/components/user/ProfileCard";
 
 const statusColors = {
   online: "#8B5CF6",
@@ -42,6 +43,10 @@ interface Recipient extends MessageAuthor {
   createdAt?: string;
   isFriend?: boolean;
   friendRequestSent?: boolean;
+  timezone?: string | null;
+  showTimezone?: boolean;
+  banner?: string | null;
+  pronouns?: string;
 }
 
 export default function DMConversationPage() {
@@ -376,102 +381,24 @@ export default function DMConversationPage() {
 
       {/* User profile sidebar */}
       {showUserProfile && (
-        <div className="w-[340px] bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col animate-slide-in-right">
+        <div className="w-[340px] bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col animate-slide-in-right overflow-y-auto">
           {recipientLoading ? (
             <UserProfileSkeleton />
           ) : recipient ? (
             <>
-              <div className="h-[120px] relative" style={getProfileBackgroundStyle(recipient.customization) || { backgroundColor: 'var(--accent-color)' }}>
-                {recipient.isPremium && (
-                  <div className="absolute top-2 right-2 px-2 py-1 bg-black/40 rounded-full flex items-center gap-1">
-                    <span className="text-xs text-white font-medium">Serika+</span>
-                  </div>
-                )}
+              <div className="p-3">
+                <ProfileCard
+                  user={recipient as ProfileCardUser}
+                  isFriend={recipient.isFriend}
+                />
               </div>
 
-              <div className="px-4 relative">
-                <div className="absolute -top-16">
-                  <div className="relative">
-                    <Avatar className="w-24 h-24 border-[6px] border-[var(--bg-app)]">
-                      <AvatarImage src={recipient.avatar} />
-                      <AvatarFallback className="bg-[var(--accent-color)] text-white text-2xl">
-                        {(recipient.displayName || recipient.username).charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div
-                      className="absolute bottom-1 right-1 w-6 h-6 rounded-full border-4 border-[var(--bg-app)] transition-colors duration-200"
-                      style={{ backgroundColor: statusColors[recipient.status || "offline"] }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-12 px-4">
+              <div className="px-3 pb-4">
                 <div className="bg-[var(--bg-card)] rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className={cn("text-xl font-bold text-[var(--text-primary)]", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
-                      {recipient.displayName || recipient.username}
-                    </h3>
-                    <InlineBadges badges={recipient.badges} size="sm" />
-                  </div>
-                  <p className="text-sm text-[var(--text-secondary)]">{recipient.username}</p>
-
-                  {recipient.customStatus && (
-                    <p className="text-sm text-[var(--text-secondary)] mt-2">{recipient.customStatus}</p>
-                  )}
-
-                  {!recipient.isSystem && !recipient.isFriend && (
-                    <div className="mt-3">
-                      {recipient.friendRequestSent ? (
-                        <button
-                          disabled
-                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--bg-hover)] text-[var(--text-secondary)] text-sm font-medium cursor-not-allowed"
-                        >
-                          <Clock className="w-4 h-4" />
-                          Pending
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => void handleAddFriend()}
-                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all"
-                        >
-                          <UserPlus className="w-4 h-4" />
-                          Add Friend
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="h-px bg-[var(--border-subtle)] my-4" />
-
-                  {recipient.bio && (
-                    <>
-                      <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2">
-                        About Me
-                      </h4>
-                      <p className="text-sm text-[var(--text-primary)]">{recipient.bio}</p>
-                      <div className="h-px bg-[var(--border-subtle)] my-4" />
-                    </>
-                  )}
-
-                  <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2">
-                    SerikaCord Member Since
+                  <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2 flex items-center gap-1.5">
+                    <StickyNote className="w-3.5 h-3.5" />
+                    Note
                   </h4>
-                  <p className="text-sm text-[var(--text-primary)]">
-                    {recipient.createdAt
-                      ? new Date(recipient.createdAt).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        })
-                      : "Unknown"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="px-4 mt-4">
-                <div className="bg-[var(--bg-card)] rounded-lg p-4">
-                  <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2">Note</h4>
                   <textarea
                     placeholder="Click to add a note"
                     className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] resize-none focus:outline-none transition-colors duration-150"

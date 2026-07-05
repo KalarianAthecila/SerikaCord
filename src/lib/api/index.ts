@@ -214,7 +214,10 @@ const rateLimitPlugin = new Elysia({ name: 'rateLimit' })
       remainingRequests: result.remaining,
     };
   })
-  .onBeforeHandle(({ rateLimited, retryAfter, set }) => {
+  .onBeforeHandle(({ rateLimited, retryAfter, set, path }) => {
+    // Skip rate limiting for admin routes — admin operations like broadcast
+    // should never be throttled by per-IP limits.
+    if (path.startsWith('/admin')) return;
     if (rateLimited) {
       set.status = 429;
       set.headers['Retry-After'] = String(retryAfter);

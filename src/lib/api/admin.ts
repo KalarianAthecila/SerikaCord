@@ -586,88 +586,97 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     // Send DMs from Serika Broadcast system user if requested
     let dmCount = 0;
     if (sendDMs) {
-      try {
-        const { SERIKA_BROADCAST_ID, ensureSerikaBroadcastUser } = await import('@/lib/services/serikaBroadcast');
-        const { Channel } = await import('@/lib/models/Channel');
-        const { Message } = await import('@/lib/models/Message');
-        const { encryptForStorage } = await import('@/lib/security/encryption');
-        const { Types } = await import('mongoose');
-        const { emitDmListUpdate } = await import('@/lib/api/dms');
-        
-        await ensureSerikaBroadcastUser();
-        
-        // Get all users (excluding system users and banned users)
-        const allUsers = await User.find({ 
-          isSystem: { $ne: true },
-          isBanned: { $ne: true }
-        }).select('_id');
-        
-        console.log(`Broadcasting to ${allUsers.length} users`);
-        
-        // Send DM to each user (in batches)
-        const batchSize = 50;
-        const broadcastUserId = new Types.ObjectId(SERIKA_BROADCAST_ID);
-        
-        for (let i = 0; i < allUsers.length; i += batchSize) {
-          const batch = allUsers.slice(i, i + batchSize);
-          
-          await Promise.all(batch.map(async (targetUser) => {
-            try {
-              // Get or create DM channel with system user
-              let channel = await Channel.findOne({
-                type: 'dm',
-                recipientIds: { $all: [broadcastUserId, targetUser._id], $size: 2 },
-              });
-              
-              if (!channel) {
-                channel = new Channel({
+      // Fire-and-forget: process DMs in the background so the HTTP request
+      // returns immediately and doesn't time out on large user bases.
+      void (async () => {
+        try {
+          const { SERIKA_BROADCAST_ID, ensureSerikaBroadcastUser } = await import('@/lib/services/serikaBroadcast');
+          const { Channel } = await import('@/lib/models/Channel');
+          const { Message } = await import('@/lib/models/Message');
+          const { encryptForStorage } = await import('@/lib/security/encryption');
+          const { Types } = await import('mongoose');
+          const { emitDmListUpdate } = await import('@/lib/api/dms');
+
+          await ensureSerikaBroadcastUser();
+
+          // Get all users (excluding system users and banned users)
+          const allUsers = await User.find({
+            isSystem: { $ne: true },
+            isBanned: { $ne: true }
+          }).select('_id');
+
+          console.log(`[Broadcast] Sending to ${allUsers.length} users`);
+
+          // Send DM to each user (in batches)
+          const batchSize = 50;
+          const broadcastUserId = new Types.ObjectId(SERIKA_BROADCAST_ID);
+          let sent = 0;
+
+          for (let i = 0; i < allUsers.length; i += batchSize) {
+            const batch = allUsers.slice(i, i + batchSize);
+
+            await Promise.all(batch.map(async (targetUser) => {
+              try {
+                // Get or create DM channel with system user
+                let channel = await Channel.findOne({
                   type: 'dm',
-                  name: 'Direct Message',
-                  recipientIds: [broadcastUserId, targetUser._id],
-                  position: 0,
+                  recipientIds: { $all: [broadcastUserId, targetUser._id], $size: 2 },
                 });
+
+                if (!channel) {
+                  channel = new Channel({
+                    type: 'dm',
+                    name: 'Direct Message',
+                    recipientIds: [broadcastUserId, targetUser._id],
+                    position: 0,
+                  });
+                  await channel.save();
+                }
+
+                // Encrypt and send message
+                const encryptedContent = await encryptForStorage(message.trim());
+                const dmMessage = new Message({
+                  channelId: channel._id,
+                  authorId: broadcastUserId,
+                  content: encryptedContent,
+                  type: 'default',
+                });
+                await dmMessage.save();
+
+                // Update channel
+                channel.lastMessageId = dmMessage._id;
+                channel.updatedAt = new Date();
                 await channel.save();
+
+                // Emit real-time DM list update to the target user
+                emitDmListUpdate([targetUser._id.toString()], {
+                  type: 'dm:list:update',
+                  channelId: channel._id.toString(),
+                  recipientId: SERIKA_BROADCAST_ID.toString(),
+                  message: {
+                    id: dmMessage._id.toString(),
+                    content: message.trim().slice(0, 180),
+                    authorId: broadcastUserId.toString(),
+                    createdAt: dmMessage.createdAt,
+                  },
+                });
+
+                sent++;
+              } catch (err) {
+                console.error(`[Broadcast] Failed to send DM to user ${targetUser._id}:`, err);
               }
-              
-              // Encrypt and send message
-              const encryptedContent = await encryptForStorage(message.trim());
-              const dmMessage = new Message({
-                channelId: channel._id,
-                authorId: broadcastUserId,
-                content: encryptedContent,
-                type: 'default',
-              });
-              await dmMessage.save();
-              
-              // Update channel
-              channel.lastMessageId = dmMessage._id;
-              channel.updatedAt = new Date();
-              await channel.save();
-              
-              // Emit real-time DM list update to the target user
-              emitDmListUpdate([targetUser._id.toString()], {
-                type: 'dm:list:update',
-                channelId: channel._id.toString(),
-                recipientId: SERIKA_BROADCAST_ID.toString(),
-                message: {
-                  id: dmMessage._id.toString(),
-                  content: message.trim().slice(0, 180),
-                  authorId: broadcastUserId.toString(),
-                  createdAt: dmMessage.createdAt,
-                },
-              });
-              
-              dmCount++;
-            } catch (err) {
-              console.error(`Failed to send DM to user ${targetUser._id}:`, err);
-            }
-          }));
+            }));
+
+            console.log(`[Broadcast] Progress: ${sent}/${allUsers.length} DMs sent`);
+          }
+
+          console.log(`[Broadcast] Complete: ${sent}/${allUsers.length} DMs sent`);
+        } catch (err) {
+          console.error('[Broadcast] Failed to send broadcast DMs:', err);
         }
-        
-        console.log(`Broadcast complete: ${dmCount} DMs sent`);
-      } catch (err) {
-        console.error('Failed to send broadcast DMs:', err);
-      }
+      })();
+
+      dmCount = -1; // Indicates "sending in background"
     }
 
     await logAdminAction(

@@ -432,9 +432,19 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     // Fetch server ownerId for isOwner flag on authors
     let serverOwnerId: Types.ObjectId | null = null;
+    let nicknameMap: Map<string, string> = new Map();
     if (channel?.serverId) {
-      const server = await Server.findById(channel.serverId).select('ownerId').lean();
+      const [server, members] = await Promise.all([
+        Server.findById(channel.serverId).select('ownerId').lean(),
+        ServerMember.find({
+          serverId: channel.serverId,
+          nickname: { $exists: true, $nin: [null, ''] },
+        }).select('userId nickname').lean(),
+      ]);
       serverOwnerId = server?.ownerId ?? null;
+      for (const m of members) {
+        nicknameMap.set(m.userId.toString(), m.nickname!);
+      }
     }
 
     const limit = Math.min(parseInt(query.limit || '50'), config.MAX_MESSAGES_PER_FETCH);
@@ -531,7 +541,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         author: populatedAuthor ? {
           id: populatedAuthor._id.toString(),
           username: populatedAuthor.username,
-          displayName: populatedAuthor.displayName || populatedAuthor.username,
+          displayName: nicknameMap.get(populatedAuthor._id.toString()) || populatedAuthor.displayName || populatedAuthor.username,
           avatar: populatedAuthor.avatar,
           status: populatedAuthor.status,
           badges: (populatedAuthor as PopulatedAuthor & { badges?: string[] }).badges || [],
@@ -670,11 +680,16 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: error || 'Access denied' };
     }
 
-    // Fetch server ownerId for isOwner flag
+    // Fetch server ownerId for isOwner flag and sender nickname
     let serverOwnerId: Types.ObjectId | null = null;
+    let senderNickname: string | null = null;
     if (channel.serverId) {
-      const server = await Server.findById(channel.serverId).select('ownerId').lean();
+      const [server, member] = await Promise.all([
+        Server.findById(channel.serverId).select('ownerId').lean(),
+        ServerMember.findOne({ serverId: channel.serverId, userId: user._id }).select('nickname').lean(),
+      ]);
       serverOwnerId = server?.ownerId ?? null;
+      senderNickname = member?.nickname || null;
     }
 
     // Rate limit messages
@@ -847,7 +862,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       author: populatedAuthor ? {
         id: populatedAuthor._id.toString(),
         username: populatedAuthor.username,
-        displayName: populatedAuthor.displayName || populatedAuthor.username,
+        displayName: senderNickname || populatedAuthor.displayName || populatedAuthor.username,
         avatar: populatedAuthor.avatar,
         status: populatedAuthor.status,
         badges: (populatedAuthor as PopulatedAuthor & { badges?: string[] }).badges || [],

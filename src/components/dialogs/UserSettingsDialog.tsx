@@ -780,7 +780,11 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       if (broadcastResponse.ok) {
         const broadcastData = await broadcastResponse.json().catch(() => null);
         const dmCount = broadcastData?.dmsSent ?? 0;
-        toast.success(`Announcement published${dmCount > 0 ? ` (${dmCount} DMs sent)` : ""}`);
+        if (dmCount === -1) {
+          toast.success("Announcement published — DMs are being sent in the background");
+        } else {
+          toast.success(`Announcement published${dmCount > 0 ? ` (${dmCount} DMs sent)` : ""}`);
+        }
       } else {
         toast.error("Announcement saved but broadcast failed");
       }
