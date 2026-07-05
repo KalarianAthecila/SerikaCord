@@ -47,6 +47,7 @@ interface RawLeanMessage {
   mentionedUserIds?: Array<Types.ObjectId | string>;
   mentionedRoleIds?: Array<Types.ObjectId | string>;
   mentionedChannelIds?: Array<Types.ObjectId | string>;
+  sticker?: { id: string; name: string; imageUrl: string };
 }
 
 function isPopulatedAuthor(value: unknown): value is PopulatedAuthor {
@@ -521,6 +522,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         mentionedRoleIds: (msg.mentionedRoleIds || []).map((id: Types.ObjectId | string) => id.toString()),
         mentionedChannelIds: (msg.mentionedChannelIds || []).map((id: Types.ObjectId | string) => id.toString()),
         customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
+        sticker: msg.sticker || undefined,
       };
     }));
 

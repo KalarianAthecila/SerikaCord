@@ -339,6 +339,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           ? (msg.referencedMessageId as unknown as { _id: Types.ObjectId })._id.toString()
           : msg.referencedMessageId?.toString?.(),
         referencedMessage,
+        sticker: msg.sticker || undefined,
       };
     }));
 

@@ -40,6 +40,7 @@ import {
   Database,
   Activity,
   FlaskConical,
+  RotateCcw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
@@ -1192,31 +1193,35 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         </div>
 
                         {/* Display Name Style */}
-                        <div>
-                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                            Display Name Style
-                          </label>
-                          <div className="bg-[var(--bg-app)] rounded-lg p-4 space-y-4">
-                            <div>
-                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Font</span>
-                              <div className="grid grid-cols-3 sm:grid-cols-6 gap-2">
+                        <div className="mt-8">
+                          <h2 className="text-[16px] font-bold text-white mb-4">Change Display Name Style</h2>
+                          <div className="bg-[#2B2D31] rounded-lg p-5">
+                            {/* Font */}
+                            <div className="mb-6">
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="text-[14px] font-bold text-white">Choose Font</span>
+                                <button onClick={() => setDisplayNameStyle((s) => ({ ...s, font: 'default' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Font"><RotateCcw className="w-4 h-4" /></button>
+                              </div>
+                              <div className="grid grid-cols-4 sm:grid-cols-4 gap-3">
                                 {([
-                                  { value: 'default', label: 'Default' },
-                                  { value: 'serif', label: 'Serif' },
-                                  { value: 'mono', label: 'Mono' },
-                                  { value: 'rounded', label: 'Rounded' },
-                                  { value: 'cursive', label: 'Cursive' },
-                                  { value: 'bold', label: 'Bold' },
+                                  { value: 'default', label: 'Gg' },
+                                  { value: 'serif', label: 'Gg' },
+                                  { value: 'mono', label: 'Gg' },
+                                  { value: 'rounded', label: 'Gg' },
+                                  { value: 'cursive', label: 'Gg' },
+                                  { value: 'bold', label: 'Gg' },
                                 ] as const).map((font) => (
                                   <button
                                     key={font.value}
                                     onClick={() => setDisplayNameStyle((s) => ({ ...s, font: font.value }))}
                                     className={cn(
-                                      "px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
+                                      "h-14 rounded-lg flex items-center justify-center text-2xl transition-all border-2",
+                                      getDisplayNameStyleClasses({ font: font.value }),
                                       displayNameStyle.font === font.value
-                                        ? "bg-[#8B5CF6] text-white"
-                                        : "bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-white"
+                                        ? "border-[#5865F2] bg-[#2B2D31] text-white"
+                                        : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338] hover:text-white"
                                     )}
+                                    style={getDisplayNameStyleInline({ font: font.value })}
                                   >
                                     {font.label}
                                   </button>
@@ -1224,9 +1229,13 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               </div>
                             </div>
 
-                            <div>
-                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Effect</span>
-                              <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
+                            {/* Effect */}
+                            <div className="mb-6">
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="text-[14px] font-bold text-white">Choose Effect</span>
+                                <button onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: 'solid' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Effect"><RotateCcw className="w-4 h-4" /></button>
+                              </div>
+                              <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
                                 {([
                                   { value: 'solid', label: 'Solid' },
                                   { value: 'gradient', label: 'Gradient' },
@@ -1238,142 +1247,138 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                     key={effect.value}
                                     onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: effect.value }))}
                                     className={cn(
-                                      "px-2 py-1.5 rounded-md text-xs font-medium transition-colors",
+                                      "h-[52px] rounded-lg flex items-center justify-center text-[15px] font-medium transition-all border-2",
                                       displayNameStyle.effect === effect.value
-                                        ? "bg-[#8B5CF6] text-white"
-                                        : "bg-[var(--bg-card)] text-[var(--text-secondary)] hover:text-white"
+                                        ? "border-[#5865F2] bg-[#2B2D31]"
+                                        : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338]"
                                     )}
                                   >
-                                    {effect.label}
+                                    <span
+                                      className={cn(
+                                        "truncate px-2",
+                                        getDisplayNameStyleClasses({ effect: effect.value, color: effect.value !== 'gradient' ? displayNameStyle.color : undefined, gradient: effect.value === 'gradient' ? displayNameStyle.gradient : undefined })
+                                      )}
+                                      style={getDisplayNameStyleInline({ effect: effect.value, color: displayNameStyle.color || '#fff', gradient: displayNameStyle.gradient?.length ? displayNameStyle.gradient : ['#8B5CF6', '#3B82F6'] })}
+                                    >
+                                      {effect.label}
+                                    </span>
                                   </button>
                                 ))}
                               </div>
                             </div>
 
-                            {displayNameStyle.effect === 'gradient' ? (
-                              <div>
-                                <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Gradient Colors (2-3)</span>
-                                <div className="flex gap-2 flex-wrap">
-                                  {[0, 1, 2].map((i) => (
-                                    <div key={i} className="flex items-center gap-1.5">
-                                      <input
-                                        type="color"
-                                        value={displayNameStyle.gradient?.[i] || '#8B5CF6'}
-                                        onChange={(e) => {
-                                          const next = [...(displayNameStyle.gradient || [])];
-                                          next[i] = e.target.value;
-                                          setDisplayNameStyle((s) => ({ ...s, gradient: next.filter(Boolean) }));
-                                        }}
-                                        className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
-                                      />
-                                      {i < 2 && (
-                                        <button
-                                          onClick={() => {
-                                            const next = [...(displayNameStyle.gradient || [])];
-                                            next.splice(i + 1, 0, '#6366F1');
-                                            setDisplayNameStyle((s) => ({ ...s, gradient: next }));
-                                          }}
-                                          className="text-xs text-[var(--text-secondary)] hover:text-white"
-                                        >
-                                          +
-                                        </button>
-                                      )}
-                                    </div>
-                                  ))}
-                                </div>
+                            {/* Color */}
+                            <div>
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="text-[14px] font-bold text-white">Choose Color</span>
+                                <button onClick={() => setDisplayNameStyle((s) => ({ ...s, color: '', gradient: [] }))} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
                               </div>
-                            ) : (
-                              <div>
-                                <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Color</span>
-                                <div className="flex items-center gap-2">
+                              <div className="grid grid-cols-6 gap-2 sm:grid-cols-8">
+                                {/* Custom Color Picker */}
+                                <div className="relative aspect-square rounded-md overflow-hidden bg-[#1E1F22] border-2 border-transparent hover:border-white/20 transition-all cursor-pointer">
                                   <input
                                     type="color"
-                                    value={displayNameStyle.color || '#8B5CF6'}
-                                    onChange={(e) => setDisplayNameStyle((s) => ({ ...s, color: e.target.value }))}
-                                    className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
+                                    value={displayNameStyle.effect === 'gradient' ? (displayNameStyle.gradient?.[0] || '#8B5CF6') : (displayNameStyle.color || '#8B5CF6')}
+                                    onChange={(e) => {
+                                      if (displayNameStyle.effect === 'gradient') {
+                                        setDisplayNameStyle((s) => ({ ...s, gradient: [e.target.value, s.gradient?.[1] || '#6366F1'] }));
+                                      } else {
+                                        setDisplayNameStyle((s) => ({ ...s, color: e.target.value }));
+                                      }
+                                    }}
+                                    className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0"
                                   />
-                                  <button
-                                    onClick={() => setDisplayNameStyle((s) => ({ ...s, color: '' }))}
-                                    className="text-xs text-[var(--text-secondary)] hover:text-white"
-                                  >
-                                    Reset
-                                  </button>
+                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                                    <Pencil className="w-4 h-4 text-white drop-shadow-md" />
+                                  </div>
                                 </div>
-                              </div>
-                            )}
-
-                            <div className="pt-2 border-t border-[var(--border-subtle)]">
-                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Preview</span>
-                              <div className="bg-[var(--bg-card)] rounded-md p-3">
-                                <span
-                                  className={cn("text-lg font-bold", getDisplayNameStyleClasses(displayNameStyle))}
-                                  style={getDisplayNameStyleInline(displayNameStyle)}
-                                >
-                                  {displayName || user?.username || 'Display Name'}
-                                </span>
+                                
+                                {displayNameStyle.effect === 'gradient' ? (
+                                  [
+                                    ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
+                                    ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
+                                    ['#FF9800', '#FF5722'], ['#4CAF50', '#8BC34A'], ['#9C27B0', '#673AB7'], ['#3F51B5', '#2196F3'],
+                                    ['#00BCD4', '#009688'], ['#CDDC39', '#FFEB3B'], ['#FFC107', '#FF5722']
+                                  ].map((grad, i) => (
+                                    <button
+                                      key={i}
+                                      onClick={() => setDisplayNameStyle((s) => ({ ...s, gradient: grad }))}
+                                      className="aspect-square rounded-md border-2 border-transparent transition-all relative overflow-hidden"
+                                      style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, borderColor: JSON.stringify(displayNameStyle.gradient) === JSON.stringify(grad) ? '#fff' : 'transparent' }}
+                                    >
+                                      {JSON.stringify(displayNameStyle.gradient) === JSON.stringify(grad) && (
+                                        <div className="absolute top-0.5 right-0.5 bg-black/40 rounded-sm">
+                                          <Check className="w-3 h-3 text-white" />
+                                        </div>
+                                      )}
+                                    </button>
+                                  ))
+                                ) : (
+                                  [
+                                    '#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6',
+                                    '#D946EF', '#FF1744', '#00E676', '#00B0FF', '#D500F9', '#FF9800', '#9C27B0'
+                                  ].map((col, i) => (
+                                    <button
+                                      key={i}
+                                      onClick={() => setDisplayNameStyle((s) => ({ ...s, color: col }))}
+                                      className="aspect-square rounded-md border-2 border-transparent transition-all relative"
+                                      style={{ backgroundColor: col, borderColor: displayNameStyle.color === col ? '#fff' : 'transparent' }}
+                                    >
+                                      {displayNameStyle.color === col && (
+                                        <div className="absolute top-0.5 right-0.5 bg-black/40 rounded-sm">
+                                          <Check className="w-3 h-3 text-white" />
+                                        </div>
+                                      )}
+                                    </button>
+                                  ))
+                                )}
                               </div>
                             </div>
                           </div>
                         </div>
 
                         {/* Profile Color */}
-                        <div>
-                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                            Profile Color
-                          </label>
-                          <div className="bg-[var(--bg-app)] rounded-lg p-4 space-y-3">
-                            <div className="flex items-center gap-2">
-                              <input
-                                type="color"
-                                value={profileColor || '#8B5CF6'}
-                                onChange={(e) => setProfileColor(e.target.value)}
-                                className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
-                              />
-                              <button
-                                onClick={() => setProfileColor('')}
-                                className="text-xs text-[var(--text-secondary)] hover:text-white"
-                              >
-                                Reset
-                              </button>
-                            </div>
-                            <div>
-                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Gradient Background (optional)</span>
-                              <div className="flex gap-2 flex-wrap">
-                                {[0, 1, 2].map((i) => (
-                                  <div key={i} className="flex items-center gap-1.5">
-                                    <input
-                                      type="color"
-                                      value={profileGradient[i] || '#8B5CF6'}
-                                      onChange={(e) => {
-                                        const next = [...profileGradient];
-                                        next[i] = e.target.value;
-                                        setProfileGradient(next.filter(Boolean));
-                                      }}
-                                      className="w-8 h-8 rounded cursor-pointer bg-transparent border border-[var(--border-subtle)]"
-                                    />
-                                    {i < 2 && (
-                                      <button
-                                        onClick={() => {
-                                          const next = [...profileGradient];
-                                          next.splice(i + 1, 0, '#6366F1');
-                                          setProfileGradient(next);
-                                        }}
-                                        className="text-xs text-[var(--text-secondary)] hover:text-white"
-                                      >
-                                        +
-                                      </button>
-                                    )}
-                                  </div>
+                        <div className="mt-8">
+                          <h2 className="text-[16px] font-bold text-white mb-4">Profile Color</h2>
+                          <div className="bg-[#2B2D31] rounded-lg p-5">
+                            {/* Color */}
+                            <div className="mb-6">
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="text-[14px] font-bold text-white">Choose Color</span>
+                                <button onClick={() => setProfileColor('')} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
+                              </div>
+                              <div className="grid grid-cols-6 gap-2 sm:grid-cols-8">
+                                <div className="relative aspect-square rounded-md overflow-hidden bg-[#1E1F22] border-2 border-transparent hover:border-white/20 transition-all cursor-pointer">
+                                  <input type="color" value={profileColor || '#8B5CF6'} onChange={(e) => setProfileColor(e.target.value)} className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0" />
+                                  <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Pencil className="w-4 h-4 text-white drop-shadow-md" /></div>
+                                </div>
+                                {[
+                                  '#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6',
+                                  '#D946EF', '#FF1744', '#00E676', '#00B0FF', '#D500F9', '#FF9800', '#9C27B0'
+                                ].map((col, i) => (
+                                  <button key={i} onClick={() => setProfileColor(col)} className="aspect-square rounded-md border-2 border-transparent transition-all relative" style={{ backgroundColor: col, borderColor: profileColor === col ? '#fff' : 'transparent' }}>
+                                    {profileColor === col && <div className="absolute top-0.5 right-0.5 bg-black/40 rounded-sm"><Check className="w-3 h-3 text-white" /></div>}
+                                  </button>
                                 ))}
                               </div>
                             </div>
-                            <div className="pt-2 border-t border-[var(--border-subtle)]">
-                              <span className="text-xs text-[var(--text-secondary)] mb-1.5 block">Preview</span>
-                              <div
-                                className="rounded-md p-3 h-16"
-                                style={getProfileBackgroundStyle({ profileColor, profileGradient })}
-                              >
-                                <span className="text-sm text-white font-medium">Profile card background</span>
+                            {/* Gradient Background */}
+                            <div>
+                              <div className="flex items-center gap-2 mb-3">
+                                <span className="text-[14px] font-bold text-white">Gradient Background (Optional)</span>
+                                <button onClick={() => setProfileGradient([])} className="text-[#B5BAC1] hover:text-white" title="Reset Gradient"><RotateCcw className="w-4 h-4" /></button>
+                              </div>
+                              <div className="grid grid-cols-6 gap-2 sm:grid-cols-8">
+                                {[
+                                  ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
+                                  ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
+                                  ['#FF9800', '#FF5722'], ['#4CAF50', '#8BC34A'], ['#9C27B0', '#673AB7'], ['#3F51B5', '#2196F3'],
+                                  ['#00BCD4', '#009688'], ['#CDDC39', '#FFEB3B'], ['#FFC107', '#FF5722']
+                                ].map((grad, i) => (
+                                  <button key={i} onClick={() => setProfileGradient(grad)} className="aspect-square rounded-md border-2 border-transparent transition-all relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, borderColor: JSON.stringify(profileGradient) === JSON.stringify(grad) ? '#fff' : 'transparent' }}>
+                                    {JSON.stringify(profileGradient) === JSON.stringify(grad) && <div className="absolute top-0.5 right-0.5 bg-black/40 rounded-sm"><Check className="w-3 h-3 text-white" /></div>}
+                                  </button>
+                                ))}
                               </div>
                             </div>
                           </div>
