@@ -154,8 +154,12 @@ jobs:
         working-directory: mobile/android
         run: chmod +x ./gradlew
 
-      - name: Clear Gradle cache
-        run: rm -rf ~/.gradle/caches
+      - name: Clear Gradle cache and daemon
+        run: |
+          rm -rf ~/.gradle/caches
+          rm -rf ~/.gradle/daemon
+          rm -rf mobile/android/.gradle
+          rm -rf mobile/android/app/build
 
       - name: Build Android APK
         working-directory: mobile/android
