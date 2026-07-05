@@ -8,6 +8,7 @@ export const RESERVED_SLUGS = new Set([
   'terms', 'privacy', 'legal', 'guidelines', 'about', 'careers', 'blog',
   'admin', 'staff', 'system', 'serika', 'serikacord', 'support',
   'help', 'status', 'cdn', 'static', 'assets', 'favicon',
+  'developers', 'docs',
   '404', '500', 'robots', 'sitemap', 'manifest',
 ]);
 

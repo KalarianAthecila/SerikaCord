@@ -15,3 +15,7 @@ export { AdminLog, type IAdminLog, type AdminActionType } from './AdminLog';
 export { PlatformSettings, getPlatformSettings, updatePlatformSettings, getEncryptionKey, type IPlatformSettings } from './PlatformSettings';
 export { Experiment, getUserVariant, type IExperiment, type IExperimentVariant, type ExperimentType, type ExperimentStatus } from './Experiment';
 export { Instance, isHostDomain, getCurrentInstance, verifyInstanceApiKey, generateInstanceApiKey, generateSecretKey, type IInstance, type InstanceType, type InstanceStatus } from './Instance';
+export { Application, type IApplication } from './Application';
+export { DeveloperTeam, type IDeveloperTeam } from './DeveloperTeam';
+export { AppWebhook, type IAppWebhook } from './AppWebhook';
+export { AppEmoji, type IAppEmoji } from './AppEmoji';

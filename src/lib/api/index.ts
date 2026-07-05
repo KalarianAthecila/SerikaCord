@@ -16,6 +16,8 @@ import { oembedRoutes } from './oembed';
 import { experimentRoutes, instanceRoutes } from './experiments';
 import { voiceRoutes } from './voice';
 import { gifRoutes } from './gifs';
+import { developerRoutes } from './developers';
+import { botApiRoutes } from './botApi';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
 import { getMoeActivity } from '@/lib/services/moeActivity';
@@ -1484,7 +1486,9 @@ export const api = new Elysia({ prefix: '/api' })
   .use(adminRoutes)
   .use(oembedRoutes)
   .use(experimentRoutes)
-  .use(instanceRoutes);
+  .use(instanceRoutes)
+  .use(developerRoutes)
+  .use(botApiRoutes);
 
 // Initialize database connection
 export async function initializeAPI() {

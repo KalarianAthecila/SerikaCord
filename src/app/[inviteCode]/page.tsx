@@ -131,7 +131,12 @@ export default function InvitePage() {
 
   const handleJoin = async () => {
     if (!isAuthenticated) {
-      router.push(`/login?redirect=/${inviteCode}`);
+      const loginUrl = `/login?redirect=/${inviteCode}`;
+      if (typeof window !== "undefined" && window.location.hostname !== "serika.chat") {
+        window.location.href = `https://serika.chat${loginUrl}`;
+      } else {
+        router.push(loginUrl);
+      }
       return;
     }
 
@@ -144,10 +149,11 @@ export default function InvitePage() {
 
       if (!res.ok) {
         if (res.status === 400 && data.error?.includes("Already a member")) {
-          if (invite?.server._id) {
-            router.push(`/channels/${invite.server._id}`);
+          const target = invite?.server._id ? `/channels/${invite.server._id}` : "/channels/me";
+          if (typeof window !== "undefined" && window.location.hostname !== "serika.chat") {
+            window.location.href = `https://serika.chat${target}`;
           } else {
-            router.push("/channels/me");
+            router.push(target);
           }
           return;
         }
@@ -155,10 +161,11 @@ export default function InvitePage() {
         return;
       }
 
-      if (data.server?.id) {
-        router.push(`/channels/${data.server.id}`);
+      const target = data.server?.id ? `/channels/${data.server.id}` : "/channels/me";
+      if (typeof window !== "undefined" && window.location.hostname !== "serika.chat") {
+        window.location.href = `https://serika.chat${target}`;
       } else {
-        router.push("/channels/me");
+        router.push(target);
       }
     } catch {
       setError("Something went wrong. Please try again.");
