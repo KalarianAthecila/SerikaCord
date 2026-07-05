@@ -52,6 +52,8 @@ export interface IUser extends Document {
   banner?: string;
   bio?: string;
   pronouns?: string;
+  timezone?: string;
+  showTimezone?: boolean;
   status?: 'online' | 'idle' | 'dnd' | 'offline' | 'invisible';
   customStatus?: string;
   presenceLastHeartbeatAt?: Date;
@@ -268,6 +270,14 @@ const UserSchema = new Schema<IUser>({
     type: String,
     maxlength: 32,
     default: null,
+  },
+  timezone: {
+    type: String,
+    default: null,
+  },
+  showTimezone: {
+    type: Boolean,
+    default: false,
   },
   badges: [{
     type: String,

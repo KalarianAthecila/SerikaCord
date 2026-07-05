@@ -18,6 +18,8 @@ interface User {
   banner?: string;
   bio?: string;
   pronouns?: string;
+  timezone?: string;
+  showTimezone?: boolean;
   status: "online" | "idle" | "dnd" | "offline";
   customStatus?: string;
   isPremium?: boolean;

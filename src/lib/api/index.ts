@@ -244,6 +244,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       banner: user.banner,
       bio: user.bio,
       pronouns: user.pronouns,
+      timezone: user.timezone,
+      showTimezone: user.showTimezone,
       status: user.status,
       customStatus: user.customStatus,
       isPremium: user.isPremium,
@@ -272,6 +274,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       banner: user.banner,
       bio: user.bio,
       pronouns: user.pronouns,
+      timezone: user.timezone,
+      showTimezone: user.showTimezone,
       status: user.status,
       customStatus: user.customStatus,
       isPremium: user.isPremium,
@@ -537,12 +541,14 @@ const userRoutes = new Elysia({ prefix: '/users' })
         return { error: 'User not found in local database' };
       }
 
-      const { displayName, bio, pronouns, customStatus, status, settings, customization, gifFavorites } = body as Record<string, any>;
+      const { displayName, bio, pronouns, customStatus, status, settings, customization, gifFavorites, timezone, showTimezone } = body as Record<string, any>;
       const prevStatus = user.status;
 
       if (displayName !== undefined) user.displayName = displayName;
       if (bio !== undefined) user.bio = bio;
       if (pronouns !== undefined) user.pronouns = pronouns;
+      if (timezone !== undefined) user.timezone = timezone || null;
+      if (showTimezone !== undefined) user.showTimezone = Boolean(showTimezone);
       if (customStatus !== undefined) user.customStatus = customStatus;
       if (status !== undefined) {
         user.status = status;
@@ -606,6 +612,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       displayName: t.Optional(t.String({ maxLength: 32 })),
       bio: t.Optional(t.String({ maxLength: 190 })),
       pronouns: t.Optional(t.String({ maxLength: 32 })),
+      timezone: t.Optional(t.Union([t.String(), t.Null()])),
+      showTimezone: t.Optional(t.Boolean()),
       customStatus: t.Optional(t.String({ maxLength: 128 })),
       status: t.Optional(t.Union([
         t.Literal('online'),
@@ -901,6 +909,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       banner: targetUser.banner,
       bio: targetUser.bio,
       pronouns: targetUser.pronouns,
+      timezone: targetUser.showTimezone ? targetUser.timezone : null,
+      showTimezone: targetUser.showTimezone,
       badges: targetUser.badges || [],
       status: getPublicPresenceStatus(targetUser),
       customStatus: targetUser.customStatus,

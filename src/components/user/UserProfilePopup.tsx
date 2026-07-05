@@ -25,6 +25,7 @@ import {
   Copy,
   Users,
   Check,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
@@ -196,6 +197,18 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
               <button className="text-sm text-[#888888] hover:text-white transition-colors mb-2">
                 View Full Bio
               </button>
+            )}
+
+            {/* Current Time */}
+            {user.showTimezone && user.timezone && (
+              <div className="flex items-center gap-1.5 mb-2 text-sm text-[#dcddde]">
+                <Clock className="w-3.5 h-3.5 text-[#888888]" />
+                <span>
+                  {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: user.timezone })}
+                </span>
+                <span className="text-[#555555]">•</span>
+                <span className="text-xs text-[#888888]">{user.timezone}</span>
+              </div>
             )}
 
             <div className="h-px bg-[#222222] my-2" />

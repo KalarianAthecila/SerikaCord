@@ -42,6 +42,7 @@ import {
   Activity,
   FlaskConical,
   RotateCcw,
+  Clock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
@@ -101,6 +102,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const [initialServerBanner, setInitialServerBanner] = useState<string | null>(null);
   const [bio, setBio] = useState("");
   const [pronouns, setPronouns] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [showTimezone, setShowTimezone] = useState(false);
   const [customStatus, setCustomStatus] = useState("");
   const [status, setStatus] = useState("online");
   const [displayNameStyle, setDisplayNameStyle] = useState<{
@@ -221,6 +224,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       setDisplayName(user.displayName || "");
       setBio(user.bio || "");
       setPronouns(user.pronouns || "");
+      setTimezone(user.timezone || "");
+      setShowTimezone(user.showTimezone ?? false);
       setCustomStatus(user.customStatus || "");
       setStatus(user.status || "online");
       setDisplayNameStyle(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] });
@@ -348,6 +353,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
         displayName !== (user.displayName || "") ||
         bio !== (user.bio || "") ||
         pronouns !== (user.pronouns || "") ||
+        timezone !== (user.timezone || "") ||
+        showTimezone !== (user.showTimezone ?? false) ||
         customStatus !== (user.customStatus || "") ||
         status !== (user.status || "online") ||
         JSON.stringify(displayNameStyle) !== JSON.stringify(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] }) ||
@@ -365,6 +372,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     displayName,
     bio,
     pronouns,
+    timezone,
+    showTimezone,
     customStatus,
     status,
     displayNameStyle,
@@ -402,6 +411,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
             displayName,
             bio,
             pronouns,
+            timezone: timezone || null,
+            showTimezone,
             customStatus,
             status,
             customization: {
@@ -418,6 +429,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
             displayName,
             bio,
             pronouns,
+            timezone: timezone || undefined,
+            showTimezone,
             customStatus,
             status: status as "online" | "idle" | "dnd" | "offline",
             customization: {
@@ -1311,6 +1324,31 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
                             <div>
                               <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                Timezone
+                              </label>
+                              <select
+                                value={timezone}
+                                onChange={(e) => setTimezone(e.target.value)}
+                                className="w-full h-10 rounded-md bg-[var(--bg-app)] border-none text-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--accent-color)]"
+                              >
+                                <option value="">Select your timezone</option>
+                                {Intl.supportedValuesOf("timeZone").map((tz) => (
+                                  <option key={tz} value={tz}>{tz}</option>
+                                ))}
+                              </select>
+                              <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                                <input
+                                  type="checkbox"
+                                  checked={showTimezone}
+                                  onChange={(e) => setShowTimezone(e.target.checked)}
+                                  className="w-4 h-4 rounded accent-[var(--accent-color)]"
+                                />
+                                <span className="text-sm text-[var(--text-secondary)]">Display my current time on my profile</span>
+                              </label>
+                            </div>
+
+                            <div>
+                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
                                 About Me
                               </label>
                               <Textarea
@@ -1797,6 +1835,17 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                           {customStatus && (
                             <div className="mb-2 text-sm text-[#dbdee1] italic">
                               "{customStatus}"
+                            </div>
+                          )}
+                          {/* Current time */}
+                          {showTimezone && timezone && (
+                            <div className="flex items-center gap-1.5 mb-2 text-sm text-[#949ba4]">
+                              <Clock className="w-3.5 h-3.5" />
+                              <span>
+                                {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: timezone })}
+                              </span>
+                              <span className="text-[#4e5058]">•</span>
+                              <span className="text-xs">{timezone}</span>
                             </div>
                           )}
                           {/* Bio */}
@@ -3069,6 +3118,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         setDisplayName(user.displayName || "");
                         setBio(user.bio || "");
                         setPronouns(user.pronouns || "");
+                        setTimezone(user.timezone || "");
+                        setShowTimezone(user.showTimezone ?? false);
                         setCustomStatus(user.customStatus || "");
                         setStatus(user.status || "online");
                         setDisplayNameStyle(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] });

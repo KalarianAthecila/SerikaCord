@@ -17,7 +17,8 @@ import {
   Check,
   Settings,
   Edit3,
-  Sparkles
+  Sparkles,
+  Clock,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,8 @@ interface UserProfileProps {
     mutualServers?: { id: string; name: string; icon?: string }[];
     mutualFriends?: { id: string; username: string; avatar?: string }[];
     pronouns?: string;
+    timezone?: string;
+    showTimezone?: boolean;
     isStaff?: boolean;
     isPartnerOwner?: boolean;
     isPremium?: boolean;
@@ -337,6 +340,18 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
             <div className="flex items-center gap-2 mt-3 text-sm text-[#b5bac1]">
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors[user.status || 'offline'] }} />
               <MarkdownRenderer content={user.customStatus} />
+            </div>
+          )}
+
+          {/* Current Time */}
+          {user.showTimezone && user.timezone && (
+            <div className="flex items-center gap-2 mt-3 text-sm text-[#b5bac1]">
+              <Clock className="w-4 h-4 text-[#949ba4]" />
+              <span>
+                {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: user.timezone })}
+              </span>
+              <span className="text-[#4e5058]">•</span>
+              <span className="text-xs text-[#949ba4]">{user.timezone}</span>
             </div>
           )}
 
