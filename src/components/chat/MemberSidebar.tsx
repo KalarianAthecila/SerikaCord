@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef } from "react";
 import { Crown, Play, Pause } from "lucide-react";
 import { useServer } from "@/contexts/ServerContext";
 import { useMoeActivity } from "@/hooks/useMoeActivity";
@@ -71,11 +71,18 @@ export function MemberSidebar() {
   const { currentServer } = useServer();
   const [members, setMembers] = useState<Member[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const lastServerIdRef = useRef<string | null>(null);
 
   const fetchMembers = useCallback(async () => {
     if (!currentServer) return;
 
-    setIsLoading(true);
+    const serverChanged = lastServerIdRef.current !== currentServer.id;
+    if (serverChanged) {
+      setIsLoading(true);
+      setMembers([]);
+      lastServerIdRef.current = currentServer.id;
+    }
+
     try {
       const response = await fetch(`/api/servers/${currentServer.id}/members?limit=1000`);
       if (response.ok) {
@@ -87,7 +94,9 @@ export function MemberSidebar() {
       }
     } catch (error) {
       console.error("Failed to fetch members:", error);
-      setMembers([]);
+      if (serverChanged) {
+        setMembers([]);
+      }
     } finally {
       setIsLoading(false);
     }

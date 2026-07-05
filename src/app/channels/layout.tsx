@@ -129,7 +129,11 @@ function AuthGate({ children }: { children: React.ReactNode }) {
 
 function ChannelsContent({ children }: { children: React.ReactNode }) {
   const [showCreateServer, setShowCreateServer] = useState(false);
-  const [showCreateChannel, setShowCreateChannel] = useState(false);
+  const [createChannelOptions, setCreateChannelOptions] = useState<{
+    open: boolean;
+    defaultType?: "text" | "voice" | "category";
+    defaultParentId?: string;
+  }>({ open: false });
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [showInvite, setShowInvite] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
@@ -254,8 +258,10 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
           onOpenChange={setShowCreateServer}
         />
         <CreateChannelDialog
-          open={showCreateChannel}
-          onOpenChange={setShowCreateChannel}
+          open={createChannelOptions.open}
+          onOpenChange={(open) => setCreateChannelOptions((prev) => ({ ...prev, open }))}
+          defaultType={createChannelOptions.defaultType}
+          defaultParentId={createChannelOptions.defaultParentId}
         />
         <UserSettingsDialog
           open={showUserSettings}
@@ -280,7 +286,9 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
       <div className="flex flex-shrink-0">
         <ServerSidebar onCreateServer={() => setShowCreateServer(true)} />
         <ChannelSidebar 
-          onCreateChannel={() => setShowCreateChannel(true)}
+          onCreateChannel={(defaultType, defaultParentId) =>
+            setCreateChannelOptions({ open: true, defaultType, defaultParentId })
+          }
           onInvitePeople={() => setShowInvite(true)}
           onServerSettings={() => setShowServerSettings(true)}
         />
@@ -309,8 +317,10 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
         onOpenChange={setShowCreateServer}
       />
       <CreateChannelDialog
-        open={showCreateChannel}
-        onOpenChange={setShowCreateChannel}
+        open={createChannelOptions.open}
+        onOpenChange={(open) => setCreateChannelOptions((prev) => ({ ...prev, open }))}
+        defaultType={createChannelOptions.defaultType}
+        defaultParentId={createChannelOptions.defaultParentId}
       />
       <UserSettingsDialog
         open={showUserSettings}

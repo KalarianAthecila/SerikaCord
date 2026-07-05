@@ -297,7 +297,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
-    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit } = body;
+    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId } = body;
 
     if (name !== undefined) channel.name = sanitizeInput(name);
     if (topic !== undefined) channel.topic = sanitizeInput(topic);
@@ -305,6 +305,27 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     if (rateLimitPerUser !== undefined) channel.rateLimitPerUser = rateLimitPerUser;
     if (bitrate !== undefined) channel.bitrate = bitrate;
     if (userLimit !== undefined) channel.userLimit = userLimit;
+
+    if (parentId !== undefined) {
+      if (parentId === null) {
+        channel.parentId = null;
+      } else {
+        if (channel.type === 'category') {
+          set.status = 400;
+          return { error: 'A category cannot have a parent category' };
+        }
+        if (!isValidObjectId(parentId)) {
+          set.status = 400;
+          return { error: 'Invalid parent ID' };
+        }
+        const parentChannel = await Channel.findById(parentId);
+        if (!parentChannel || parentChannel.type !== 'category') {
+          set.status = 400;
+          return { error: 'Invalid parent category' };
+        }
+        channel.parentId = new Types.ObjectId(parentId);
+      }
+    }
 
     await channel.save();
 
@@ -327,6 +348,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
       topic: t.Optional(t.String({ maxLength: 1024 })),
       nsfw: t.Optional(t.Boolean()),
+      parentId: t.Optional(t.Union([t.String(), t.Null()])),
       rateLimitPerUser: t.Optional(t.Number({ minimum: 0, maximum: 21600 })),
       bitrate: t.Optional(t.Number({ minimum: 8000, maximum: 384000 })),
       userLimit: t.Optional(t.Number({ minimum: 0, maximum: 99 })),

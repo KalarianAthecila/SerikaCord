@@ -83,7 +83,7 @@ interface DMChannel {
 interface ChannelSidebarProps {
   onInvitePeople?: () => void;
   onServerSettings?: () => void;
-  onCreateChannel?: () => void;
+  onCreateChannel?: (defaultType?: "text" | "voice" | "category", defaultParentId?: string) => void;
   onCreateCategory?: () => void;
   onLeaveServer?: () => void;
 }
@@ -92,7 +92,6 @@ export function ChannelSidebar({
   onInvitePeople,
   onServerSettings,
   onCreateChannel,
-  onCreateCategory,
 }: ChannelSidebarProps) {
   const { currentServer, channels, currentChannel, setCurrentChannel, leaveServer, deleteChannel, updateChannel } = useServer();
   const { user } = useAuth();
@@ -143,7 +142,6 @@ export function ChannelSidebar({
 
   const navigateToChannel = (channel: typeof channels[0]) => {
     if (!currentServer) return;
-    setCurrentChannel(channel);
     router.push(`/channels/${currentServer.id}/${channel.id}`);
   };
 
@@ -244,10 +242,35 @@ export function ChannelSidebar({
     }
   };
 
-  // Group channels by type
-  const textChannels = channels.filter(c => c.type === "text");
+  // Group channels by type & category
   const voiceChannels = useMemo(() => channels.filter(c => c.type === "voice"), [channels]);
-  const announcementChannels = channels.filter(c => c.type === "announcement");
+
+  const uncategorizedChannels = useMemo(() => {
+    return channels.filter(c => c.type !== "category" && !c.parentId);
+  }, [channels]);
+
+  const categories = useMemo(() => {
+    return channels.filter(c => c.type === "category").sort((a, b) => a.position - b.position);
+  }, [channels]);
+
+  const channelsByCategory = useMemo(() => {
+    const map = new Map<string, typeof channels>();
+    for (const channel of channels) {
+      if (channel.type === "category") continue;
+      if (channel.parentId) {
+        const pId = channel.parentId.toString();
+        if (!map.has(pId)) {
+          map.set(pId, []);
+        }
+        map.get(pId)?.push(channel);
+      }
+    }
+    // Sort channels inside each category by position
+    for (const key of map.keys()) {
+      map.get(key)?.sort((a, b) => a.position - b.position);
+    }
+    return map;
+  }, [channels]);
 
   // Mark channel as read when it becomes active
   useEffect(() => {
@@ -261,6 +284,113 @@ export function ChannelSidebar({
   const [dmChannels, setDmChannels] = useState<DMChannel[]>([]);
   const [externalVoiceParticipants, setExternalVoiceParticipants] = useState<Map<string, VoiceParticipant[]>>(new Map());
   const pathname = usePathname();
+
+  const renderChannelItem = (channel: typeof channels[0]) => {
+    if (channel.type === "voice") {
+      const isActive = voiceService.currentRoomId === `channel-${channel.id}`;
+      const channelParticipants = isActive ? voiceParticipants : (externalVoiceParticipants.get(channel.id) || []);
+      return (
+        <div key={channel.id} className="mb-0.5">
+          <button
+            onClick={() => handleVoiceChannelClick(channel)}
+            onContextMenu={(e) => handleContextMenu(e, channel)}
+            className={cn(
+              "w-full px-2 py-1 mx-2 rounded flex items-center gap-1.5 transition-all group",
+              isActive
+                ? "text-green-400 hover:bg-[var(--bg-sidebar-elevated)]"
+                : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)]",
+              currentChannel?.id === channel.id && "bg-[var(--bg-active)]"
+            )}
+            style={{ width: "calc(100% - 16px)" }}
+          >
+            <Volume2 className={cn(
+              "w-4 h-4 flex-shrink-0",
+              isActive ? "text-green-400" : "text-[var(--text-muted)]"
+            )} />
+            <span className="truncate text-sm flex-1 text-left">{channel.name}</span>
+            {channel.isNsfw && (
+              <span className="shrink-0 px-1 py-0.5 rounded text-[8px] font-bold bg-red-500/20 text-red-400 select-none">
+                NSFW
+              </span>
+            )}
+            {channelParticipants.length > 0 && (
+              <span className="flex items-center gap-1 shrink-0">
+                <span className={cn("inline-block w-1.5 h-1.5 rounded-full", isActive ? "bg-green-500 animate-pulse" : "bg-green-500/60")} />
+                <span className={cn("text-[10px]", isActive ? "text-green-400" : "text-green-400/70")}>{channelParticipants.length}</span>
+              </span>
+            )}
+          </button>
+          {/* Participants — Discord style */}
+          {channelParticipants.length > 0 && (
+            <div className="ml-6 mr-2 space-y-0.5 mb-1">
+              {channelParticipants.map((p) => (
+                <div
+                  key={p.userId}
+                  className="flex items-center gap-1.5 px-1.5 py-0.5 rounded group/vp"
+                >
+                  <Avatar className="w-5 h-5 shrink-0">
+                    <AvatarImage src={p.avatar} />
+                    <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-[9px]">
+                      {(p.displayName || p.username).charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-xs text-[var(--text-secondary)] truncate flex-1">
+                    {p.displayName || p.username}
+                  </span>
+                  {!p.audio && (
+                    <MicOff className="w-3 h-3 text-red-400 shrink-0" />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    const mentionCount = getChannelCount(channel.id);
+    return editingChannel === channel.id ? (
+      <div key={channel.id} className="w-full px-2 py-1 mx-2" style={{ width: "calc(100% - 16px)" }}>
+        <input
+          type="text"
+          value={editName}
+          onChange={(e) => setEditName(e.target.value)}
+          onBlur={() => handleSaveEdit(channel.id)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') handleSaveEdit(channel.id);
+            if (e.key === 'Escape') { setEditingChannel(null); setEditName(""); }
+          }}
+          autoFocus
+          className="w-full px-2 py-1 bg-[var(--bg-sidebar-elevated)] border border-[#8B5CF6] rounded text-[var(--text-primary)] text-sm focus:outline-none"
+        />
+      </div>
+    ) : (
+      <button
+        key={channel.id}
+        onClick={() => { navigateToChannel(channel); markChannelRead(channel.id); }}
+        onContextMenu={(e) => handleContextMenu(e, channel)}
+        className={cn(
+          "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] transition-all group",
+          currentChannel?.id === channel.id && "bg-[var(--bg-active)] text-[var(--app-accent)]",
+          mentionCount > 0 && currentChannel?.id !== channel.id && "text-[var(--text-primary)]"
+        )}
+        style={{ width: "calc(100% - 16px)" }}
+      >
+        {getChannelIcon(channel.type)}
+        <span className="truncate text-sm flex-1 text-left">{channel.name}</span>
+        {channel.isNsfw && (
+          <span className="shrink-0 px-1 py-0.5 rounded text-[8px] font-bold bg-red-500/20 text-red-400 select-none">
+            NSFW
+          </span>
+        )}
+        {mentionCount > 0 && currentChannel?.id !== channel.id && (
+          <span className="shrink-0 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-[#8B5CF6] text-[10px] font-bold text-white leading-none">
+            {mentionCount > 99 ? "99+" : mentionCount}
+          </span>
+        )}
+      </button>
+    );
+  };
 
   useEffect(() => {
     if (!currentServer || !channels.length || !pathname) return;
@@ -516,14 +646,14 @@ export function ChannelSidebar({
           {canManageChannels && (
             <>
               <DropdownMenuItem
-                onClick={onCreateChannel}
+                onClick={() => onCreateChannel?.("text")}
                 className="focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4 mr-2" />
                 Create Channel
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={onCreateCategory || onCreateChannel}
+                onClick={() => onCreateChannel?.("category")}
                 className="focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer"
               >
                 <Folder className="w-4 h-4 mr-2" />
@@ -558,209 +688,65 @@ export function ChannelSidebar({
       {/* Channel List */}
       <ScrollArea className="flex-1">
         <div className="py-3">
-          {/* Announcement Channels (if any) */}
-          {announcementChannels.length > 0 && (
-            <div className="mb-2">
-              <div className="px-2 mb-1">
-                <button
-                  className="w-full px-1 flex items-center gap-0.5 group"
-                  onClick={() => toggleCategory('announcements')}
-                >
-                  <ChevronRight
-                    className={cn(
-                      "w-3 h-3 text-[var(--text-muted)] transition-transform",
-                      !collapsedCategories.has('announcements') && "rotate-90"
-                    )}
-                  />
-                  <span className="text-xs font-semibold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
-                    Announcements
-                  </span>
-                </button>
+          {/* Uncategorized Channels */}
+          {uncategorizedChannels.length > 0 && (
+            <div className="mb-4">
+              <div className="space-y-0.5">
+                {uncategorizedChannels.map((channel) => renderChannelItem(channel))}
               </div>
-              {!collapsedCategories.has('announcements') && announcementChannels.map((channel) => {
-                const mentionCount = getChannelCount(channel.id);
-                return (
-                <button
-                  key={channel.id}
-                  onClick={() => { navigateToChannel(channel); markChannelRead(channel.id); }}
-                  onContextMenu={(e) => handleContextMenu(e, channel)}
-                  className={cn(
-                    "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] transition-all group",
-                    currentChannel?.id === channel.id && "bg-[var(--bg-active)] text-[var(--app-accent)]",
-                    mentionCount > 0 && currentChannel?.id !== channel.id && "text-[var(--text-primary)]"
-                  )}
-                  style={{ width: "calc(100% - 16px)" }}
-                >
-                  {getChannelIcon(channel.type)}
-                  <span className="truncate text-sm font-medium flex-1 text-left">{channel.name}</span>
-                  {mentionCount > 0 && currentChannel?.id !== channel.id && (
-                    <span className="shrink-0 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-[#8B5CF6] text-[10px] font-bold text-white leading-none">
-                      {mentionCount > 99 ? "99+" : mentionCount}
-                    </span>
-                  )}
-                </button>
-                );
-              })}
             </div>
           )}
 
-          {/* Text Channels */}
-          <div className="mb-2">
-            <div className="px-2 mb-1">
-              <button
-                className="w-full px-1 flex items-center justify-between group"
-                onClick={() => toggleCategory('text')}
-              >
-                <div className="flex items-center gap-0.5">
-                  <ChevronRight
-                    className={cn(
-                      "w-3 h-3 text-[var(--text-muted)] transition-transform",
-                      !collapsedCategories.has('text') && "rotate-90"
-                    )}
-                  />
-                  <span className="text-xs font-semibold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
-                    Text Channels
-                  </span>
-                </div>
-                {canManageChannels && (
-                  <PlusCircle
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCreateChannel?.();
-                    }}
-                    className="w-4 h-4 text-[var(--text-muted)] hover:text-[var(--text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
-                )}
-              </button>
-            </div>
-            {!collapsedCategories.has('text') && textChannels.map((channel) => (
-              editingChannel === channel.id ? (
-                <div key={channel.id} className="w-full px-2 py-1 mx-2" style={{ width: "calc(100% - 16px)" }}>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    onBlur={() => handleSaveEdit(channel.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveEdit(channel.id);
-                      if (e.key === 'Escape') { setEditingChannel(null); setEditName(""); }
-                    }}
-                    autoFocus
-                    className="w-full px-2 py-1 bg-[var(--bg-sidebar-elevated)] border border-[#8B5CF6] rounded text-[var(--text-primary)] text-sm focus:outline-none"
-                  />
-                </div>
-              ) : (
-                <button
-                  key={channel.id}
-                  onClick={() => { navigateToChannel(channel); markChannelRead(channel.id); }}
-                  onContextMenu={(e) => handleContextMenu(e, channel)}
-                  className={cn(
-                    "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] transition-all group",
-                    currentChannel?.id === channel.id && "bg-[var(--bg-active)] text-[var(--app-accent)]",
-                    getChannelCount(channel.id) > 0 && currentChannel?.id !== channel.id && "text-[var(--text-primary)]"
-                  )}
-                  style={{ width: "calc(100% - 16px)" }}
-                >
-                  {getChannelIcon(channel.type)}
-                  <span className="truncate text-sm flex-1 text-left">{channel.name}</span>
-                  {(() => {
-                    const count = getChannelCount(channel.id);
-                    return count > 0 && currentChannel?.id !== channel.id ? (
-                      <span className="shrink-0 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-[#8B5CF6] text-[10px] font-bold text-white leading-none">
-                        {count > 99 ? "99+" : count}
-                      </span>
-                    ) : null;
-                  })()}
-                </button>
-              )
-            ))}
-          </div>
-
-          {/* Voice Channels */}
-          <div className="mb-2">
-            <div className="px-2 mb-1">
-              <button
-                className="w-full px-1 flex items-center justify-between group"
-                onClick={() => toggleCategory('voice')}
-              >
-                <div className="flex items-center gap-0.5">
-                  <ChevronRight
-                    className={cn(
-                      "w-3 h-3 text-[var(--text-muted)] transition-transform",
-                      !collapsedCategories.has('voice') && "rotate-90"
-                    )}
-                  />
-                  <span className="text-xs font-semibold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
-                    Voice Channels
-                  </span>
-                </div>
-                {canManageChannels && (
-                  <PlusCircle
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCreateChannel?.();
-                    }}
-                    className="w-4 h-4 text-[var(--text-muted)] hover:text-[var(--text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
-                )}
-              </button>
-            </div>
-            {!collapsedCategories.has('voice') && voiceChannels.map((channel) => {
-              const isActive = voiceService.currentRoomId === `channel-${channel.id}`;
-              const channelParticipants = isActive ? voiceParticipants : (externalVoiceParticipants.get(channel.id) || []);
-              return (
-                <div key={channel.id} className="mb-0.5">
-                  <button
-                    onClick={() => handleVoiceChannelClick(channel)}
-                    onContextMenu={(e) => handleContextMenu(e, channel)}
-                    className={cn(
-                      "w-full px-2 py-1 mx-2 rounded flex items-center gap-1.5 transition-all group",
-                      isActive
-                        ? "text-green-400 hover:bg-[var(--bg-sidebar-elevated)]"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)]"
-                    )}
-                    style={{ width: "calc(100% - 16px)" }}
+          {/* Categorized Channels */}
+          {categories.map((category) => {
+            const isCollapsed = collapsedCategories.has(category.id);
+            const categoryChildren = channelsByCategory.get(category.id) || [];
+            return (
+              <div key={category.id} className="mb-4">
+                {/* Category Header */}
+                <div className="px-2 mb-1">
+                  <div
+                    className="w-full px-1 flex items-center justify-between group cursor-pointer"
+                    onClick={() => toggleCategory(category.id)}
                   >
-                    <Volume2 className={cn(
-                      "w-4 h-4 flex-shrink-0",
-                      isActive ? "text-green-400" : "text-[var(--text-muted)]"
-                    )} />
-                    <span className="truncate text-sm flex-1 text-left">{channel.name}</span>
-                    {channelParticipants.length > 0 && (
-                      <span className="flex items-center gap-1 shrink-0">
-                        <span className={cn("inline-block w-1.5 h-1.5 rounded-full", isActive ? "bg-green-500 animate-pulse" : "bg-green-500/60")} />
-                        <span className={cn("text-[10px]", isActive ? "text-green-400" : "text-green-400/70")}>{channelParticipants.length}</span>
+                    <div className="flex items-center gap-0.5">
+                      <ChevronRight
+                        className={cn(
+                          "w-3 h-3 text-[var(--text-muted)] transition-transform",
+                          !isCollapsed && "rotate-90"
+                        )}
+                      />
+                      <span className="text-xs font-bold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)] select-none">
+                        {category.name}
                       </span>
-                    )}
-                  </button>
-                  {/* Participants — Discord style */}
-                  {channelParticipants.length > 0 && (
-                    <div className="ml-6 mr-2 space-y-0.5 mb-1">
-                      {channelParticipants.map((p) => (
-                        <div
-                          key={p.userId}
-                          className="flex items-center gap-1.5 px-1.5 py-0.5 rounded group/vp"
-                        >
-                          <Avatar className="w-5 h-5 shrink-0">
-                            <AvatarImage src={p.avatar} />
-                            <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-[9px]">
-                              {(p.displayName || p.username).charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="text-xs text-[var(--text-secondary)] truncate flex-1">
-                            {p.displayName || p.username}
-                          </span>
-                          {!p.audio && (
-                            <MicOff className="w-3 h-3 text-red-400 shrink-0" />
-                          )}
-                        </div>
-                      ))}
                     </div>
-                  )}
+                    {canManageChannels && (
+                      <PlusCircle
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCreateChannel?.(undefined, category.id);
+                        }}
+                        className="w-4 h-4 text-[var(--text-muted)] hover:text-[var(--text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity"
+                      />
+                    )}
+                  </div>
                 </div>
-              );
-            })}
-          </div>
+
+                {/* Category Children Channels */}
+                {!isCollapsed && (
+                  <div className="space-y-0.5">
+                    {categoryChildren.length > 0 ? (
+                      categoryChildren.map((channel) => renderChannelItem(channel))
+                    ) : (
+                      <div className="pl-6 text-[11px] text-[var(--text-muted)] italic select-none">
+                        No channels in this category
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       </ScrollArea>
 

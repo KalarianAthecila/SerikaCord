@@ -618,8 +618,10 @@ export default function ChannelPage() {
     if (!channelId) return;
     const channel = channels.find((c) => c.id === channelId);
     if (channel) {
-      setCurrentChannel(channel);
-    } else if (currentChannel && currentChannel.id !== channelId) {
+      if (currentChannel?.id !== channel.id) {
+        setCurrentChannel(channel);
+      }
+    } else if (channels.length > 0 && currentChannel) {
       setCurrentChannel(null);
     }
   }, [channelId, channels, currentChannel, setCurrentChannel]);

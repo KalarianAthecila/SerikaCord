@@ -142,6 +142,9 @@ function normalizeMemberDto(member: {
   userId?: PopulatedMemberUser | null;
   roles?: PopulatedRole[];
   joinedAt?: Date;
+  nickname?: string | null;
+  avatar?: string | null;
+  banner?: string | null;
 }, ownerId?: Types.ObjectId | null) {
   const memberRoles = (member.roles || [])
     .map((role) => normalizeRoleDto(role))
@@ -154,8 +157,8 @@ function normalizeMemberDto(member: {
     id: userData?._id?.toString() || '',
     membershipId: member._id.toString(),
     username: userData?.username || 'Unknown',
-    displayName: userData?.displayName || userData?.username || 'Unknown',
-    avatar: userData?.avatar || null,
+    displayName: member.nickname || userData?.displayName || userData?.username || 'Unknown',
+    avatar: member.avatar || userData?.avatar || null,
     status: resolveEffectiveStatus({
       status: userData?.status || 'offline',
       presenceLastHeartbeatAt: userData?.presenceLastHeartbeatAt || null,
@@ -343,8 +346,13 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You do not have permission to create channels' };
     }
 
-    const { name, type = 'text', parentId } = body;
+    const { name, type = 'text', parentId, nsfw } = body;
     const sanitizedName = sanitizeInput(name);
+
+    if (type === 'category' && parentId) {
+      set.status = 400;
+      return { error: 'A category cannot have a parent category' };
+    }
 
     // If parentId provided, verify it's a valid category
     if (parentId) {
@@ -369,6 +377,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       type,
       position,
       parentId: parentId || null,
+      nsfw: type !== 'category' ? Boolean(nsfw) : false,
     });
 
     await channel.save();
@@ -385,6 +394,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       name: t.String({ minLength: 1, maxLength: 100 }),
       type: t.Optional(t.Union([t.Literal('text'), t.Literal('voice'), t.Literal('announcement'), t.Literal('category')])),
       parentId: t.Optional(t.String()),
+      nsfw: t.Optional(t.Boolean()),
     }),
   })
   // Get server details

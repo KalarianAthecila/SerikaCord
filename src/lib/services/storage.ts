@@ -70,7 +70,7 @@ function getMaxSize(category: UploadCategory): number {
     attachments: config.MAX_FILE_SIZE,
     emojis: 256 * 1024, // 256KB
     stickers: 512 * 1024, // 512KB
-    audio: 2 * 1024 * 1024, // 2MB
+    audio: 20 * 1024 * 1024, // 20MB
   };
 
   return categorySizes[category] ?? config.MAX_FILE_SIZE;
