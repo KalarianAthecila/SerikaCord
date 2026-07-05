@@ -30,6 +30,13 @@ type ChannelType =
   | "dm" 
   | "group_dm";
 
+interface PermissionOverwrite {
+  id: string;
+  type: 'role' | 'member';
+  allow: string;
+  deny: string;
+}
+
 interface Channel {
   id: string;
   name: string;
@@ -40,6 +47,7 @@ interface Channel {
   isNsfw?: boolean;
   topic?: string;
   rateLimitPerUser?: number;
+  permissionOverwrites?: PermissionOverwrite[];
 }
 
 interface ServerContextType {
@@ -58,7 +66,7 @@ interface ServerContextType {
   joinServer: (inviteCode: string) => Promise<void>;
   leaveServer: (serverId: string) => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
-  updateChannel: (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number }) => Promise<void>;
+  updateChannel: (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[] }) => Promise<void>;
   reorderChannels: (serverId: string, channelUpdates: Array<{ id: string; position: number; parentId?: string | null }>) => Promise<void>;
   members: any[];
   isMembersLoading: boolean;
@@ -165,6 +173,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
           isNsfw: c.nsfw || c.isNsfw,
           topic: c.topic,
           rateLimitPerUser: c.rateLimitPerUser || 0,
+          permissionOverwrites: c.permissionOverwrites || [],
         }));
         // Cache channels for faster switching
         channelCacheRef.current.set(serverId, transformedChannels);
@@ -304,7 +313,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateChannel = async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number }) => {
+  const updateChannel = async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[] }) => {
     const response = await fetch(`/api/channels/${channelId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo, useState, useEffect } from "react";
+import { memo, useMemo, useState, useEffect, useCallback } from "react";
 import { parseMarkdown, type MarkdownNode } from "@/lib/chat/markdown";
 import { cn } from "@/lib/utils";
 
@@ -118,92 +118,62 @@ const DiscordTimestamp = memo(function DiscordTimestamp({
   format?: string;
   options?: string;
 }) {
-  const [mounted, setMounted] = useState(false);
-  const [relativeText, setRelativeText] = useState("");
-  const [countdownText, setCountdownText] = useState("");
-
   const parsedOptions = useMemo(() => parseTimestampOptions(options || ""), [options]);
 
+  const date = new Date(timestamp * 1000);
+  const tooltipText = date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+  // Compute the initial display text synchronously — no mounted gate
+  const computeDisplayText = useCallback(() => {
+    switch (format) {
+      case "t":
+        return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      case "T":
+        return date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
+      case "d":
+        return date.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
+      case "D":
+        return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
+      case "f":
+        return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      case "F":
+        return date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+      case "R":
+        return formatRelativeTime(timestamp * 1000);
+      case "C": {
+        const isPassed = Date.now() >= timestamp * 1000;
+        return isPassed
+          ? (parsedOptions.end || "00:00:00 (Passed)")
+          : formatCountdown(timestamp * 1000);
+      }
+      default:
+        return date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+    }
+  }, [date, format, timestamp, parsedOptions.end]);
+
+  const [liveText, setLiveText] = useState(() => computeDisplayText());
+
   useEffect(() => {
-    setMounted(true);
+    setLiveText(computeDisplayText());
     if (format === "R") {
-      setRelativeText(formatRelativeTime(timestamp * 1000));
       const interval = setInterval(() => {
-        setRelativeText(formatRelativeTime(timestamp * 1000));
+        setLiveText(formatRelativeTime(timestamp * 1000));
       }, 10000);
       return () => clearInterval(interval);
     } else if (format === "C") {
       const targetMs = timestamp * 1000;
-      setCountdownText(formatCountdown(targetMs));
       const interval = setInterval(() => {
         const now = Date.now();
-        setCountdownText(formatCountdown(targetMs));
         if (now >= targetMs) {
+          setLiveText(parsedOptions.end || "00:00:00 (Passed)");
           clearInterval(interval);
+        } else {
+          setLiveText(formatCountdown(targetMs));
         }
       }, 1000);
       return () => clearInterval(interval);
     }
-  }, [timestamp, format]);
-
-  const date = new Date(timestamp * 1000);
-  const initialText = date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-
-  if (!mounted) {
-    if (format === "C") {
-      const isPassed = Date.now() >= timestamp * 1000;
-      const endText = parsedOptions.end || "00:00:00 (Passed)";
-      const currentText = isPassed ? endText : "00:00:00";
-      return (
-        <h1
-          className="text-3xl font-extrabold tracking-tight my-2 select-none block"
-          style={{ color: parsedOptions.color || "var(--accent-color, #8B5CF6)" }}
-        >
-          {currentText}
-        </h1>
-      );
-    }
-    return (
-      <span className="px-1.5 py-0.5 rounded bg-[var(--app-surface-alt)] text-[var(--text-primary)] text-[0.9em] font-medium inline-block select-none align-baseline">
-        {initialText}
-      </span>
-    );
-  }
-
-  const tooltipText = date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-
-  let displayText = "";
-  switch (format) {
-    case "t":
-      displayText = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-      break;
-    case "T":
-      displayText = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit', second: '2-digit' });
-      break;
-    case "d":
-      displayText = date.toLocaleDateString(undefined, { year: 'numeric', month: 'numeric', day: 'numeric' });
-      break;
-    case "D":
-      displayText = date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' });
-      break;
-    case "f":
-      displayText = date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-      break;
-    case "F":
-      displayText = date.toLocaleDateString(undefined, { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-      break;
-    case "R":
-      displayText = relativeText || formatRelativeTime(timestamp * 1000);
-      break;
-    case "C":
-      const isPassed = Date.now() >= timestamp * 1000;
-      displayText = isPassed
-        ? (parsedOptions.end || "00:00:00 (Passed)")
-        : (countdownText || formatCountdown(timestamp * 1000));
-      break;
-    default:
-      displayText = date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
-  }
+  }, [timestamp, format, parsedOptions.end, computeDisplayText]);
 
   if (format === "C") {
     return (
@@ -212,7 +182,7 @@ const DiscordTimestamp = memo(function DiscordTimestamp({
         className="text-3xl font-extrabold tracking-tight my-2 select-none block"
         style={{ color: parsedOptions.color || "var(--accent-color, #8B5CF6)" }}
       >
-        {displayText}
+        {liveText}
       </h1>
     );
   }
@@ -222,7 +192,7 @@ const DiscordTimestamp = memo(function DiscordTimestamp({
       title={tooltipText}
       className="px-1.5 py-0.5 rounded bg-[var(--app-surface-alt)] hover:bg-[var(--app-border)] text-[var(--text-primary)] text-[0.9em] font-medium inline-block select-none cursor-pointer transition-colors duration-150 align-baseline"
     >
-      {displayText}
+      {liveText}
     </span>
   );
 });

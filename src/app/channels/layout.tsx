@@ -285,13 +285,15 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
       {/* Combined Sidebars */}
       <div className="flex flex-shrink-0">
         <ServerSidebar onCreateServer={() => setShowCreateServer(true)} />
-        <ChannelSidebar 
-          onCreateChannel={(defaultType, defaultParentId) =>
-            setCreateChannelOptions({ open: true, defaultType, defaultParentId })
-          }
-          onInvitePeople={() => setShowInvite(true)}
-          onServerSettings={() => setShowServerSettings(true)}
-        />
+        {pathname !== "/channels/explore" && (
+          <ChannelSidebar
+            onCreateChannel={(defaultType, defaultParentId) =>
+              setCreateChannelOptions({ open: true, defaultType, defaultParentId })
+            }
+            onInvitePeople={() => setShowInvite(true)}
+            onServerSettings={() => setShowServerSettings(true)}
+          />
+        )}
       </div>
 
       {/* Main Content */}

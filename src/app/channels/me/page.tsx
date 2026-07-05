@@ -429,7 +429,7 @@ export default function DirectMessagesPage() {
                 </div>
 
                 {/* Tips */}
-                <div className="mt-4 grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div className="mt-4 flex flex-col sm:flex-row gap-3">
                   {[
                     { icon: <Search className="w-5 h-5" />, title: "Find username", desc: "Ask your friend for their exact SerikaCord username" },
                     { icon: <UserPlus className="w-5 h-5" />, title: "Send request", desc: "Type it above and send a friend request" },
@@ -459,11 +459,11 @@ export default function DirectMessagesPage() {
                       </p>
                       <span className="text-xs text-[var(--text-muted)]">· {friendsData.pending.incoming.length}</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
                       {friendsData.pending.incoming.map((request) => (
                         <div
                           key={request.id}
-                          className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
+                          className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">
                             <Avatar className="w-10 h-10 shrink-0">
@@ -522,11 +522,11 @@ export default function DirectMessagesPage() {
                       </p>
                       <span className="text-xs text-[var(--text-muted)]">· {friendsData.pending.outgoing.length}</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
                       {friendsData.pending.outgoing.map((request) => (
                         <div
                           key={request.id}
-                          className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
+                          className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">
                             <Avatar className="w-10 h-10 shrink-0">
@@ -585,11 +585,11 @@ export default function DirectMessagesPage() {
                       </p>
                       <span className="text-xs text-[var(--text-muted)]">· {friendsData.blocked.length}</span>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                    <div className="flex flex-col gap-1">
                       {friendsData.blocked.map((blockedUser) => (
                         <div
                           key={blockedUser.id}
-                          className="flex items-center justify-between p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
+                          className="flex items-center justify-between p-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 transition-colors"
                         >
                           <div className="flex items-center gap-3 min-w-0">
                             <Avatar className="w-10 h-10 shrink-0">
@@ -656,11 +656,11 @@ export default function DirectMessagesPage() {
                       <p className="text-xs font-semibold uppercase text-[var(--text-muted)] mb-3 px-1">
                         {activeTab === "online" ? "Online" : "All Friends"} — {filteredFriends.length}
                       </p>
-                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+                      <div className="flex flex-col gap-1">
                         {filteredFriends.map((friend) => (
                           <SwipeableRow
                             key={friend.id}
-                            className="rounded-xl"
+                            className="rounded-lg"
                             actions={[
                               {
                                 icon: <MessageCircle className="w-5 h-5" />,
@@ -676,7 +676,7 @@ export default function DirectMessagesPage() {
                               },
                             ]}
                           >
-                            <div className="group flex items-center gap-3 p-3 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 hover:bg-[var(--bg-hover)] cursor-pointer transition-all">
+                            <div className="group flex items-center gap-3 p-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] hover:border-[var(--app-accent)]/30 hover:bg-[var(--bg-hover)] cursor-pointer transition-all">
                               <button
                                 className="flex items-center gap-3 flex-1 min-w-0 text-left"
                                 onClick={() => startDM(friend.id)}

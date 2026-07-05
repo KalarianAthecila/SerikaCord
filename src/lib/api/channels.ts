@@ -297,7 +297,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
-    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId, position } = body;
+    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId, position, permissionOverwrites } = body;
 
     if (name !== undefined) channel.name = sanitizeInput(name);
     if (topic !== undefined) channel.topic = sanitizeInput(topic);
@@ -306,6 +306,15 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     if (bitrate !== undefined) channel.bitrate = bitrate;
     if (userLimit !== undefined) channel.userLimit = userLimit;
     if (position !== undefined) channel.position = position;
+
+    if (permissionOverwrites !== undefined) {
+      channel.permissionOverwrites = permissionOverwrites.map((o: { id: string; type: 'role' | 'member'; allow: string; deny: string }) => ({
+        id: new Types.ObjectId(o.id),
+        type: o.type,
+        allow: o.allow,
+        deny: o.deny,
+      }));
+    }
 
     if (parentId !== undefined) {
       if (parentId === null) {
@@ -354,6 +363,12 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       bitrate: t.Optional(t.Number({ minimum: 8000, maximum: 384000 })),
       userLimit: t.Optional(t.Number({ minimum: 0, maximum: 99 })),
       position: t.Optional(t.Number({ minimum: 0 })),
+      permissionOverwrites: t.Optional(t.Array(t.Object({
+        id: t.String(),
+        type: t.Union([t.Literal('role'), t.Literal('member')]),
+        allow: t.String(),
+        deny: t.String(),
+      }))),
     }),
   })
   // Delete channel

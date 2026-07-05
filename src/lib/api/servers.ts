@@ -1451,6 +1451,12 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       nsfw: ch.nsfw,
       rateLimitPerUser: ch.rateLimitPerUser,
       lastMessageId: ch.lastMessageId?.toString() || null,
+      permissionOverwrites: (ch.permissionOverwrites || []).map((o: { id: any; type: string; allow: string; deny: string }) => ({
+        id: o.id.toString(),
+        type: o.type,
+        allow: o.allow,
+        deny: o.deny,
+      })),
     }));
   }, {
     params: t.Object({
