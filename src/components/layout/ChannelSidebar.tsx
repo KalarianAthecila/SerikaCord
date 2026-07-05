@@ -304,6 +304,16 @@ export function ChannelSidebar({
     }
   };
 
+  // iOS detection (or ?platform=ios query param for testing).
+  // Must stay above any early return so hook order is stable (React #310).
+  const isIOS = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("platform") === "ios") return true;
+    const ua = navigator.userAgent;
+    return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }, []);
+
   // Group channels by type & category
   const voiceChannels = useMemo(() => channels.filter(c => c.type === "voice"), [channels]);
 
@@ -670,15 +680,6 @@ export function ChannelSidebar({
       </div>
     );
   }
-
-  // iOS detection (or ?platform=ios query param for testing)
-  const isIOS = useMemo(() => {
-    if (typeof window === "undefined") return false;
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get("platform") === "ios") return true;
-    const ua = navigator.userAgent;
-    return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
-  }, []);
 
   // Age-gated server block for iOS — render padlock screen instead of channel list
   if (isIOS && currentServer?.isAgeGated) {
