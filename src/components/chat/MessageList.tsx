@@ -103,6 +103,8 @@ function MessageListInner<M extends ChatMessage>(
   const pendingScrollRestoreRef = useRef(false);
   const forceScrollRef = useRef(false);
   const scrollRafRef = useRef<number | null>(null);
+  const animateInRef = useRef(true);
+  const [animateIn, setAnimateIn] = useState(true);
   const [newMessagesCount, setNewMessagesCount] = useState(0);
   const messageCount = useMemo(
     () => groups.reduce((total, group) => total + group.messages.length, 0),
@@ -117,8 +119,11 @@ function MessageListInner<M extends ChatMessage>(
     prevMessageCountRef.current = 0;
     isAtBottomRef.current = true;
     forceScrollRef.current = true;
-    // Defer to avoid synchronous setState in effect
-    Promise.resolve().then(() => setNewMessagesCount(0));
+    animateInRef.current = true;
+    Promise.resolve().then(() => {
+      setNewMessagesCount(0);
+      setAnimateIn(true);
+    });
   }, [resetKey]);
 
   // Latest mutable handlers behind stable identities so memoized rows
@@ -195,7 +200,12 @@ function MessageListInner<M extends ChatMessage>(
     } else {
       setNewMessagesCount((c) => c + (messageCount - prevCount));
     }
-  }, [messageCount]);
+    // Disable staggered animation after the initial batch has rendered.
+    animateInRef.current = false;
+    if (animateIn) {
+      Promise.resolve().then(() => setAnimateIn(false));
+    }
+  }, [messageCount, animateIn]);
 
   // Scroll listener: bottom detection + top pagination with scroll restore.
   // Throttled via requestAnimationFrame for smoother performance.
@@ -290,9 +300,15 @@ function MessageListInner<M extends ChatMessage>(
             ) : groups.length === 0 ? (
               <div className="text-center text-[var(--text-muted)] py-8">{emptyText}</div>
             ) : (
-              groups.map((group) => (
-                <MessageGroup
+              groups.map((group, idx) => {
+                const shouldAnimate = animateIn && idx < 12;
+                return (
+                <div
                   key={`group-${group.messages[0].id}`}
+                  className={shouldAnimate ? "msg-fade-in" : undefined}
+                  style={shouldAnimate ? { animationDelay: `${Math.min(idx * 35, 350)}ms` } : undefined}
+                >
+                <MessageGroup
                   group={group}
                   currentUserId={currentUserId}
                   serverId={serverId}
@@ -323,7 +339,9 @@ function MessageListInner<M extends ChatMessage>(
                   onMediaClick={onMediaClick}
                   onJumpToMessage={scrollToMessage}
                 />
-              ))
+                </div>
+                );
+              })
             )}
             <div ref={endRef} />
           </div>

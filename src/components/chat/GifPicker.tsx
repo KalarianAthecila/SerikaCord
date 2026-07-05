@@ -79,7 +79,7 @@ function PreviewTile({
       onClick={onClick}
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}
-      className="relative aspect-[16/9] rounded-lg overflow-hidden group"
+      className="relative aspect-[16/9] rounded-lg overflow-hidden group gif-fade-in"
     >
       {active ? (
         <img src={active.thumbnailUrl || active.url} alt="" className="absolute inset-0 w-full h-full object-cover" loading="lazy" />
@@ -710,7 +710,7 @@ export function GifPicker({ onGifSelect, className }: GifPickerProps) {
                   {favorites.map((fav) => (
                     <div
                       key={fav.url}
-                      className="relative w-full rounded-lg overflow-hidden hover:ring-2 hover:ring-[#5865f2] hover:brightness-90 transition-all break-inside-avoid mb-2 group"
+                      className="relative w-full rounded-lg overflow-hidden hover:ring-2 hover:ring-[#5865f2] hover:brightness-90 transition-all break-inside-avoid mb-2 group gif-fade-in"
                     >
                       <button
                         onClick={() =>
@@ -841,7 +841,7 @@ export function GifPicker({ onGifSelect, className }: GifPickerProps) {
                   key={gif.id}
                   onClick={() => onGifSelect(gif)}
                   title={gif.title}
-                  className="relative w-full rounded-lg overflow-hidden hover:ring-2 hover:ring-[#5865f2] hover:brightness-90 transition-all break-inside-avoid mb-2 group"
+                  className="relative w-full rounded-lg overflow-hidden hover:ring-2 hover:ring-[#5865f2] hover:brightness-90 transition-all break-inside-avoid mb-2 group gif-fade-in"
                 >
                   <GifThumbnail gif={gif} className="w-full h-auto block" />
                   <div className="absolute bottom-0 inset-x-0 bg-gradient-to-t from-black/60 to-transparent p-1.5 opacity-0 group-hover:opacity-100 transition-opacity">
