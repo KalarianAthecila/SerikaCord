@@ -70,10 +70,59 @@ function formatCountdown(targetMs: number): string {
   return timeStr;
 }
 
-const DiscordTimestamp = memo(function DiscordTimestamp({ timestamp, format }: { timestamp: number; format?: string }) {
+function parseTimestampOptions(optionsStr: string): { end?: string; color?: string } {
+  const options: { end?: string; color?: string } = {};
+  if (!optionsStr) return options;
+
+  let str = optionsStr;
+  if (str.endsWith(":")) {
+    str = str.slice(0, -1);
+  }
+
+  const hasKeys = /\b(end|color)\s*[:=]/i.test(str);
+
+  if (hasKeys) {
+    const endRegex = /\bend\s*[:=]\s*(.*?)(?=\s*\bcolor\s*[:=]|$)/i;
+    const colorRegex = /\bcolor\s*[:=]\s*(.*?)(?=\s*\bend\s*[:=]|$)/i;
+
+    const endMatch = str.match(endRegex);
+    const colorMatch = str.match(colorRegex);
+
+    if (endMatch) {
+      options.end = endMatch[1].trim();
+      options.end = options.end.replace(/[;,:]$/, "").trim();
+    }
+    if (colorMatch) {
+      options.color = colorMatch[1].trim();
+      options.color = options.color.replace(/[;,:]$/, "").trim();
+    }
+  } else {
+    const parts = str.split(/[;,]/);
+    if (parts.length > 0) {
+      options.end = parts[0].trim();
+    }
+    if (parts.length > 1) {
+      options.color = parts[1].trim();
+    }
+  }
+
+  return options;
+}
+
+const DiscordTimestamp = memo(function DiscordTimestamp({
+  timestamp,
+  format,
+  options
+}: {
+  timestamp: number;
+  format?: string;
+  options?: string;
+}) {
   const [mounted, setMounted] = useState(false);
   const [relativeText, setRelativeText] = useState("");
   const [countdownText, setCountdownText] = useState("");
+
+  const parsedOptions = useMemo(() => parseTimestampOptions(options || ""), [options]);
 
   useEffect(() => {
     setMounted(true);
@@ -84,9 +133,14 @@ const DiscordTimestamp = memo(function DiscordTimestamp({ timestamp, format }: {
       }, 10000);
       return () => clearInterval(interval);
     } else if (format === "C") {
-      setCountdownText(formatCountdown(timestamp * 1000));
+      const targetMs = timestamp * 1000;
+      setCountdownText(formatCountdown(targetMs));
       const interval = setInterval(() => {
-        setCountdownText(formatCountdown(timestamp * 1000));
+        const now = Date.now();
+        setCountdownText(formatCountdown(targetMs));
+        if (now >= targetMs) {
+          clearInterval(interval);
+        }
       }, 1000);
       return () => clearInterval(interval);
     }
@@ -97,9 +151,15 @@ const DiscordTimestamp = memo(function DiscordTimestamp({ timestamp, format }: {
 
   if (!mounted) {
     if (format === "C") {
+      const isPassed = Date.now() >= timestamp * 1000;
+      const endText = parsedOptions.end || "00:00:00 (Passed)";
+      const currentText = isPassed ? endText : "00:00:00";
       return (
-        <h1 className="text-3xl font-extrabold tracking-tight text-[var(--accent-color,#8B5CF6)] my-2 select-none block">
-          00:00:00
+        <h1
+          className="text-3xl font-extrabold tracking-tight my-2 select-none block"
+          style={{ color: parsedOptions.color || "var(--accent-color, #8B5CF6)" }}
+        >
+          {currentText}
         </h1>
       );
     }
@@ -136,7 +196,10 @@ const DiscordTimestamp = memo(function DiscordTimestamp({ timestamp, format }: {
       displayText = relativeText || formatRelativeTime(timestamp * 1000);
       break;
     case "C":
-      displayText = countdownText || formatCountdown(timestamp * 1000);
+      const isPassed = Date.now() >= timestamp * 1000;
+      displayText = isPassed
+        ? (parsedOptions.end || "00:00:00 (Passed)")
+        : (countdownText || formatCountdown(timestamp * 1000));
       break;
     default:
       displayText = date.toLocaleDateString(undefined, { year: 'numeric', month: 'long', day: 'numeric' }) + " " + date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
@@ -146,7 +209,8 @@ const DiscordTimestamp = memo(function DiscordTimestamp({ timestamp, format }: {
     return (
       <h1
         title={tooltipText}
-        className="text-3xl font-extrabold tracking-tight text-[var(--accent-color,#8B5CF6)] my-2 select-none block"
+        className="text-3xl font-extrabold tracking-tight my-2 select-none block"
+        style={{ color: parsedOptions.color || "var(--accent-color, #8B5CF6)" }}
       >
         {displayText}
       </h1>
@@ -190,7 +254,7 @@ function renderInlineNodes(nodes: MarkdownNode[], keyPrefix: string): React.Reac
       case "linebreak":
         return <br key={key} />;
       case "timestamp":
-        return <DiscordTimestamp key={key} timestamp={parseInt(node.content)} format={node.format} />;
+        return <DiscordTimestamp key={key} timestamp={parseInt(node.content)} format={node.format} options={node.options} />;
       default:
         // Handle multi-line text by splitting on \n
         const text = node.content;
