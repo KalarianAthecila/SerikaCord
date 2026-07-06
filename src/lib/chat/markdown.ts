@@ -1,5 +1,5 @@
 export interface MarkdownNode {
-  type: "text" | "bold" | "italic" | "underline" | "strikethrough" | "code" | "codeblock" | "link" | "linebreak" | "timestamp";
+  type: "text" | "bold" | "italic" | "underline" | "strikethrough" | "code" | "codeblock" | "link" | "linebreak" | "timestamp" | "channel_mention";
   content: string;
   href?: string;
   format?: string;
@@ -14,6 +14,7 @@ const UNDERLINE_RE = /__([^_]+)__/;
 const STRIKE_RE = /~~([^~]+)~~/;
 const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/;
 const TIMESTAMP_RE = /<t:(-?\d+)(?::([tTdDfFRC])(?:\[([^\]]*)\])?)?>/;
+const CHANNEL_MENTION_RE = /<#([a-f0-9]{24})>/;
 
 function parseInline(text: string): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];
@@ -31,6 +32,7 @@ function parseInline(text: string): MarkdownNode[] {
       { regex: ITALIC_RE, type: "italic", build: (m) => ({ type: "italic", content: m[1], key: `i-${key++}` } as MarkdownNode) },
       { regex: LINK_RE, type: "link", build: (m) => ({ type: "link", content: m[1], href: m[2], key: `l-${key++}` } as MarkdownNode) },
       { regex: TIMESTAMP_RE, type: "timestamp", build: (m) => ({ type: "timestamp", content: m[1], format: m[2] || "f", options: m[3], key: `ts-${key++}` } as MarkdownNode) },
+      { regex: CHANNEL_MENTION_RE, type: "channel_mention", build: (m) => ({ type: "channel_mention", content: m[1], key: `ch-${key++}` } as MarkdownNode) },
     ];
 
     for (const candidate of candidates) {

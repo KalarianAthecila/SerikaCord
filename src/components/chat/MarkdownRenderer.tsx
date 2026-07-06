@@ -3,6 +3,9 @@
 import { memo, useMemo, useState, useEffect, useCallback } from "react";
 import { parseMarkdown, type MarkdownNode } from "@/lib/chat/markdown";
 import { cn } from "@/lib/utils";
+import { Hash } from "lucide-react";
+import { useServer } from "@/contexts/ServerContext";
+import { useRouter } from "next/navigation";
 
 interface MarkdownRendererProps {
   content: string;
@@ -215,6 +218,32 @@ const DiscordTimestamp = memo(function DiscordTimestamp({
   );
 });
 
+const ChannelMention = memo(function ChannelMention({ channelId }: { channelId: string }) {
+  const router = useRouter();
+  const { channels, currentServer } = useServer();
+
+  const channelName = useMemo(() => {
+    const ch = channels.find((c) => c.id === channelId);
+    return ch ? ch.name : null;
+  }, [channelId, channels]);
+
+  const handleClick = () => {
+    if (currentServer) {
+      router.push(`/channels/${currentServer.id}/${channelId}`);
+    }
+  };
+
+  return (
+    <span
+      onClick={handleClick}
+      className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-[var(--app-accent)]/15 hover:bg-[var(--app-accent)]/25 text-[var(--app-accent)] text-[0.9em] font-medium cursor-pointer transition-colors duration-150 align-baseline"
+    >
+      <Hash className="w-3.5 h-3.5 shrink-0" />
+      {channelName || `unknown-channel`}
+    </span>
+  );
+});
+
 function renderInlineNodes(nodes: MarkdownNode[], keyPrefix: string): React.ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyPrefix}-${i}`;
@@ -243,6 +272,8 @@ function renderInlineNodes(nodes: MarkdownNode[], keyPrefix: string): React.Reac
         return <br key={key} />;
       case "timestamp":
         return <DiscordTimestamp key={key} timestamp={parseInt(node.content)} format={node.format} options={node.options} />;
+      case "channel_mention":
+        return <ChannelMention key={key} channelId={node.content} />;
       default:
         // Handle multi-line text by splitting on \n
         const text = node.content;

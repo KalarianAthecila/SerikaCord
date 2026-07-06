@@ -892,8 +892,41 @@ const userRoutes = new Elysia({ prefix: '/users' })
       connectionId: t.String(),
     }),
   })
+  .patch('/me/connections/:connectionId', async ({ headers, cookie, params, body, set }) => {
+    const { user: authUser, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!authUser) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const payload = body as Record<string, any>;
+    const update: Record<string, any> = {};
+    if (payload.visible !== undefined) {
+      update.visible = Boolean(payload.visible);
+    }
+
+    const connection = await UserConnection.findOneAndUpdate(
+      { _id: params.connectionId, userId: authUser._id },
+      { $set: update },
+      { new: true }
+    );
+
+    if (!connection) {
+      set.status = 404;
+      return { error: 'Connection not found' };
+    }
+
+    return { connection };
+  }, {
+    params: t.Object({
+      connectionId: t.String(),
+    }),
+    body: t.Object({
+      visible: t.Optional(t.Boolean()),
+    }),
+  })
   .get('/:userId', async ({ params, headers, cookie, set }) => {
-    const targetUser = await User.findById(params.userId).select('-settings -blockedUsers -pendingFriendRequests');
+    const targetUser = await User.findById(params.userId).select('-blockedUsers -pendingFriendRequests');
 
     if (!targetUser) {
       set.status = 404;
@@ -903,20 +936,26 @@ const userRoutes = new Elysia({ prefix: '/users' })
     // Optionally check friend status if the requester is authenticated
     let isFriend = false;
     let friendRequestSent = false;
+    let isSelf = false;
     try {
       const { user: requester } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
       if (requester) {
         isFriend = (requester.friends as Types.ObjectId[]).some((f) => compareIds(f, targetUser._id));
         const outgoing = (requester.pendingFriendRequests?.outgoing as Types.ObjectId[]) || [];
         friendRequestSent = outgoing.some((f) => compareIds(f, targetUser._id));
+        isSelf = compareIds(requester._id, targetUser._id);
       }
     } catch {
       // Not authenticated — leave isFriend false
     }
 
     // Public connections — strip sensitive metadata (e.g. session keys)
-    const rawConnections = await UserConnection.find({ userId: targetUser._id })
-      .select('provider accountId username displayName avatar')
+    const connQuery: any = { userId: targetUser._id };
+    if (!isSelf) {
+      connQuery.visible = { $ne: false };
+    }
+    const rawConnections = await UserConnection.find(connQuery)
+      .select('provider accountId username displayName avatar visible')
       .lean();
     const connections = rawConnections.map((c) => ({
       provider: c.provider,
@@ -924,6 +963,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       username: c.username,
       displayName: c.displayName,
       avatar: c.avatar,
+      visible: c.visible !== false,
     }));
 
     return {
@@ -947,6 +987,82 @@ const userRoutes = new Elysia({ prefix: '/users' })
       isFriend,
       friendRequestSent,
     };
+  }, {
+    params: t.Object({
+      userId: t.String(),
+    }),
+  })
+  .get('/:userId/mutual-friends', async ({ params, headers, cookie, set }) => {
+    const { user: requester, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!requester) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const targetUser = await User.findById(params.userId).select('friends');
+    if (!targetUser) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    const mutualFriendIds = (requester.friends || []).filter((f1: any) =>
+      (targetUser.friends || []).some((f2: any) => compareIds(f1, f2))
+    );
+
+    const friends = await User.find({ _id: { $in: mutualFriendIds } })
+      .select('username displayName avatar status customStatus customization presenceLastHeartbeatAt isSystem')
+      .lean();
+
+    return friends.map((f) => ({
+      id: f._id,
+      username: f.username,
+      displayName: f.displayName,
+      avatar: f.avatar,
+      status: getPublicPresenceStatus(f),
+      customStatus: f.customStatus,
+      customization: f.customization,
+    }));
+  }, {
+    params: t.Object({
+      userId: t.String(),
+    }),
+  })
+  .get('/:userId/mutual-servers', async ({ params, headers, cookie, set }) => {
+    const { user: requester, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!requester) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const targetUser = await User.findById(params.userId);
+    if (!targetUser) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    const { ServerMember, Server } = await import('@/lib/models');
+    const requesterMemberships = await ServerMember.find({ userId: requester._id }).select('serverId').lean();
+    const targetMemberships = await ServerMember.find({ userId: targetUser._id }).select('serverId').lean();
+
+    const requesterServerIds = requesterMemberships.map((m) => m.serverId.toString());
+    const mutualServerIds = targetMemberships
+      .map((m) => m.serverId.toString())
+      .filter((id) => requesterServerIds.includes(id));
+
+    const servers = await Server.find({ _id: { $in: mutualServerIds } })
+      .select('name icon description memberCount isOfficial isVerified isPartnered')
+      .lean();
+
+    return servers.map((s) => ({
+      id: s._id,
+      name: s.name,
+      icon: s.icon,
+      description: s.description,
+      memberCount: s.memberCount,
+      isOfficial: s.isOfficial,
+      isVerified: s.isVerified,
+      isPartnered: s.isPartnered,
+    }));
   }, {
     params: t.Object({
       userId: t.String(),

@@ -17,6 +17,7 @@ import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 import type { ProfileCardUser } from "@/components/user/ProfileCard";
+import { useAuth } from "@/contexts/AuthContext";
 
 interface FullProfileDialogProps {
   user: ProfileCardUser;
@@ -54,27 +55,51 @@ export function FullProfileDialog({
   showOwnerCrown = false,
 }: FullProfileDialogProps) {
   const router = useRouter();
+  const { user: currentUser } = useAuth();
+  const isSelf = isCurrentUser || (currentUser?.id && user.id && currentUser.id === user.id);
+
   const [activeTab, setActiveTab] = useState<TabId>("board");
   const [copied, setCopied] = useState(false);
   const [friendRequestSent, setFriendRequestSent] = useState(user.friendRequestSent ?? false);
   const [memberRoles, setMemberRoles] = useState(user.roles || []);
   const [mutualFriends, setMutualFriends] = useState<any[]>([]);
   const [mutualServers, setMutualServers] = useState<any[]>([]);
+  const [fullUser, setFullUser] = useState<ProfileCardUser>(user);
 
-  const status = user.status ?? "offline";
-  const displayName = user.displayName || user.username;
-  const moeActivity = useMoeActivity(user.id);
-  const userActivity = useUserActivity(user.id);
-  const badges = user.badges?.length ? getBadgesByPriority(user.badges as string[]) : [];
+  const status = fullUser.status ?? "offline";
+  const displayName = fullUser.displayName || fullUser.username;
+  const moeActivity = useMoeActivity(fullUser.id);
+  const userActivity = useUserActivity(fullUser.id);
+  const badges = fullUser.badges?.length ? getBadgesByPriority(fullUser.badges as string[]) : [];
 
   useEffect(() => {
+    setFullUser(user);
     setMemberRoles(user.roles || []);
     setFriendRequestSent(user.friendRequestSent ?? false);
   }, [user]);
 
   useEffect(() => {
     if (!open || !user.id) return;
-    // Fetch mutual friends and servers when dialog opens
+    const fetchFullUser = async () => {
+      try {
+        const res = await fetch(`/api/users/${user.id}`);
+        if (res.ok) {
+          const data = await res.json();
+          setFullUser((prev) => ({
+            ...prev,
+            ...data,
+          }));
+        }
+      } catch (error) {
+        console.error("Failed to fetch full user profile:", error);
+      }
+    };
+    void fetchFullUser();
+  }, [open, user.id]);
+
+  useEffect(() => {
+    if (!open || !user.id || isSelf) return;
+    // Fetch mutual friends and servers when dialog opens (skip for own profile)
     const fetchMutuals = async () => {
       try {
         const [friendsRes, serversRes] = await Promise.all([
@@ -94,7 +119,7 @@ export function FullProfileDialog({
       }
     };
     void fetchMutuals();
-  }, [open, user.id]);
+  }, [open, user.id, isSelf]);
 
   const handleCopyUsername = async () => {
     try {
@@ -133,8 +158,10 @@ export function FullProfileDialog({
   const tabs: Array<{ id: TabId; label: string }> = [
     { id: "board", label: "Board" },
     { id: "activity", label: "Activity" },
-    { id: "friends", label: "Mutual Friends" },
-    { id: "servers", label: "Mutual Servers" },
+    ...(!isSelf ? [
+      { id: "friends" as TabId, label: "Mutual Friends" },
+      { id: "servers" as TabId, label: "Mutual Servers" },
+    ] : []),
   ];
 
   return (
@@ -143,15 +170,15 @@ export function FullProfileDialog({
         <DialogTitle className="sr-only">{displayName}&apos;s Profile</DialogTitle>
         <div className="flex h-[720px]">
           {/* Left panel — profile summary */}
-          <div className="w-[360px] shrink-0 overflow-y-auto" style={getProfileBackgroundStyle(user.customization)}>
+          <div className="w-[360px] shrink-0 overflow-y-auto" style={getProfileBackgroundStyle(fullUser.customization)}>
             {/* Banner */}
             <div className="relative h-[140px]">
-              {user.banner ? (
-                <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${user.banner})` }} />
-              ) : user.customization?.profileGradient && user.customization.profileGradient.length >= 2 ? (
-                <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${user.customization.profileGradient.join(', ')})` }} />
-              ) : user.customization?.profileColor ? (
-                <div className="absolute inset-0" style={{ backgroundColor: user.customization.profileColor }} />
+              {fullUser.banner ? (
+                <div className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: `url(${fullUser.banner})` }} />
+              ) : fullUser.customization?.profileGradient && fullUser.customization.profileGradient.length >= 2 ? (
+                <div className="absolute inset-0" style={{ background: `linear-gradient(135deg, ${fullUser.customization.profileGradient.join(', ')})` }} />
+              ) : fullUser.customization?.profileColor ? (
+                <div className="absolute inset-0" style={{ backgroundColor: fullUser.customization.profileColor }} />
               ) : (
                 <div className="absolute inset-0 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#4F46E5]" />
               )}
@@ -163,7 +190,7 @@ export function FullProfileDialog({
               <div className="absolute -top-11 left-4">
                 <div className="relative">
                   <Avatar className="w-[88px] h-[88px] border-[5px] border-[#0c0c10] shadow-lg">
-                    <AvatarImage src={user.avatar || undefined} />
+                    <AvatarImage src={fullUser.avatar || undefined} />
                     <AvatarFallback className="bg-[#8B5CF6] text-white text-3xl">
                       {displayName.charAt(0).toUpperCase()}
                     </AvatarFallback>
@@ -178,7 +205,7 @@ export function FullProfileDialog({
 
               {/* Actions */}
               <div className="flex justify-end gap-2 pt-3 min-h-[44px]">
-                {!isCurrentUser && user.id && (
+                {!isSelf && user.id && (
                   <>
                     <button
                       onClick={handleSendMessage}
@@ -215,12 +242,12 @@ export function FullProfileDialog({
               <div className="mt-4">
                 <div className="flex items-center gap-2">
                   <h3
-                    className={cn("text-xl font-bold text-white leading-tight truncate", getDisplayNameStyleClasses(user.customization?.displayNameStyle))}
-                    style={getDisplayNameStyleInline(user.customization?.displayNameStyle)}
+                    className={cn("text-xl font-bold text-white leading-tight truncate", getDisplayNameStyleClasses(fullUser.customization?.displayNameStyle))}
+                    style={getDisplayNameStyleInline(fullUser.customization?.displayNameStyle)}
                   >
                     {displayName}
                   </h3>
-                  {showOwnerCrown && user.isOwner && (
+                  {showOwnerCrown && fullUser.isOwner && (
                     <span title="Server Owner" className="shrink-0 text-[#F59E0B]">
                       <Crown className="w-4 h-4" />
                     </span>
@@ -231,20 +258,30 @@ export function FullProfileDialog({
                   className="group flex items-center gap-1.5 text-sm text-[#9a9aad] hover:text-white transition-colors"
                   title="Copy username"
                 >
-                  @{user.username}
+                  @{fullUser.username}
                   {copied ? (
                     <Check className="w-3 h-3 text-[#23A559]" />
                   ) : (
                     <Copy className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                   )}
                 </button>
-                {user.customStatus && (
-                  <div className="text-sm text-[#c8c8d8] mt-1.5 italic"><MarkdownRenderer content={user.customStatus} /></div>
+                {fullUser.customStatus && (
+                  <div className="text-sm text-[#c8c8d8] mt-1.5 italic"><MarkdownRenderer content={fullUser.customStatus} /></div>
                 )}
                 <div className="flex items-center gap-1.5 mt-1.5">
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: STATUS_COLORS[status] }} />
                   <span className="text-xs text-[#9a9aad]">{STATUS_LABELS[status]}</span>
                 </div>
+                {fullUser.showTimezone && fullUser.timezone && (
+                  <div className="flex items-center gap-1.5 mt-1.5">
+                    <Clock className="w-3.5 h-3.5 text-[#9a9aad] shrink-0" />
+                    <span className="text-xs text-[#9a9aad]">
+                      {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: fullUser.timezone })}
+                    </span>
+                    <span className="text-[#4e5058] text-xs">&bull;</span>
+                    <span className="text-xs text-[#9a9aad]">{fullUser.timezone}</span>
+                  </div>
+                )}
               </div>
 
               {/* Badges */}
@@ -255,10 +292,10 @@ export function FullProfileDialog({
               )}
 
               {/* About Me */}
-              {user.bio && (
+              {fullUser.bio && (
                 <div className="mt-4 rounded-lg bg-white/[0.03] border border-white/[0.05] p-3">
                   <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-1">About Me</h4>
-                  <div className="text-sm text-[#e2e2ee] whitespace-pre-wrap break-words"><MarkdownRenderer content={user.bio} /></div>
+                  <div className="text-sm text-[#e2e2ee] whitespace-pre-wrap break-words"><MarkdownRenderer content={fullUser.bio} /></div>
                 </div>
               )}
 
@@ -285,20 +322,20 @@ export function FullProfileDialog({
               )}
 
               {/* Dates */}
-              {(user.joinedAt || user.createdAt) && (
+              {(fullUser.joinedAt || fullUser.createdAt) && (
                 <div className="mt-4 flex items-center gap-4 text-sm text-[#9a9aad]">
                   <CalendarDays className="w-4 h-4 shrink-0" />
                   <div className="flex flex-wrap gap-x-4 gap-y-0.5">
-                    {user.createdAt && (
+                    {fullUser.createdAt && (
                       <span title="Account created">
                         Joined SerikaCord{" "}
-                        {new Date(user.createdAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
+                        {new Date(fullUser.createdAt).toLocaleDateString("en-US", { month: "short", year: "numeric" })}
                       </span>
                     )}
-                    {user.joinedAt && (
+                    {fullUser.joinedAt && (
                       <span title="Joined this server">
                         Member since{" "}
-                        {new Date(user.joinedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
+                        {new Date(fullUser.joinedAt).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" })}
                       </span>
                     )}
                   </div>
@@ -335,11 +372,11 @@ export function FullProfileDialog({
               {activeTab === "board" && (
                 <div className="space-y-4">
                   {/* Connections */}
-                  {user.connections && user.connections.length > 0 && (
+                  {fullUser.connections && fullUser.connections.length > 0 && (
                     <div>
                       <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-2">Connections</h4>
                       <div className="grid grid-cols-2 gap-2">
-                        {user.connections.map((conn) => {
+                        {fullUser.connections.map((conn) => {
                           const Icon = getConnectionIcon(conn.provider);
                           const label = conn.displayName || conn.username || conn.accountId;
                           const href = getConnectionHref(conn.provider, conn.accountId);

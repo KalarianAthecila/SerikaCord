@@ -297,11 +297,17 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
-    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId, position, permissionOverwrites } = body;
+    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId, position, permissionOverwrites, type } = body;
 
     if (name !== undefined) channel.name = sanitizeInput(name);
     if (topic !== undefined) channel.topic = sanitizeInput(topic);
     if (nsfw !== undefined) channel.nsfw = nsfw;
+    // Only text ⇄ announcement conversions are allowed (voice/category are fixed)
+    if (type !== undefined && (channel.type === 'text' || channel.type === 'announcement')) {
+      if (type === 'text' || type === 'announcement') {
+        channel.type = type;
+      }
+    }
     if (rateLimitPerUser !== undefined) channel.rateLimitPerUser = rateLimitPerUser;
     if (bitrate !== undefined) channel.bitrate = bitrate;
     if (userLimit !== undefined) channel.userLimit = userLimit;
@@ -358,6 +364,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       name: t.Optional(t.String({ minLength: 1, maxLength: 100 })),
       topic: t.Optional(t.String({ maxLength: 1024 })),
       nsfw: t.Optional(t.Boolean()),
+      type: t.Optional(t.Union([t.Literal('text'), t.Literal('announcement')])),
       parentId: t.Optional(t.Union([t.String(), t.Null()])),
       rateLimitPerUser: t.Optional(t.Number({ minimum: 0, maximum: 21600 })),
       bitrate: t.Optional(t.Number({ minimum: 8000, maximum: 384000 })),

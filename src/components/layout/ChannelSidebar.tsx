@@ -37,6 +37,7 @@ import {
   Copy,
   Link as LinkIcon,
   BellOff,
+  AlertTriangle,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
@@ -424,20 +425,33 @@ export function ChannelSidebar({
     }
   };
 
-  const getChannelIcon = (type: string, isLocked?: boolean) => {
-    if (isLocked) {
-      return <Lock className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
+  const getChannelIcon = (type: string, isLocked?: boolean, isNsfw?: boolean) => {
+    const baseIcon = (() => {
+      if (isLocked) {
+        return <Lock className="w-5 h-5 text-[var(--text-muted)]" />;
+      }
+      switch (type) {
+        case "voice":
+          return <Volume2 className="w-5 h-5 text-[var(--text-muted)]" />;
+        case "announcement":
+          return <Megaphone className="w-5 h-5 text-[var(--text-muted)]" />;
+        case "category":
+          return <Folder className="w-5 h-5 text-[var(--text-muted)]" />;
+        default:
+          return <Hash className="w-5 h-5 text-[var(--text-muted)]" />;
+      }
+    })();
+
+    if (isNsfw) {
+      return (
+        <span className="relative flex-shrink-0 w-5 h-5">
+          {baseIcon}
+          <AlertTriangle className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 text-red-400" />
+        </span>
+      );
     }
-    switch (type) {
-      case "voice":
-        return <Volume2 className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-      case "announcement":
-        return <Megaphone className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-      case "category":
-        return <Folder className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-      default:
-        return <Hash className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-    }
+
+    return <span className="flex-shrink-0">{baseIcon}</span>;
   };
 
   // iOS detection (or ?platform=ios query param for testing).
@@ -531,16 +545,21 @@ export function ChannelSidebar({
             )}
             style={{ width: "calc(100% - 16px)" }}
           >
-            <Volume2 className={cn(
-              "w-4 h-4 flex-shrink-0",
-              isActive ? "text-green-400" : "text-[var(--text-muted)]"
-            )} />
-            <span className="truncate text-sm flex-1 text-left min-w-0">{channel.name}</span>
-            {channel.isNsfw && (
-              <span className="shrink-0 px-0.5 py-0.5 rounded text-[8px] font-bold bg-red-500/20 text-red-400 select-none">
-                NSFW
+            {channel.isNsfw ? (
+              <span className="relative flex-shrink-0 w-4 h-4">
+                <Volume2 className={cn(
+                  "w-4 h-4",
+                  isActive ? "text-green-400" : "text-[var(--text-muted)]"
+                )} />
+                <AlertTriangle className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 text-red-400" />
               </span>
+            ) : (
+              <Volume2 className={cn(
+                "w-4 h-4 flex-shrink-0",
+                isActive ? "text-green-400" : "text-[var(--text-muted)]"
+              )} />
             )}
+            <span className="truncate text-sm flex-1 text-left min-w-0" title={channel.name}>{channel.name}</span>
             {channelParticipants.length > 0 && (
               <span className="flex items-center gap-1 shrink-0">
                 <span className={cn("inline-block w-1.5 h-1.5 rounded-full", isActive ? "bg-green-500 animate-pulse" : "bg-green-500/60")} />
@@ -611,13 +630,8 @@ export function ChannelSidebar({
           )}
           style={{ width: "calc(100% - 16px)" }}
         >
-          {getChannelIcon(channel.type)}
-          <span className="truncate text-sm flex-1 text-left min-w-0">{channel.name}</span>
-          {channel.isNsfw && (
-            <span className="shrink-0 px-0.5 py-0.5 rounded text-[8px] font-bold bg-red-500/20 text-red-400 select-none">
-              NSFW
-            </span>
-          )}
+          {getChannelIcon(channel.type, undefined, channel.isNsfw)}
+          <span className="truncate text-sm flex-1 text-left min-w-0" title={channel.name}>{channel.name}</span>
           {mentionCount > 0 && currentChannel?.id !== channel.id && (
             <span className="shrink-0 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-[#8B5CF6] text-[10px] font-bold text-white leading-none">
               {mentionCount > 99 ? "99+" : mentionCount}

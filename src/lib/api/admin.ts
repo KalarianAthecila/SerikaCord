@@ -506,10 +506,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // ==================== PLATFORM SETTINGS ====================
 
-  // Public endpoint — returns only connectionsEnabled flag (no auth required)
+  // Public endpoint — returns connectionsEnabled flag and disabledProviders (no auth required)
   .get('/settings/connections', async () => {
     const settings = await getPlatformSettings();
-    return { connectionsEnabled: settings.connectionsEnabled };
+    return {
+      connectionsEnabled: settings.connectionsEnabled,
+      disabledProviders: settings.disabledProviders || [],
+    };
   })
 
   // Get platform settings
@@ -532,10 +535,11 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: error || 'Admin access required' };
     }
 
-    const { maintenanceMode, allowRegistration, connectionsEnabled, globalAnnouncement, oembedWhitelist, allowedFileTypes, warnOnUnknownFileTypes } = body as {
+    const { maintenanceMode, allowRegistration, connectionsEnabled, disabledProviders, globalAnnouncement, oembedWhitelist, allowedFileTypes, warnOnUnknownFileTypes } = body as {
       maintenanceMode?: boolean;
       allowRegistration?: boolean;
       connectionsEnabled?: boolean;
+      disabledProviders?: string[];
       globalAnnouncement?: string;
       oembedWhitelist?: string[];
       allowedFileTypes?: { type: string; safe: boolean }[];
@@ -546,6 +550,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     if (maintenanceMode !== undefined) updates.maintenanceMode = maintenanceMode;
     if (allowRegistration !== undefined) updates.allowRegistration = allowRegistration;
     if (connectionsEnabled !== undefined) updates.connectionsEnabled = connectionsEnabled;
+    if (disabledProviders !== undefined) updates.disabledProviders = disabledProviders;
     if (globalAnnouncement !== undefined) {
       updates.globalAnnouncement = globalAnnouncement || null;
       updates.announcementUpdatedAt = new Date();
@@ -570,6 +575,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       maintenanceMode: t.Optional(t.Boolean()),
       allowRegistration: t.Optional(t.Boolean()),
       connectionsEnabled: t.Optional(t.Boolean()),
+      disabledProviders: t.Optional(t.Array(t.String())),
       globalAnnouncement: t.Optional(t.String()),
       oembedWhitelist: t.Optional(t.Array(t.String())),
       allowedFileTypes: t.Optional(t.Array(t.Object({

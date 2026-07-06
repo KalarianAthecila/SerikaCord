@@ -107,7 +107,7 @@ interface ServerSticker {
 
 interface MentionSuggestion {
   id: string;
-  kind: "user" | "role" | "everyone" | "here" | "emoji" | "unicode-emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint";
+  kind: "user" | "role" | "everyone" | "here" | "emoji" | "unicode-emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint" | "channel";
   unicodeChar?: string;
   label: string;
   description?: string;
@@ -775,6 +775,8 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                             <span className="text-base shrink-0">{suggestion.unicodeChar}</span>
                             <span className="truncate">:{suggestion.label}:</span>
                           </>
+                        ) : suggestion.kind === "channel" ? (
+                          <span className="truncate flex items-center gap-1 font-medium"><Hash className="w-4 h-4 text-[var(--text-muted)] shrink-0" />{suggestion.label}</span>
                         ) : (
                           <span className="truncate">@{suggestion.label}</span>
                         )}

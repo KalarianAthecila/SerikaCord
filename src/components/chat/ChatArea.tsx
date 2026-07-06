@@ -80,7 +80,7 @@ interface MentionRole {
 
 interface MentionSuggestion {
   id: string;
-  kind: "user" | "role" | "everyone" | "here" | "emoji" | "unicode-emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint";
+  kind: "user" | "role" | "everyone" | "here" | "emoji" | "unicode-emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint" | "channel";
   unicodeChar?: string;
   label: string;
   description?: string;
@@ -725,8 +725,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       }
 
       const mentionMatch = beforeCursor.match(/(^|[\s\n])@([^\s@]{0,40})$/m);
+      const hashMatch = beforeCursor.match(/(^|[\s\n])#([^\s#]{0,40})$/m);
 
-      if (!mentionMatch) {
+      if (!mentionMatch && !hashMatch) {
         // Completed emoji shortcode: `:skull:` → auto-insert unicode or custom emoji
         const completedEmojiMatch = beforeCursor.match(/(^|\s):([a-zA-Z0-9_+-]{2,32}):$/);
         if (completedEmojiMatch) {
@@ -805,6 +806,53 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         return;
       }
 
+      if (hashMatch) {
+        const tokenPrefix = hashMatch[1] || "";
+        const queryRaw = hashMatch[2] || "";
+        const query = queryRaw.toLowerCase();
+        const mentionStart = caretPosition - queryRaw.length - 1;
+        if (mentionStart - tokenPrefix.length < 0) {
+          mentionRangeRef.current = null;
+          setMentionSuggestions([]);
+          return;
+        }
+
+        const channelSuggestions = channels
+          .filter((ch) => ch.type !== "category" && ch.type !== "voice")
+          .filter((ch) => {
+            const chName = ch.name.toLowerCase();
+            return query.length === 0 || chName.includes(query);
+          })
+          .sort((a, b) => a.name.localeCompare(b.name))
+          .slice(0, 8)
+          .map((ch) => ({
+            id: ch.id,
+            kind: "channel" as const,
+            label: ch.name,
+            description: "Text channel",
+          }));
+
+        if (!channelSuggestions.length) {
+          mentionRangeRef.current = null;
+          setMentionSuggestions([]);
+          setActiveMentionIndex(0);
+          return;
+        }
+
+        mentionRangeRef.current = {
+          start: mentionStart,
+          end: caretPosition,
+        };
+        setMentionSuggestions(channelSuggestions);
+        setActiveMentionIndex(0);
+        return;
+      }
+
+      if (!mentionMatch) {
+        setMentionSuggestions([]);
+        return;
+      }
+
       const tokenPrefix = mentionMatch[1] || "";
       const queryRaw = mentionMatch[2] || "";
       const query = queryRaw.toLowerCase();
@@ -868,7 +916,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       setMentionSuggestions(nextSuggestions);
       setActiveMentionIndex(0);
     },
-    [mentionRoles, mentionUsers, userRoleColorMap, allServerEmojis, currentServer]
+    [mentionRoles, mentionUsers, userRoleColorMap, allServerEmojis, currentServer, channels]
   );
 
   const insertMentionFromSuggestion = useCallback(
@@ -915,11 +963,12 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setMentionSuggestions([]);
         return;
       } else {
-        // User, role, everyone, here — insert as mention pill
+        // User, role, everyone, here, channel — insert as mention pill
         const mentionKind =
           suggestion.kind === "user" ? "user" :
           suggestion.kind === "role" ? "role" :
-          suggestion.kind === "everyone" ? "everyone" : "here";
+          suggestion.kind === "everyone" ? "everyone" :
+          suggestion.kind === "channel" ? "channel" : "here";
         composer.replaceRangeWithMention(activeRange.start, activeRange.end, {
           id: suggestion.id,
           label: suggestion.label,

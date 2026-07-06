@@ -20,8 +20,8 @@ export interface ComposerEmoji {
 export interface ComposerMention {
   id: string;
   label: string;
-  /** "user" | "role" | "everyone" | "here" */
-  kind: "user" | "role" | "everyone" | "here";
+  /** "user" | "role" | "everyone" | "here" | "channel" */
+  kind: "user" | "role" | "everyone" | "here" | "channel";
   color?: string;
 }
 
@@ -60,6 +60,7 @@ function mentionToken(mention: ComposerMention): string {
   if (mention.kind === "role") return `<@&${mention.id}>`;
   if (mention.kind === "everyone") return "@everyone";
   if (mention.kind === "here") return "@here";
+  if (mention.kind === "channel") return `<#${mention.id}>`;
   return `<@${mention.id}>`;
 }
 
@@ -73,14 +74,16 @@ function makeMentionSpan(mention: ComposerMention): HTMLSpanElement {
     "inline-block px-1 py-0.5 rounded font-medium cursor-pointer select-none mx-px " +
     (mention.kind === "everyone" || mention.kind === "here"
       ? "bg-yellow-500/20 text-yellow-200"
-      : mention.color
-        ? ""
-        : "bg-[var(--app-accent)]/20 text-[var(--app-accent)]");
-  if (mention.color && mention.kind !== "everyone" && mention.kind !== "here") {
+      : mention.kind === "channel"
+        ? "bg-[var(--app-accent)]/15 text-[var(--app-accent)]"
+        : mention.color
+          ? ""
+          : "bg-[var(--app-accent)]/20 text-[var(--app-accent)]");
+  if (mention.color && mention.kind !== "everyone" && mention.kind !== "here" && mention.kind !== "channel") {
     span.style.backgroundColor = mention.color + "22";
     span.style.color = mention.color;
   }
-  span.textContent = `@${mention.label}`;
+  span.textContent = mention.kind === "channel" ? `#${mention.label}` : `@${mention.label}`;
   return span;
 }
 

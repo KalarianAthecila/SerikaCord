@@ -130,6 +130,7 @@ function ConnectionsTabContent({
   connectingValue,
   setConnectingValue,
   connectionsEnabled = true,
+  disabledProviders = [],
 }: {
   userConnections: any[];
   setUserConnections: Dispatch<SetStateAction<any[]>>;
@@ -138,6 +139,7 @@ function ConnectionsTabContent({
   connectingValue: string;
   setConnectingValue: (v: string) => void;
   connectionsEnabled?: boolean;
+  disabledProviders?: string[];
 }) {
   const connectedMap = Object.fromEntries(userConnections.map((c) => [c.provider, c]));
 
@@ -307,11 +309,47 @@ function ConnectionsTabContent({
                         )}
                       </div>
                       {conn ? (
+                        <div className="flex items-center gap-4 shrink-0">
+                          <div className="flex items-center gap-2">
+                            <span className="text-xs text-[var(--text-muted)]">Show on profile</span>
+                            <ToggleSwitch
+                              size="sm"
+                              checked={conn.visible !== false}
+                              onCheckedChange={async (checked) => {
+                                try {
+                                  const res = await fetch(`/api/users/me/connections/${conn._id}`, {
+                                    method: "PATCH",
+                                    headers: { "Content-Type": "application/json" },
+                                    body: JSON.stringify({ visible: checked }),
+                                  });
+                                  if (res.ok) {
+                                    const data = await res.json();
+                                    setUserConnections((prev) =>
+                                      prev.map((c) => (c._id === conn._id ? data.connection : c))
+                                    );
+                                    toast.success("Visibility updated");
+                                  } else {
+                                    toast.error("Failed to update visibility");
+                                  }
+                                } catch {
+                                  toast.error("Failed to update visibility");
+                                }
+                              }}
+                            />
+                          </div>
+                          <button
+                            onClick={() => void handleDisconnect(conn._id, p.id)}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                          >
+                            Disconnect
+                          </button>
+                        </div>
+                      ) : disabledProviders.includes(p.id) ? (
                         <button
-                          onClick={() => void handleDisconnect(conn._id, p.id)}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors shrink-0"
+                          disabled
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400/50 cursor-not-allowed shrink-0 border border-red-500/20"
                         >
-                          Disconnect
+                          Disabled
                         </button>
                       ) : connectionsEnabled ? (
                         p.id === "website" ? (
@@ -433,6 +471,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const [deviceSessions, setDeviceSessions] = useState<any[]>([]);
   const [userConnections, setUserConnections] = useState<any[]>([]);
   const [connectionsEnabled, setConnectionsEnabled] = useState(true);
+  const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
 
   // Avatar/Banner upload state
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -490,6 +529,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     maintenanceMode: boolean;
     allowRegistration: boolean;
     connectionsEnabled?: boolean;
+    disabledProviders?: string[];
     globalAnnouncement?: string;
     oembedWhitelist?: string[];
     allowedFileTypes?: { type: string; safe: boolean }[];
@@ -618,6 +658,14 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   useEffect(() => {
     if (!open) return;
     fetchUserSettings();
+
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const settingsTab = params.get("settings") || params.get("openSettings");
+      if (settingsTab === "connections") {
+        setActiveTab("connections");
+      }
+    }
   }, [open]);
 
   useEffect(() => {
@@ -1100,7 +1148,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     }
   };
 
-  const handleUpdatePlatformSettings = async (updates: { maintenanceMode?: boolean; allowRegistration?: boolean; connectionsEnabled?: boolean; oembedWhitelist?: string[]; allowedFileTypes?: { type: string; safe: boolean }[]; warnOnUnknownFileTypes?: boolean }) => {
+  const handleUpdatePlatformSettings = async (updates: { maintenanceMode?: boolean; allowRegistration?: boolean; connectionsEnabled?: boolean; disabledProviders?: string[]; oembedWhitelist?: string[]; allowedFileTypes?: { type: string; safe: boolean }[]; warnOnUnknownFileTypes?: boolean }) => {
     try {
       const response = await fetch("/api/admin/settings", {
         method: "PATCH",
@@ -1286,7 +1334,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     if (activeTab === "connections") {
       fetch("/api/admin/settings/connections")
         .then((r) => r.json())
-        .then((d) => { if (typeof d.connectionsEnabled === "boolean") setConnectionsEnabled(d.connectionsEnabled); })
+        .then((d) => {
+          if (typeof d.connectionsEnabled === "boolean") setConnectionsEnabled(d.connectionsEnabled);
+          if (Array.isArray(d.disabledProviders)) setDisabledProviders(d.disabledProviders);
+        })
         .catch(() => {});
     }
   }, [activeTab]);
@@ -2580,6 +2631,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                   connectingValue={connectingValue}
                   setConnectingValue={setConnectingValue}
                   connectionsEnabled={connectionsEnabled}
+                  disabledProviders={disabledProviders}
                 />
               )}
 
@@ -3285,6 +3337,48 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         </div>
                         <ToggleSwitch size="sm" checked={platformSettings?.connectionsEnabled !== false} onCheckedChange={(checked) => handleUpdatePlatformSettings({ connectionsEnabled: checked })} />
                       </label>
+                      {platformSettings?.connectionsEnabled !== false && (
+                        <div className="mt-4 pt-4 border-t border-[var(--border-subtle)] space-y-3">
+                          <p className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">
+                            Allowed Providers
+                          </p>
+                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                            {CONNECTION_PROVIDERS.map((prov) => {
+                              const isDisabled = platformSettings?.disabledProviders?.includes(prov.id) || false;
+                              return (
+                                <label
+                                  key={prov.id}
+                                  className="flex items-center justify-between p-2 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] cursor-pointer hover:bg-[var(--bg-sidebar-elevated)] transition-colors"
+                                >
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div
+                                      className="w-6 h-6 rounded flex items-center justify-center shrink-0"
+                                      style={{ backgroundColor: prov.bg }}
+                                    >
+                                      {(() => {
+                                        const Icon = getConnectionIcon(prov.id);
+                                        return <Icon size={12} style={{ color: prov.color }} />;
+                                      })()}
+                                    </div>
+                                    <span className="text-sm text-white truncate">{prov.label}</span>
+                                  </div>
+                                  <ToggleSwitch
+                                    size="sm"
+                                    checked={!isDisabled}
+                                    onCheckedChange={(checked) => {
+                                      const current = platformSettings?.disabledProviders || [];
+                                      const next = checked
+                                        ? current.filter((id: string) => id !== prov.id)
+                                        : [...current, prov.id];
+                                      handleUpdatePlatformSettings({ disabledProviders: next });
+                                    }}
+                                  />
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      )}
                     </div>
                     <div className="bg-[var(--bg-app)] rounded-lg p-4">
                       <h3 className="text-white font-semibold mb-3">OEmbed Whitelist</h3>

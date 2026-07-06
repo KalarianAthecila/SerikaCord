@@ -1,14 +1,17 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState, useRef } from "react";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useParams, useRouter } from "next/navigation";
-import { ArrowLeft, Loader2, Trash2 } from "lucide-react";
+import { ArrowLeft, Loader2, Trash2, Camera, Image, Lock, RotateCcw, Check, Pencil } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import Link from "next/link";
+import { getConnectionIcon } from "@/components/user/ConnectionIcon";
+import { cn } from "@/lib/utils";
+import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 
 const sectionTitles: Record<string, string> = {
   privacy: "Privacy & Safety",
@@ -23,7 +26,37 @@ const sectionTitles: Record<string, string> = {
   "bug-report": "Report a Bug",
   feedback: "Give Feedback",
   status: "Status",
+  profiles: "Profiles",
+  connections: "Connections",
 };
+
+const CONNECTION_PROVIDERS: Array<{
+  id: string; label: string; color: string; bg: string;
+  hint: string;
+  category: "social" | "gaming" | "music" | "streaming";
+}> = [
+  { id: "lastfm",    label: "Last.fm",     color: "#e4335a", bg: "#e4335a20", hint: "Authorise via Last.fm — shows your live scrobbles on your profile.", category: "music" },
+  { id: "spotify",   label: "Spotify",     color: "#1db954", bg: "#1db95420", hint: "Authorise via Spotify.", category: "music" },
+  { id: "youtube",   label: "YouTube",     color: "#ff0000", bg: "#ff000020", hint: "Authorise via Google/YouTube.", category: "streaming" },
+  { id: "twitch",    label: "Twitch",      color: "#9146ff", bg: "#9146ff20", hint: "Authorise via Twitch.", category: "streaming" },
+  { id: "steam",     label: "Steam",       color: "#4a90d9", bg: "#4a90d920", hint: "Authorise via Steam.", category: "gaming" },
+  { id: "xbox",      label: "Xbox",        color: "#107c10", bg: "#107c1020", hint: "Authorise via Microsoft/Xbox.", category: "gaming" },
+  { id: "psn",       label: "PlayStation", color: "#00439c", bg: "#00439c20", hint: "Authorise via PlayStation Network.", category: "gaming" },
+  { id: "battlenet", label: "Battle.net",  color: "#148eff", bg: "#148eff20", hint: "Authorise via Battle.net.", category: "gaming" },
+  { id: "roblox",    label: "Roblox",      color: "#e8000b", bg: "#e8000b20", hint: "Authorise via Roblox.", category: "gaming" },
+  { id: "github",    label: "GitHub",      color: "#c9d1d9", bg: "#ffffff12", hint: "Authorise via GitHub.", category: "social" },
+  { id: "twitter",   label: "X / Twitter", color: "#1d9bf0", bg: "#1d9bf020", hint: "Authorise via X.", category: "social" },
+  { id: "instagram", label: "Instagram",   color: "#e1306c", bg: "#e1306c20", hint: "Authorise via Instagram.", category: "social" },
+  { id: "discord",   label: "Discord",     color: "#5865f2", bg: "#5865f220", hint: "Authorise via Discord.", category: "social" },
+  { id: "website",   label: "Website",     color: "#8B5CF6", bg: "#8B5CF620", hint: "Enter your personal website URL.", category: "social" },
+];
+
+const CONNECTION_CATEGORIES: Array<{ id: string; label: string }> = [
+  { id: "music",     label: "Music" },
+  { id: "gaming",    label: "Gaming" },
+  { id: "streaming", label: "Streaming" },
+  { id: "social",    label: "Social" },
+];
 
 const statusOptions = ["online", "idle", "dnd", "offline"] as const;
 
@@ -40,9 +73,89 @@ export default function MobileSettingsSectionPage() {
   const [apps, setApps] = useState<any[]>([]);
   const [devices, setDevices] = useState<any[]>([]);
   const [connections, setConnections] = useState<any[]>([]);
+  const [connectionsEnabled, setConnectionsEnabled] = useState(true);
+  const [disabledProviders, setDisabledProviders] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [supportText, setSupportText] = useState("");
+
+  // Profiles states
+  const [displayName, setDisplayName] = useState("");
+  const [bio, setBio] = useState("");
+  const [pronouns, setPronouns] = useState("");
+  const [timezone, setTimezone] = useState("");
+  const [showTimezone, setShowTimezone] = useState(false);
+  const [customStatus, setCustomStatus] = useState("");
+  const [status, setStatus] = useState("online");
+  const [displayNameStyle, setDisplayNameStyle] = useState<{
+    font?: "default" | "serif" | "mono" | "rounded" | "cursive" | "bold";
+    effect?: "solid" | "gradient" | "neon" | "toon" | "pop";
+    color?: string;
+    gradient?: string[];
+  }>({ font: "default", effect: "solid", color: "", gradient: [] });
+  const [profileColor, setProfileColor] = useState("");
+  const [profileGradient, setProfileGradient] = useState<string[]>([]);
+
+  const avatarInputRef = useRef<HTMLInputElement>(null);
+  const bannerInputRef = useRef<HTMLInputElement>(null);
+  const [isUploadingAvatar, setIsUploadingAvatar] = useState(false);
+  const [isUploadingBanner, setIsUploadingBanner] = useState(false);
+
+  // Connections states
+  const [connectingProvider, setConnectingProvider] = useState<string | null>(null);
+  const [connectingValue, setConnectingValue] = useState("");
+
+  useEffect(() => {
+    if (user) {
+      setDisplayName(user.displayName || "");
+      setBio(user.bio || "");
+      setPronouns(user.pronouns || "");
+      setTimezone(user.timezone || "");
+      setShowTimezone(user.showTimezone ?? false);
+      setCustomStatus(user.customStatus || "");
+      setStatus(user.status || "online");
+      setDisplayNameStyle(user.customization?.displayNameStyle || { font: "default", effect: "solid", color: "", gradient: [] });
+      setProfileColor(user.customization?.profileColor || "");
+      setProfileGradient(user.customization?.profileGradient || []);
+    }
+  }, [user]);
+
+  const handleSaveProfile = async () => {
+    setIsSaving(true);
+    try {
+      const response = await fetch("/api/users/me", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          displayName,
+          bio,
+          pronouns,
+          timezone: timezone || null,
+          showTimezone,
+          customStatus,
+          status,
+          customization: {
+            displayNameStyle,
+            profileColor,
+            profileGradient,
+          },
+        }),
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        updateUser(data.user || data);
+        toast.success("Profile saved successfully!");
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to save profile");
+      }
+    } catch {
+      toast.error("Failed to save profile");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   const title = sectionTitles[section] || "Settings";
 
@@ -72,6 +185,14 @@ export default function MobileSettingsSectionPage() {
       if (connectionsRes.ok) {
         const data = await connectionsRes.json();
         setConnections(data.connections || []);
+      }
+      if (section === "connections") {
+        const connSettingsRes = await fetch("/api/admin/settings/connections");
+        if (connSettingsRes.ok) {
+          const d = await connSettingsRes.json();
+          if (typeof d.connectionsEnabled === "boolean") setConnectionsEnabled(d.connectionsEnabled);
+          if (Array.isArray(d.disabledProviders)) setDisabledProviders(d.disabledProviders);
+        }
       }
     } catch (error) {
       console.error("Failed to load settings section:", error);
@@ -421,6 +542,687 @@ export default function MobileSettingsSectionPage() {
                 </button>
               </div>
             ))}
+          </div>
+        )}
+
+        {section === "profiles" && (
+          <div className="space-y-6">
+            {/* Avatar & Banner section */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-4">
+              <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Avatar & Banner</h3>
+              
+              <div className="space-y-4">
+                {/* Avatar preview and upload */}
+                <div className="flex items-center gap-4">
+                  <div className="relative">
+                    <Avatar className="w-20 h-20 border-2 border-[var(--border-subtle)]">
+                      <AvatarImage src={user?.avatar} />
+                      <AvatarFallback className="bg-[var(--app-accent)] text-white text-2xl font-bold">
+                        {(displayName || user?.username || "U").charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <button
+                      onClick={() => avatarInputRef.current?.click()}
+                      className="absolute inset-0 bg-black/60 rounded-full flex items-center justify-center opacity-0 hover:opacity-100 transition-opacity"
+                    >
+                      {isUploadingAvatar ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-white" />
+                      ) : (
+                        <Camera className="w-5 h-5 text-white" />
+                      )}
+                    </button>
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-semibold text-[var(--text-primary)]">Profile Avatar</h4>
+                    <p className="text-xs text-[var(--text-muted)] mt-0.5">Click image to upload new avatar</p>
+                    <input
+                      ref={avatarInputRef}
+                      type="file"
+                      accept="image/*"
+                      className="hidden"
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0];
+                        if (!file) return;
+                        setIsUploadingAvatar(true);
+                        const formData = new FormData();
+                        formData.append("file", file);
+                        try {
+                          const res = await fetch("/api/upload/avatar", {
+                            method: "POST",
+                            body: formData,
+                          });
+                          if (res.ok) {
+                            const data = await res.json();
+                            updateUser({ avatar: data.url });
+                            toast.success("Avatar updated!");
+                          } else {
+                            const data = await res.json();
+                            toast.error(data.error || "Failed to upload avatar");
+                          }
+                        } catch {
+                          toast.error("Failed to upload avatar");
+                        } finally {
+                          setIsUploadingAvatar(false);
+                        }
+                      }}
+                    />
+                  </div>
+                </div>
+
+                {/* Banner preview and upload */}
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between">
+                    <h4 className="text-sm font-semibold text-[var(--text-primary)]">Profile Banner</h4>
+                    <p className="text-xs text-[var(--text-muted)]">Click banner to upload</p>
+                  </div>
+                  <div
+                    onClick={() => bannerInputRef.current?.click()}
+                    className="relative w-full h-24 rounded-lg overflow-hidden bg-[var(--bg-sidebar-elevated)] border-2 border-dashed border-[var(--border-subtle)] hover:border-[var(--app-accent)] cursor-pointer transition-all group flex items-center justify-center"
+                  >
+                    {user?.banner ? (
+                      <img src={user.banner} alt="Banner" className="w-full h-full object-cover" />
+                    ) : (
+                      <div className="flex flex-col items-center justify-center text-[var(--text-muted)] gap-1">
+                        <Image className="w-6 h-6" />
+                        <span className="text-xs">No banner set</span>
+                      </div>
+                    )}
+                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                      {isUploadingBanner ? (
+                        <Loader2 className="w-5 h-5 animate-spin text-white" />
+                      ) : (
+                        <Camera className="w-5 h-5 text-white" />
+                      )}
+                    </div>
+                  </div>
+                  <input
+                    ref={bannerInputRef}
+                    type="file"
+                    accept="image/*"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const file = e.target.files?.[0];
+                      if (!file) return;
+                      setIsUploadingBanner(true);
+                      const formData = new FormData();
+                      formData.append("file", file);
+                      try {
+                        const res = await fetch("/api/upload/banner", {
+                          method: "POST",
+                          body: formData,
+                        });
+                        if (res.ok) {
+                          const data = await res.json();
+                          updateUser({ banner: data.url });
+                          toast.success("Banner updated!");
+                        } else {
+                          const data = await res.json();
+                          toast.error(data.error || "Failed to upload banner");
+                        }
+                      } catch {
+                        toast.error("Failed to upload banner");
+                      } finally {
+                        setIsUploadingBanner(false);
+                      }
+                    }}
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Basic Info section */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-4">
+              <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Basic Info</h3>
+              
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                    Display Name
+                  </label>
+                  <input
+                    type="text"
+                    value={displayName}
+                    onChange={(e) => setDisplayName(e.target.value)}
+                    className="w-full h-11 rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] px-3 text-sm focus:outline-none focus:border-[var(--app-accent)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                    Pronouns
+                  </label>
+                  <input
+                    type="text"
+                    placeholder="Add your pronouns"
+                    value={pronouns}
+                    onChange={(e) => setPronouns(e.target.value)}
+                    className="w-full h-11 rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] px-3 text-sm focus:outline-none focus:border-[var(--app-accent)]"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                    Timezone
+                  </label>
+                  <select
+                    value={timezone}
+                    onChange={(e) => setTimezone(e.target.value)}
+                    className="w-full h-11 rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] px-3 text-sm focus:outline-none focus:border-[var(--app-accent)]"
+                  >
+                    <option value="">Select your timezone</option>
+                    {Intl.supportedValuesOf("timeZone").map((tz) => (
+                      <option key={tz} value={tz}>{tz}</option>
+                    ))}
+                  </select>
+                  <label className="flex items-center gap-3 mt-3 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={showTimezone}
+                      onChange={(e) => setShowTimezone(e.target.checked)}
+                      className="w-4 h-4 rounded accent-[var(--app-accent)] bg-[var(--bg-app)] border-[var(--border-subtle)]"
+                    />
+                    <span className="text-xs text-[var(--text-secondary)]">Display my current time on my profile</span>
+                  </label>
+                </div>
+              </div>
+            </div>
+
+            {/* About Me section */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-4">
+              <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">About Me</h3>
+              <div>
+                <textarea
+                  value={bio}
+                  onChange={(e) => setBio(e.target.value)}
+                  maxLength={190}
+                  className="w-full min-h-[100px] rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] p-3 text-sm focus:outline-none focus:border-[var(--app-accent)] resize-none"
+                  placeholder="Tell us about yourself..."
+                />
+                <p className="text-xs text-[var(--text-muted)] text-right mt-1">{bio.length}/190</p>
+              </div>
+            </div>
+
+            {/* Status & Custom Status */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-4">
+              <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Status & Custom Status</h3>
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                    Online Status
+                  </label>
+                  <div className="grid grid-cols-2 gap-2">
+                    {[
+                      { value: "online", label: "Online", color: "#23A559" },
+                      { value: "idle", label: "Idle", color: "#F0B232" },
+                      { value: "dnd", label: "Do Not Disturb", color: "#EF4444" },
+                      { value: "offline", label: "Invisible", color: "#888888" },
+                    ].map((opt) => (
+                      <button
+                        key={opt.value}
+                        type="button"
+                        onClick={() => setStatus(opt.value)}
+                        className={cn(
+                          "h-10 rounded-lg flex items-center gap-2 px-3 text-sm transition-all border border-[var(--border-subtle)]",
+                          status === opt.value
+                            ? "bg-[var(--bg-sidebar-elevated)] border-[var(--app-accent)] text-[var(--text-primary)]"
+                            : "bg-[var(--bg-app)] text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)]"
+                        )}
+                      >
+                        <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: opt.color }} />
+                        {opt.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                    Custom Status
+                  </label>
+                  <input
+                    type="text"
+                    value={customStatus}
+                    onChange={(e) => setCustomStatus(e.target.value)}
+                    maxLength={128}
+                    placeholder="What's on your mind?"
+                    className="w-full h-11 rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] px-3 text-sm focus:outline-none focus:border-[var(--app-accent)]"
+                  />
+                </div>
+              </div>
+            </div>
+
+            {/* Display Name Style */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Display Name Style</h3>
+                <button
+                  onClick={() => setDisplayNameStyle({ font: "default", effect: "solid", color: "", gradient: [] })}
+                  className="text-xs text-[var(--app-accent)] flex items-center gap-1 hover:underline"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                {/* Font */}
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Choose Font</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: "default", label: "Default" },
+                      { value: "serif", label: "Serif" },
+                      { value: "mono", label: "Mono" },
+                      { value: "rounded", label: "Rounded" },
+                      { value: "cursive", label: "Cursive" },
+                      { value: "bold", label: "Bold" },
+                    ].map((f) => {
+                      const isSelected = displayNameStyle.font === f.value;
+                      return (
+                        <button
+                          key={f.value}
+                          type="button"
+                          onClick={() => setDisplayNameStyle((s) => ({ ...s, font: f.value as any }))}
+                          className={cn(
+                            "h-12 rounded-lg flex flex-col items-center justify-center transition-all border border-[var(--border-subtle)]",
+                            isSelected
+                              ? "bg-[var(--bg-sidebar-elevated)] border-[var(--app-accent)] text-[var(--text-primary)]"
+                              : "bg-[var(--bg-app)] text-[var(--text-secondary)]"
+                          )}
+                        >
+                          <span className={cn("text-sm", getDisplayNameStyleClasses({ font: f.value as any }))} style={getDisplayNameStyleInline({ font: f.value as any })}>
+                            {f.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Effect */}
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Choose Effect</label>
+                  <div className="grid grid-cols-3 gap-2">
+                    {[
+                      { value: "solid", label: "Solid" },
+                      { value: "gradient", label: "Gradient" },
+                      { value: "neon", label: "Neon" },
+                      { value: "toon", label: "Toon" },
+                      { value: "pop", label: "Pop" },
+                    ].map((eff) => {
+                      const isSelected = displayNameStyle.effect === eff.value;
+                      return (
+                        <button
+                          key={eff.value}
+                          type="button"
+                          onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: eff.value as any }))}
+                          className={cn(
+                            "h-12 rounded-lg flex items-center justify-center transition-all border border-[var(--border-subtle)]",
+                            isSelected
+                              ? "bg-[var(--bg-sidebar-elevated)] border-[var(--app-accent)] text-[var(--text-primary)]"
+                              : "bg-[var(--bg-app)] text-[var(--text-secondary)]"
+                          )}
+                        >
+                          <span
+                            className={cn("text-xs truncate px-1", getDisplayNameStyleClasses({ effect: eff.value as any, color: eff.value !== "gradient" ? displayNameStyle.color : undefined, gradient: eff.value === "gradient" ? displayNameStyle.gradient : undefined }))}
+                            style={getDisplayNameStyleInline({ effect: eff.value as any, color: displayNameStyle.color || "#fff", gradient: displayNameStyle.gradient?.length ? displayNameStyle.gradient : ["#8B5CF6", "#3B82F6"] })}
+                          >
+                            {eff.label}
+                          </span>
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                {/* Colors / Presets */}
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Color Preset</label>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all shrink-0 border border-white/20" style={{ backgroundColor: displayNameStyle.effect === "gradient" ? (displayNameStyle.gradient?.[0] || "#8B5CF6") : (displayNameStyle.color || "#8B5CF6") }}>
+                      <input
+                        type="color"
+                        value={displayNameStyle.effect === "gradient" ? (displayNameStyle.gradient?.[0] || "#8B5CF6") : (displayNameStyle.color || "#8B5CF6")}
+                        onChange={(e) => {
+                          if (displayNameStyle.effect === "gradient") {
+                            setDisplayNameStyle((s) => ({ ...s, gradient: [e.target.value, s.gradient?.[1] || "#6366F1"] }));
+                          } else {
+                            setDisplayNameStyle((s) => ({ ...s, color: e.target.value }));
+                          }
+                        }}
+                        className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <Pencil className="w-3.5 h-3.5 text-white drop-shadow" />
+                      </div>
+                    </label>
+                    <div className="w-px h-8 bg-[var(--border-subtle)] mx-1 shrink-0" />
+
+                    {displayNameStyle.effect === "gradient" ? (
+                      [
+                        ["#FF3366", "#FFD12A"], ["#00E676", "#00B0FF"], ["#D500F9", "#FF1744"], ["#1DE9B6", "#3D5AFE"],
+                        ["#FF4081", "#E040FB"], ["#2979FF", "#00E5FF"], ["#7C4DFF", "#E040FB"], ["#F50057", "#FF3366"],
+                        ["#FF9800", "#FF5722"], ["#4CAF50", "#8BC34A"], ["#9C27B0", "#673AB7"], ["#3F51B5", "#2196F3"]
+                      ].map((grad, i) => {
+                        const isSelected = JSON.stringify(displayNameStyle.gradient) === JSON.stringify(grad);
+                        return (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => setDisplayNameStyle((s) => ({ ...s, gradient: grad }))}
+                            className="w-8 h-8 rounded-full transition-all relative overflow-hidden border border-white/10"
+                            style={{ background: `linear-gradient(135deg, ${grad.join(", ")})`, outline: isSelected ? "2px solid var(--app-accent)" : "none", outlineOffset: 2 }}
+                          >
+                            {isSelected && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                                <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })
+                    ) : (
+                      [
+                        "#F43F5E", "#EAB308", "#22C55E", "#10B981", "#06B6D4", "#3B82F6", "#6366F1", "#8B5CF6",
+                        "#D946EF", "#FF1744", "#00E676", "#00B0FF"
+                      ].map((col, i) => {
+                        const isSelected = displayNameStyle.color === col;
+                        return (
+                          <button
+                            key={i}
+                            type="button"
+                            onClick={() => setDisplayNameStyle((s) => ({ ...s, color: col }))}
+                            className="w-8 h-8 rounded-full transition-all relative border border-white/10"
+                            style={{ backgroundColor: col, outline: isSelected ? "2px solid var(--app-accent)" : "none", outlineOffset: 2 }}
+                          >
+                            {isSelected && (
+                              <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                                <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+                              </div>
+                            )}
+                          </button>
+                        );
+                      })
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Profile Theme Color */}
+            <div className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Profile Theme</h3>
+                <button
+                  onClick={() => {
+                    setProfileColor("");
+                    setProfileGradient([]);
+                  }}
+                  className="text-xs text-[var(--app-accent)] flex items-center gap-1 hover:underline"
+                >
+                  <RotateCcw className="w-3.5 h-3.5" /> Reset
+                </button>
+              </div>
+
+              <div className="space-y-4">
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Theme Color</label>
+                  <div className="flex flex-wrap gap-2">
+                    <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all shrink-0 border border-white/20" style={{ backgroundColor: profileColor || "#8B5CF6" }}>
+                      <input
+                        type="color"
+                        value={profileColor || "#8B5CF6"}
+                        onChange={(e) => setProfileColor(e.target.value)}
+                        className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0"
+                      />
+                      <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+                        <Pencil className="w-3.5 h-3.5 text-white drop-shadow" />
+                      </div>
+                    </label>
+                    <div className="w-px h-8 bg-[var(--border-subtle)] mx-1 shrink-0" />
+                    {[
+                      "#F43F5E", "#EAB308", "#22C55E", "#10B981", "#06B6D4", "#3B82F6", "#6366F1", "#8B5CF6",
+                      "#D946EF", "#FF1744", "#00E676", "#00B0FF"
+                    ].map((col, i) => {
+                      const isSelected = profileColor === col;
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setProfileColor(col)}
+                          className="w-8 h-8 rounded-full transition-all relative border border-white/10"
+                          style={{ backgroundColor: col, outline: isSelected ? "2px solid var(--app-accent)" : "none", outlineOffset: 2 }}
+                        >
+                          {isSelected && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                              <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Gradient Background (Optional)</label>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      ["#FF3366", "#FFD12A"], ["#00E676", "#00B0FF"], ["#D500F9", "#FF1744"], ["#1DE9B6", "#3D5AFE"],
+                      ["#FF4081", "#E040FB"], ["#2979FF", "#00E5FF"], ["#7C4DFF", "#E040FB"], ["#F50057", "#FF3366"],
+                      ["#FF9800", "#FF5722"], ["#4CAF50", "#8BC34A"], ["#9C27B0", "#673AB7"], ["#3F51B5", "#2196F3"]
+                    ].map((grad, i) => {
+                      const isSelected = JSON.stringify(profileGradient) === JSON.stringify(grad);
+                      return (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => setProfileGradient(grad)}
+                          className="w-8 h-8 rounded-full transition-all relative overflow-hidden border border-white/10"
+                          style={{ background: `linear-gradient(135deg, ${grad.join(", ")})`, outline: isSelected ? "2px solid var(--app-accent)" : "none", outlineOffset: 2 }}
+                        >
+                          {isSelected && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-black/20">
+                              <Check className="w-3.5 h-3.5 text-white drop-shadow" />
+                            </div>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Save Button */}
+            <button
+              onClick={handleSaveProfile}
+              disabled={isSaving}
+              className="w-full py-3 rounded-lg bg-[var(--app-accent)] text-white text-sm font-semibold hover:opacity-90 transition-opacity active:scale-[0.99] flex items-center justify-center gap-2"
+            >
+              {isSaving && <Loader2 className="w-4 h-4 animate-spin" />}
+              Save Changes
+            </button>
+          </div>
+        )}
+
+        {section === "connections" && (
+          <div className="space-y-6">
+            {!connectionsEnabled && (
+              <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center gap-3">
+                <Lock className="w-5 h-5 text-yellow-400 shrink-0" />
+                <div>
+                  <p className="text-yellow-400 font-semibold text-sm">Connections are temporarily disabled</p>
+                  <p className="text-yellow-400/70 text-xs">Account linking has been turned off by staff. You can still disconnect existing accounts.</p>
+                </div>
+              </div>
+            )}
+            <p className="text-sm text-[var(--text-muted)]">
+              Connect your accounts to display them on your profile.
+            </p>
+            {CONNECTION_CATEGORIES.map((cat) => {
+              const catProviders = CONNECTION_PROVIDERS.filter((p) => p.category === cat.id);
+              return (
+                <div key={cat.id} className="space-y-3">
+                  <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider px-1">
+                    {cat.label}
+                  </h3>
+                  <div className="rounded-xl overflow-hidden border border-[var(--border-subtle)] bg-[var(--bg-card)] divide-y divide-[var(--border-subtle)]">
+                    {catProviders.map((prov) => {
+                      const conn = connections.find((c) => c.provider === prov.id);
+                      const isExpanded = connectingProvider === prov.id;
+                      return (
+                        <div key={prov.id} className="p-4 space-y-3">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                              <div
+                                className="w-9 h-9 rounded-lg flex items-center justify-center shrink-0"
+                                style={{ backgroundColor: prov.bg }}
+                              >
+                                {(() => {
+                                  const Icon = getConnectionIcon(prov.id);
+                                  return <Icon size={18} style={{ color: prov.color }} />;
+                                })()}
+                              </div>
+                              <div>
+                                <p className="text-sm font-semibold text-white">{prov.label}</p>
+                                {conn ? (
+                                  <p className="text-xs text-[#22c55e] truncate flex items-center gap-1">
+                                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-[#22c55e]" />
+                                    {conn.displayName || conn.username || conn.accountId}
+                                  </p>
+                                ) : (
+                                  <p className="text-xs text-[var(--text-muted)]">{prov.hint}</p>
+                                )}
+                              </div>
+                            </div>
+                            {conn ? (
+                              <button
+                                onClick={async () => {
+                                  const res = await fetch(`/api/users/me/connections/${conn._id}`, { method: "DELETE" });
+                                  if (res.ok) {
+                                    setConnections((prev) => prev.filter((c) => c._id !== conn._id));
+                                    toast.success(`${prov.label} disconnected`);
+                                  } else {
+                                    toast.error("Failed to disconnect");
+                                  }
+                                }}
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                              >
+                                Disconnect
+                              </button>
+                            ) : disabledProviders.includes(prov.id) ? (
+                              <button
+                                disabled
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400/50 cursor-not-allowed border border-red-500/20"
+                              >
+                                Disabled
+                              </button>
+                            ) : connectionsEnabled ? (
+                              prov.id === "website" ? (
+                                <button
+                                  onClick={() => {
+                                    setConnectingProvider(isExpanded ? null : prov.id);
+                                    setConnectingValue("");
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-opacity hover:opacity-90"
+                                  style={{ backgroundColor: prov.color }}
+                                >
+                                  {isExpanded ? "Cancel" : "Connect"}
+                                </button>
+                              ) : (
+                                <a
+                                  href={`/api/auth/${prov.id}/initiate`}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-medium text-white transition-opacity hover:opacity-90 inline-block"
+                                  style={{ backgroundColor: prov.color }}
+                                >
+                                  Connect
+                                </a>
+                              )
+                            ) : (
+                              <button
+                                disabled
+                                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.04] text-[#555] cursor-not-allowed"
+                              >
+                                Connect
+                              </button>
+                            )}
+                          </div>
+
+                          {conn && (
+                            <div className="flex items-center justify-between pt-2 border-t border-[var(--border-subtle)]/40">
+                              <span className="text-xs text-[var(--text-muted)]">Show on profile</span>
+                              <ToggleSwitch
+                                size="sm"
+                                checked={conn.visible !== false}
+                                onCheckedChange={async (checked) => {
+                                  try {
+                                    const res = await fetch(`/api/users/me/connections/${conn._id}`, {
+                                      method: "PATCH",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ visible: checked }),
+                                    });
+                                    if (res.ok) {
+                                      const data = await res.json();
+                                      setConnections((prev) =>
+                                        prev.map((c) => (c._id === conn._id ? data.connection : c))
+                                      );
+                                      toast.success("Visibility updated");
+                                    } else {
+                                      toast.error("Failed to update visibility");
+                                    }
+                                  } catch {
+                                    toast.error("Failed to update visibility");
+                                  }
+                                }}
+                              />
+                            </div>
+                          )}
+
+                          {isExpanded && prov.id === "website" && (
+                            <div className="flex gap-2 pt-2">
+                              <input
+                                type="text"
+                                placeholder="https://example.com"
+                                value={connectingValue}
+                                onChange={(e) => setConnectingValue(e.target.value)}
+                                className="flex-1 px-3 py-1.5 rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-sm text-[var(--text-primary)] focus:outline-none focus:border-[var(--app-accent)]"
+                              />
+                              <button
+                                onClick={async () => {
+                                  if (!connectingValue.trim()) return;
+                                  try {
+                                    const res = await fetch("/api/users/me/connections", {
+                                      method: "POST",
+                                      headers: { "Content-Type": "application/json" },
+                                      body: JSON.stringify({ provider: "website", accountId: connectingValue.trim() }),
+                                    });
+                                    if (res.ok) {
+                                      const data = await res.json();
+                                      setConnections((prev) => [data.connection, ...prev.filter((c) => c.provider !== "website")]);
+                                      toast.success("Website connected");
+                                      setConnectingProvider(null);
+                                      setConnectingValue("");
+                                    } else {
+                                      const err = await res.json().catch(() => ({}));
+                                      toast.error(err.error || "Failed to connect");
+                                    }
+                                  } catch {
+                                    toast.error("Failed to connect");
+                                  }
+                                }}
+                                className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-[var(--app-accent)] text-white hover:opacity-90 transition-opacity"
+                              >
+                                Save
+                              </button>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
           </div>
         )}
       </div>

@@ -12,6 +12,7 @@ export interface IUserConnection extends Document {
   accountId: string;
   username?: string;
   displayName?: string;
+  visible: boolean;
   avatar?: string;
   metadata?: Record<string, unknown>;
   createdAt: Date;
@@ -55,6 +56,10 @@ const UserConnectionSchema = new Schema<IUserConnection>({
   metadata: {
     type: Schema.Types.Mixed,
     default: null,
+  },
+  visible: {
+    type: Boolean,
+    default: true,
   },
 }, {
   timestamps: true,

@@ -15,6 +15,8 @@ import {
   MessageSquare,
   Circle,
   ChevronRight,
+  UserCheck,
+  Link as LinkIcon,
 } from "lucide-react";
 
 const sections = [
@@ -22,6 +24,8 @@ const sections = [
     title: "Account",
     items: [
       { href: "/channels/settings/account", label: "My Account", icon: User },
+      { href: "/channels/settings/profiles", label: "Profiles", icon: UserCheck },
+      { href: "/channels/settings/connections", label: "Connections", icon: LinkIcon },
       { href: "/channels/settings/status", label: "Status", icon: Circle },
       { href: "/channels/settings/privacy", label: "Privacy & Safety", icon: Shield },
     ],

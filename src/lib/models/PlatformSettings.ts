@@ -10,6 +10,7 @@ export interface IPlatformSettings {
   maintenanceMode: boolean;
   allowRegistration: boolean;
   connectionsEnabled: boolean;
+  disabledProviders?: string[];
   globalAnnouncement?: string;
   announcementUpdatedAt?: Date;
   encryptionKey: string;
@@ -35,6 +36,10 @@ const PlatformSettingsSchema = new Schema<IPlatformSettings>({
   connectionsEnabled: {
     type: Boolean,
     default: true,
+  },
+  disabledProviders: {
+    type: [String],
+    default: [],
   },
   globalAnnouncement: {
     type: String,

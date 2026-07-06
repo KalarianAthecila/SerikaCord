@@ -21,6 +21,19 @@ import {
   accountsResetPassword,
 } from '../services/accountsClient';
 
+// Raw 302 redirect. Elysia's `redirect()` helper mutates an immutable Response
+// header map under the Next.js adapter ("TypeError: immutable"), so we return a
+// plain Response with an explicit Location header (and optional Set-Cookie).
+function oauthRedirect(url: string, setCookie?: string | string[]): Response {
+  const headers = new Headers({ Location: url });
+  if (setCookie) {
+    for (const c of Array.isArray(setCookie) ? setCookie : [setCookie]) {
+      headers.append('Set-Cookie', c);
+    }
+  }
+  return new Response(null, { status: 302, headers });
+}
+
 // ── OAuth2 provider configurations ──────────────────────────────────────────
 // Each provider reads client ID/secret from env vars and implements:
 //   getAuthUrl  – build the provider's authorisation URL
@@ -428,7 +441,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
   })
 
   // Discord OAuth - initiate
-  .get('/discord', ({ redirect }) => {
+  .get('/discord', () => {
     const params = new URLSearchParams({
       client_id: config.DISCORD_CLIENT_ID,
       redirect_uri: config.DISCORD_REDIRECT_URI,
@@ -436,7 +449,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       scope: 'identify email',
     });
 
-    return redirect(`https://discord.com/api/oauth2/authorize?${params}`);
+    return oauthRedirect(`https://discord.com/api/oauth2/authorize?${params}`);
   })
 
   // Discord OAuth - callback
@@ -502,15 +515,15 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       }
 
       // Set cookies
-      set.headers['Set-Cookie'] = [
+      const authCookies = [
         `auth_token=${result.tokens.accessToken}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
         `refresh_token=${result.tokens.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${90 * 24 * 60 * 60}`,
-      ].join(', ');
+      ];
+      set.headers['Set-Cookie'] = authCookies.join(', ');
 
       // Redirect to app (or return JSON for API clients)
       if (headers.accept?.includes('text/html')) {
-        set.redirect = '/';
-        return;
+        return oauthRedirect('/', authCookies);
       }
 
       return {
@@ -546,8 +559,9 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
   // /:provider/callback to avoid route conflicts between static and dynamic
   // paths in Elysia.
 
-  .get('/:provider/initiate', async ({ params, headers, cookie, set }) => {
+  .get('/:provider/initiate', async ({ params, headers, cookie }) => {
     const provider = params.provider;
+    const base = config.FRONTEND_URL || config.API_BASE_URL;
 
     // Authenticate user
     const authHeader = headers.authorization ?? null;
@@ -556,72 +570,51 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     if (typeof authToken === 'string' && authToken) {
       cookies.auth_token = authToken;
     }
-    const { user, error: authError } = await authenticateRequest(authHeader, cookies);
+    const { user } = await authenticateRequest(authHeader, cookies);
     if (!user) {
-      set.status = 302;
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=unauthorized`;
-      return;
+      return oauthRedirect(`${base}/channels/me?openSettings=connections&error=unauthorized`);
     }
 
     // Check if connections are enabled
     const platformSettings = await getPlatformSettings();
     if (platformSettings.connectionsEnabled === false) {
-      set.status = 302;
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=connections_disabled`;
-      return;
+      return oauthRedirect(`${base}/channels/me?openSettings=connections&error=connections_disabled`);
     }
+
+    if (platformSettings.disabledProviders?.includes(provider)) {
+      return oauthRedirect(`${base}/channels/me?openSettings=connections&error=provider_disabled`);
+    }
+
+    const userId = (user._id as { toString(): string }).toString();
 
     // ── Last.fm initiate ────────────────────────────────────────────────────
     if (provider === 'lastfm') {
       const apiKey = config.LASTFM_API_KEY;
       if (!apiKey) {
-        set.status = 302;
-        set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_not_configured`;
-        return;
+        return oauthRedirect(`${base}/channels/me?openSettings=connections&error=lastfm_not_configured`);
       }
 
-      const userId = (user._id as { toString(): string }).toString();
-      (cookie as any).lastfm_state = {
-        value: userId,
-        httpOnly: true,
-        path: '/',
-        maxAge: 600,
-        sameSite: 'lax',
-      };
-
-      const callbackUrl = encodeURIComponent(`${config.FRONTEND_URL || config.API_BASE_URL}/api/auth/lastfm/callback`);
-      set.status = 302;
-      set.redirect = `https://www.last.fm/api/auth/?api_key=${apiKey}&cb=${callbackUrl}`;
-      return;
+      const stateCookie = `lastfm_state=${userId}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`;
+      const callbackUrl = encodeURIComponent(`${base}/api/auth/lastfm/callback`);
+      return oauthRedirect(`https://www.last.fm/api/auth/?api_key=${apiKey}&cb=${callbackUrl}`, stateCookie);
     }
 
     // ── Generic OAuth2 initiate ─────────────────────────────────────────────
     const prov = OAUTH2_PROVIDERS[provider];
     if (!prov || !prov.clientId) {
-      set.status = 302;
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=${provider}_not_configured`;
-      return;
+      return oauthRedirect(`${base}/channels/me?openSettings=connections&error=${provider}_not_configured`);
     }
 
-    const userId = (user._id as { toString(): string }).toString();
     const state = `${provider}:${userId}`;
-    (cookie as any).oauth2_state = {
-      value: state,
-      httpOnly: true,
-      path: '/',
-      maxAge: 600,
-      sameSite: 'lax',
-    };
-
-    const callbackUrl = encodeURIComponent(`${config.FRONTEND_URL || config.API_BASE_URL}/api/auth/${provider}/callback`);
+    const stateCookie = `oauth2_state=${encodeURIComponent(state)}; HttpOnly; Path=/; Max-Age=600; SameSite=Lax`;
+    const callbackUrl = encodeURIComponent(`${base}/api/auth/${provider}/callback`);
     const authUrl = prov.getAuthUrl(prov.clientId, callbackUrl, prov.scopes);
-    set.status = 302;
-    set.redirect = authUrl;
+    return oauthRedirect(authUrl, stateCookie);
   })
 
-  .get('/:provider/callback', async ({ params, query, cookie, set }) => {
+  .get('/:provider/callback', async ({ params, query, cookie }) => {
     const provider = params.provider;
-    const redirectBase = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections`;
+    const redirectBase = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/me?openSettings=connections`;
 
     // ── Last.fm callback ─────────────────────────────────────────────────────
     if (provider === 'lastfm') {
@@ -629,22 +622,16 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       const userId = (cookie as any).lastfm_state?.value;
 
       if (!token) {
-        set.status = 302;
-        set.redirect = `${redirectBase}?error=lastfm_denied`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=lastfm_denied`);
       }
       if (!userId) {
-        set.status = 302;
-        set.redirect = `${redirectBase}?error=lastfm_state_missing`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=lastfm_state_missing`);
       }
 
       const apiKey = config.LASTFM_API_KEY;
       const secret = config.LASTFM_API_SECRET;
       if (!apiKey || !secret) {
-        set.status = 302;
-        set.redirect = `${redirectBase}?error=lastfm_not_configured`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=lastfm_not_configured`);
       }
 
       try {
@@ -671,9 +658,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         const data = await resp.json() as any;
 
         if (data.error || !data.session) {
-          set.status = 302;
-          set.redirect = `${redirectBase}?error=lastfm_session_failed`;
-          return;
+          return oauthRedirect(`${redirectBase}&error=lastfm_session_failed`);
         }
 
         const lfmUsername: string = data.session.name;
@@ -704,16 +689,11 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
           { upsert: true, new: true },
         );
 
-        (cookie as any).lastfm_state = { value: '', maxAge: 0, path: '/' };
-
-        set.status = 302;
-        set.redirect = `${redirectBase}?success=lastfm`;
+        return oauthRedirect(`${redirectBase}&success=lastfm`, 'lastfm_state=; Path=/; Max-Age=0');
       } catch (err) {
         console.error('Last.fm callback error:', err);
-        set.status = 302;
-        set.redirect = `${redirectBase}?error=lastfm_error`;
+        return oauthRedirect(`${redirectBase}&error=lastfm_error`);
       }
-      return;
     }
 
     // ── Generic OAuth2 / Steam callback ──────────────────────────────────────
@@ -722,25 +702,21 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     if (provider === 'steam') {
       const state = (cookie as any).oauth2_state?.value as string | undefined;
       if (!state || !state.startsWith('steam:')) {
-        set.redirect = `${redirectBase}?error=steam_state_missing`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=steam_state_missing`);
       }
       const userId = state.split(':')[1];
       const prov = OAUTH2_PROVIDERS.steam;
       if (!prov.clientId) {
-        set.redirect = `${redirectBase}?error=steam_not_configured`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=steam_not_configured`);
       }
       const openidIdentity = (query as any)['openid.identity'] as string | undefined;
       if (!openidIdentity) {
-        set.redirect = `${redirectBase}?error=steam_denied`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=steam_denied`);
       }
       // Extract SteamID from the identity URL
       const steamId = openidIdentity.split('/').pop() || '';
       if (!steamId) {
-        set.redirect = `${redirectBase}?error=steam_session_failed`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=steam_session_failed`);
       }
       try {
         const userInfo = await prov.fetchUser(steamId);
@@ -759,32 +735,27 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
           },
           { upsert: true, new: true },
         );
-        (cookie as any).oauth2_state = { value: '', maxAge: 0, path: '/' };
-        set.redirect = `${redirectBase}?success=steam`;
+        return oauthRedirect(`${redirectBase}&success=steam`, 'oauth2_state=; Path=/; Max-Age=0');
       } catch (err) {
         console.error('Steam callback error:', err);
-        set.redirect = `${redirectBase}?error=steam_error`;
+        return oauthRedirect(`${redirectBase}&error=steam_error`);
       }
-      return;
     }
 
     const code = (query as any).code as string | undefined;
     const state = (cookie as any).oauth2_state?.value as string | undefined;
 
     if (!code) {
-      set.redirect = `${redirectBase}?error=${provider}_denied`;
-      return;
+      return oauthRedirect(`${redirectBase}&error=${provider}_denied`);
     }
     if (!state || !state.startsWith(`${provider}:`)) {
-      set.redirect = `${redirectBase}?error=${provider}_state_missing`;
-      return;
+      return oauthRedirect(`${redirectBase}&error=${provider}_state_missing`);
     }
 
     const userId = state.split(':')[1];
     const prov = OAUTH2_PROVIDERS[provider];
     if (!prov || !prov.clientId || !prov.clientSecret) {
-      set.redirect = `${redirectBase}?error=${provider}_not_configured`;
-      return;
+      return oauthRedirect(`${redirectBase}&error=${provider}_not_configured`);
     }
 
     const callbackUrl = `${config.FRONTEND_URL || config.API_BASE_URL}/api/auth/${provider}/callback`;
@@ -793,15 +764,13 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       // Exchange code for access token
       const tokenResp = await prov.exchangeCode(prov.clientId, prov.clientSecret, code, callbackUrl);
       if (!tokenResp.access_token) {
-        set.redirect = `${redirectBase}?error=${provider}_session_failed`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=${provider}_session_failed`);
       }
 
       // Fetch user info
       const userInfo = await prov.fetchUser(tokenResp.access_token);
       if (!userInfo.accountId) {
-        set.redirect = `${redirectBase}?error=${provider}_session_failed`;
-        return;
+        return oauthRedirect(`${redirectBase}&error=${provider}_session_failed`);
       }
 
       // Upsert connection
@@ -821,13 +790,10 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         { upsert: true, new: true },
       );
 
-      // Clear state cookie
-      (cookie as any).oauth2_state = { value: '', maxAge: 0, path: '/' };
-
-      set.redirect = `${redirectBase}?success=${provider}`;
+      return oauthRedirect(`${redirectBase}&success=${provider}`, 'oauth2_state=; Path=/; Max-Age=0');
     } catch (err) {
       console.error(`${provider} callback error:`, err);
-      set.redirect = `${redirectBase}?error=${provider}_error`;
+      return oauthRedirect(`${redirectBase}&error=${provider}_error`);
     }
   }, {
     query: t.Object({

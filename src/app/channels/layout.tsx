@@ -137,7 +137,26 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
   const [showInvite, setShowInvite] = useState(false);
   const [showServerSettings, setShowServerSettings] = useState(false);
   const pathname = usePathname();
+  const router = useRouter();
   const { currentServer } = useServer();
+
+  useEffect(() => {
+    if (typeof window !== "undefined") {
+      const params = new URLSearchParams(window.location.search);
+      const settingsTab = params.get("settings") || params.get("openSettings");
+      if (settingsTab) {
+        // Clear params to avoid loop / reuse
+        const newUrl = window.location.pathname;
+        window.history.replaceState({}, document.title, newUrl);
+
+        if (window.matchMedia('(max-width: 767px)').matches) {
+          router.push(`/channels/settings/${settingsTab}`);
+        } else {
+          setShowUserSettings(true);
+        }
+      }
+    }
+  }, [router]);
 
   // Listen for custom events from UserPanel and mobile views
   useEffect(() => {

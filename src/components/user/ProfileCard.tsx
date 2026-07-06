@@ -32,6 +32,7 @@ import { MusicActivityCard } from "@/components/user/MusicActivityCard";
 import { GameActivityCard } from "@/components/user/GameActivityCard";
 import { getConnectionIcon, getConnectionColor, getConnectionHref } from "@/components/user/ConnectionIcon";
 import { FullProfileDialog } from "@/components/user/FullProfileDialog";
+import { useAuth } from "@/contexts/AuthContext";
 import { ExternalLink } from "lucide-react";
 
 export interface ProfileCardUser {
@@ -120,6 +121,9 @@ export function ProfileCard({
   onViewFullProfile,
 }: ProfileCardProps) {
   const router = useRouter();
+  const { user: currentUser } = useAuth();
+  const isSelf = isCurrentUser || (currentUser?.id && user.id && currentUser.id === user.id);
+
   const [copied, setCopied] = useState(false);
   const [friendRequestSent, setFriendRequestSent] = useState(user.friendRequestSent ?? false);
   const [memberRoles, setMemberRoles] = useState(user.roles || []);
@@ -284,7 +288,7 @@ export function ProfileCard({
 
         {/* Actions */}
         <div className="flex justify-end gap-2 pt-3 min-h-[44px]">
-          {!isCurrentUser && user.id && (
+          {!isSelf && user.id && (
             <>
               <button
                 onClick={handleSendMessage}
@@ -566,7 +570,7 @@ export function ProfileCard({
           user={user}
           open={fullProfileOpen}
           onOpenChange={setFullProfileOpen}
-          isCurrentUser={isCurrentUser}
+          isCurrentUser={!!isSelf}
           isFriend={isFriend}
           serverId={serverId}
           showOwnerCrown={showOwnerCrown}

@@ -21,6 +21,8 @@ import {
   Accessibility,
   Bug,
   MessageSquare,
+  UserCheck,
+  Link as LinkIcon,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +62,8 @@ export function MobileProfileView() {
       title: "Account",
       items: [
         { icon: User, label: "My Account", href: "/channels/settings/account" },
+        { icon: UserCheck, label: "Profiles", href: "/channels/settings/profiles" },
+        { icon: LinkIcon, label: "Connections", href: "/channels/settings/connections" },
         { icon: Shield, label: "Privacy & Safety", href: "/channels/settings/privacy" },
         { icon: Lock, label: "Authorized Apps", href: "/channels/settings/apps" },
       ],
@@ -146,7 +150,7 @@ export function MobileProfileView() {
                 {/* Edit Profile Button */}
                 <div className="flex justify-end mb-4">
                   <button
-                    onClick={() => router.push("/channels/settings/account")}
+                    onClick={() => router.push("/channels/settings/profiles")}
                     className="px-4 py-2 rounded-xl bg-[var(--bg-hover)] hover:bg-[var(--bg-active)] text-[var(--text-primary)] text-sm font-semibold transition-all active:scale-95 border border-[var(--border-subtle)]"
                   >
                     Edit Profile
