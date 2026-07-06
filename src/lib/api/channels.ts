@@ -246,7 +246,7 @@ async function checkChannelAccess(userId: string, channelId: string): Promise<{
           const accessRoles = (parent?.ticketAccessRoleIds || []).map((r: Types.ObjectId) => r.toString());
           if (accessRoles.length) {
             const memberRoles = (membership.roles || []).map((r: Types.ObjectId) => r.toString());
-            hasAccessRole = memberRoles.some((r) => accessRoles.includes(r));
+            hasAccessRole = memberRoles.some((r: string) => accessRoles.includes(r));
           }
         }
         if (!isServerOwner && !hasAccessRole) {
