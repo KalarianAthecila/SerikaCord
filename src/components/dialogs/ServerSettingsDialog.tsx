@@ -545,6 +545,40 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       return;
     }
 
+    // GIFs bypass the cropper to preserve animation
+    if (file.type === "image/gif") {
+      if (file.size > 50 * 1024 * 1024) {
+        toast.error("GIF must be less than 50MB");
+        return;
+      }
+      setIsUploadingBanner(true);
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      try {
+        const response = await fetch(`/api/upload/server/${currentServer.id}/banner`, {
+          method: "POST",
+          body: formData,
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setServerBanner(data.url);
+          toast.success("Server banner updated!");
+          await fetchServers();
+        } else {
+          const data = await response.json();
+          toast.error(data.error || "Failed to upload banner");
+        }
+      } catch {
+        toast.error("Failed to upload banner");
+      } finally {
+        setIsUploadingBanner(false);
+      }
+      if (bannerInputRef.current) {
+        bannerInputRef.current.value = "";
+      }
+      return;
+    }
+
     if (file.size > 8 * 1024 * 1024) {
       toast.error("Image must be less than 8MB");
       return;

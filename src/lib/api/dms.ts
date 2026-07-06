@@ -14,7 +14,7 @@ function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string):
   return str1 === str2;
 }
 
-const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#(?:[0-9a-fA-F]{24})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>/g;
+const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#(?:[0-9a-fA-F]{24})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>|<t:-?\d{1,13}(?::[tTdDfFR])?>|<t:-?\d{1,13}>/g;
 
 function sanitizeMessageContent(content: string): string {
   const preservedTokens = new Map<string, string>();

@@ -69,7 +69,7 @@ function isReferencedMessageRaw(value: unknown): value is ReferencedMessageRaw {
   return Boolean(value) && typeof value === 'object' && '_id' in (value as Record<string, unknown>) && !(value instanceof Types.ObjectId);
 }
 
-const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#(?:[0-9a-fA-F]{24})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>/g;
+const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#(?:[0-9a-fA-F]{24})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>|<t:-?\d{1,13}(?::[tTdDfFR])?>|<t:-?\d{1,13}>/g;
 const USER_MENTION_REGEX = /<@!?([0-9a-fA-F]{24})>/g;
 const ROLE_MENTION_REGEX = /<@&([0-9a-fA-F]{24})>/g;
 const CHANNEL_MENTION_REGEX = /<#([0-9a-fA-F]{24})>/g;

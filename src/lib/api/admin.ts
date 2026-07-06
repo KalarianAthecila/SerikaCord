@@ -531,7 +531,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       allowRegistration?: boolean;
       globalAnnouncement?: string;
       oembedWhitelist?: string[];
-      allowedFileTypes?: string[];
+      allowedFileTypes?: { type: string; safe: boolean }[];
       warnOnUnknownFileTypes?: boolean;
     };
 
@@ -563,7 +563,10 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       allowRegistration: t.Optional(t.Boolean()),
       globalAnnouncement: t.Optional(t.String()),
       oembedWhitelist: t.Optional(t.Array(t.String())),
-      allowedFileTypes: t.Optional(t.Array(t.String())),
+      allowedFileTypes: t.Optional(t.Array(t.Object({
+        type: t.String(),
+        safe: t.Boolean(),
+      }))),
       warnOnUnknownFileTypes: t.Optional(t.Boolean()),
     }),
   })

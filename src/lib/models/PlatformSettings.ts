@@ -1,5 +1,10 @@
 import mongoose, { Schema } from 'mongoose';
 
+export interface IAllowedFileType {
+  type: string;
+  safe: boolean;
+}
+
 export interface IPlatformSettings {
   _id: string;
   maintenanceMode: boolean;
@@ -8,7 +13,7 @@ export interface IPlatformSettings {
   announcementUpdatedAt?: Date;
   encryptionKey: string;
   oembedWhitelist?: string[];
-  allowedFileTypes?: string[];
+  allowedFileTypes?: IAllowedFileType[];
   warnOnUnknownFileTypes?: boolean;
   updatedAt: Date;
 }
@@ -42,7 +47,7 @@ const PlatformSettingsSchema = new Schema<IPlatformSettings>({
     default: [],
   },
   allowedFileTypes: {
-    type: [String],
+    type: [{ type: { type: String, required: true }, safe: { type: Boolean, default: true } }],
     default: [],
   },
   warnOnUnknownFileTypes: {

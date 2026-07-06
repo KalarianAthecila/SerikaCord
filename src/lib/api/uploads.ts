@@ -5,7 +5,7 @@ import { checkRateLimit, getClientIP } from '@/lib/security';
 import { config } from '@/lib/config';
 import { Server, ServerMember, User } from '@/lib/models';
 import { accountsSyncProfile } from '@/lib/services/accountsClient';
-import { getPlatformSettings } from '@/lib/models/PlatformSettings';
+import { getPlatformSettings, type IAllowedFileType } from '@/lib/models/PlatformSettings';
 
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -23,11 +23,16 @@ function isValidImageType(type: string): type is "image/jpeg" | "image/png" | "i
   return config.ALLOWED_IMAGE_TYPES.includes(type as typeof config.ALLOWED_IMAGE_TYPES[number]);
 }
 
-function isValidFileType(type: string, customWhitelist?: string[]): boolean {
+function isValidFileType(type: string, customWhitelist?: IAllowedFileType[]): { allowed: boolean; warn: boolean } {
   if (customWhitelist && customWhitelist.length > 0) {
-    return customWhitelist.includes(type);
+    const entry = customWhitelist.find((f) => f.type === type);
+    if (entry) {
+      return { allowed: true, warn: !entry.safe };
+    }
+    return { allowed: false, warn: false };
   }
-  return config.ALLOWED_FILE_TYPES.includes(type as typeof config.ALLOWED_FILE_TYPES[number]);
+  const allowed = config.ALLOWED_FILE_TYPES.includes(type as typeof config.ALLOWED_FILE_TYPES[number]);
+  return { allowed, warn: false };
 }
 
 export const uploadRoutes = new Elysia({ prefix: '/upload' })
@@ -146,10 +151,11 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
     }
 
-    // Validate file size
-    if (file.size > config.MAX_BANNER_SIZE) {
+    // Validate file size (GIFs get a higher limit to preserve animation)
+    const maxBannerSize = file.type === 'image/gif' ? 50 * 1024 * 1024 : config.MAX_BANNER_SIZE;
+    if (file.size > maxBannerSize) {
       set.status = 400;
-      return { error: `File too large. Maximum size is ${config.MAX_BANNER_SIZE / 1024 / 1024}MB.` };
+      return { error: `File too large. Maximum size is ${maxBannerSize / 1024 / 1024}MB.` };
     }
 
     try {
@@ -290,9 +296,11 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
     }
 
-    if (file.size > config.MAX_BANNER_SIZE) {
+    // Validate file size (GIFs get a higher limit to preserve animation)
+    const maxMemberBannerSize = file.type === 'image/gif' ? 50 * 1024 * 1024 : config.MAX_BANNER_SIZE;
+    if (file.size > maxMemberBannerSize) {
       set.status = 400;
-      return { error: `File too large. Maximum size is ${config.MAX_BANNER_SIZE / 1024 / 1024}MB.` };
+      return { error: `File too large. Maximum size is ${maxMemberBannerSize / 1024 / 1024}MB.` };
     }
 
     try {
@@ -452,9 +460,11 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
     }
 
-    if (file.size > config.MAX_BANNER_SIZE) {
+    // Validate file size (GIFs get a higher limit to preserve animation)
+    const maxServerBannerSize = file.type === 'image/gif' ? 50 * 1024 * 1024 : config.MAX_BANNER_SIZE;
+    if (file.size > maxServerBannerSize) {
       set.status = 400;
-      return { error: `File too large. Maximum size is ${config.MAX_BANNER_SIZE / 1024 / 1024}MB.` };
+      return { error: `File too large. Maximum size is ${maxServerBannerSize / 1024 / 1024}MB.` };
     }
 
     try {
@@ -517,10 +527,14 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     // Validate file type (use platform settings whitelist if configured)
     const platformSettings = await getPlatformSettings();
     const customWhitelist = platformSettings.allowedFileTypes;
-    if (!isValidFileType(file.type, customWhitelist)) {
+    const fileCheck = isValidFileType(file.type, customWhitelist);
+    if (!fileCheck.allowed) {
+      const shouldWarn = platformSettings.warnOnUnknownFileTypes !== false;
       set.status = 400;
-      return { error: 'File type not allowed' };
+      return { error: shouldWarn ? `File type "${file.type}" is not allowed. Only whitelisted file types can be uploaded.` : 'File type not allowed' };
     }
+    // File is allowed — if it's tagged as "bad" or unknown with warnings enabled, include a warning
+    const warning = fileCheck.warn ? 'Warning: This file type is flagged as potentially unsafe.' : undefined;
 
     // Validate file size — premium users get higher limit
     const maxSize = user.isPremium ? config.MAX_FILE_SIZE_PREMIUM : config.MAX_FILE_SIZE;
@@ -538,6 +552,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
       return {
         success: true,
+        warning,
         attachment: {
           id: result.hash.slice(0, 16),
           filename: file.name,

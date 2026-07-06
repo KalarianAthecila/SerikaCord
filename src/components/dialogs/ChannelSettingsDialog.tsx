@@ -275,7 +275,8 @@ export function ChannelSettingsDialog({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-w-[880px] w-[90vw] h-[85vh] p-0 bg-[var(--bg-primary)] border-none rounded-xl overflow-hidden flex"
+        showCloseButton={false}
+        className="!max-w-none !w-screen !h-screen !rounded-none p-0 bg-[var(--bg-primary)] border-none overflow-hidden flex !translate-x-[-50%] !translate-y-[-50%]"
         onPointerDownOutside={(e) => e.preventDefault()}
       >
         {/* Sidebar Navigation */}
@@ -308,6 +309,17 @@ export function ChannelSettingsDialog({
               </button>
             ))}
           </nav>
+
+          {/* ESC close hint */}
+          <div className="px-4 py-3 border-t border-[var(--border-subtle)]">
+            <button
+              onClick={() => onOpenChange(false)}
+              className="flex items-center gap-2 text-xs text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors w-full"
+            >
+              <kbd className="px-1.5 py-0.5 rounded bg-[var(--bg-active)] text-[10px] font-mono">ESC</kbd>
+              Close
+            </button>
+          </div>
         </div>
 
         {/* Main Content */}
@@ -317,12 +329,6 @@ export function ChannelSettingsDialog({
             <h1 className="text-xl font-bold text-[var(--text-primary)]">
               {activeTab === "overview" ? "Overview" : activeTab === "permissions" ? "Permissions" : "Delete Channel"}
             </h1>
-            <button
-              onClick={() => onOpenChange(false)}
-              className="p-2 rounded-full hover:bg-[var(--bg-sidebar-elevated)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
           </div>
 
           {/* Content Area */}

@@ -181,7 +181,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     allowRegistration: boolean;
     globalAnnouncement?: string;
     oembedWhitelist?: string[];
-    allowedFileTypes?: string[];
+    allowedFileTypes?: { type: string; safe: boolean }[];
     warnOnUnknownFileTypes?: boolean;
   } | null>(null);
   const [selectedUser, setSelectedUser] = useState<{
@@ -524,6 +524,19 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       return;
     }
 
+    // GIFs bypass the cropper to preserve animation
+    if (file.type === "image/gif") {
+      if (file.size > 50 * 1024 * 1024) {
+        toast.error("GIF must be less than 50MB");
+        return;
+      }
+      handleGifBannerUpload(file);
+      if (bannerInputRef.current) {
+        bannerInputRef.current.value = "";
+      }
+      return;
+    }
+
     if (file.size > 8 * 1024 * 1024) {
       toast.error("Image must be less than 8MB");
       return;
@@ -539,6 +552,43 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
     if (bannerInputRef.current) {
       bannerInputRef.current.value = "";
+    }
+  };
+
+  const handleGifBannerUpload = async (file: File) => {
+    const isAvatar = false;
+    let endpoint = "/api/upload/banner";
+    if (profileTab === "server" && selectedServerId) {
+      endpoint = `/api/upload/server/${selectedServerId}/banner`;
+    }
+
+    setIsUploadingBanner(true);
+    const formData = new FormData();
+    formData.append("file", file, file.name);
+
+    try {
+      const response = await fetch(endpoint, {
+        method: "POST",
+        body: formData,
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (profileTab === "main") {
+          updateUser({ banner: data.url });
+        } else {
+          setServerBanner(data.url);
+        }
+        toast.success("Banner updated!");
+        await refresh();
+      } else {
+        const data = await response.json();
+        toast.error(data.error || "Failed to upload banner");
+      }
+    } catch {
+      toast.error("Failed to upload banner");
+    } finally {
+      setIsUploadingBanner(false);
     }
   };
 
@@ -737,7 +787,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     }
   };
 
-  const handleUpdatePlatformSettings = async (updates: { maintenanceMode?: boolean; allowRegistration?: boolean; oembedWhitelist?: string[]; allowedFileTypes?: string[]; warnOnUnknownFileTypes?: boolean }) => {
+  const handleUpdatePlatformSettings = async (updates: { maintenanceMode?: boolean; allowRegistration?: boolean; oembedWhitelist?: string[]; allowedFileTypes?: { type: string; safe: boolean }[]; warnOnUnknownFileTypes?: boolean }) => {
     try {
       const response = await fetch("/api/admin/settings", {
         method: "PATCH",
@@ -2995,7 +3045,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     <div className="bg-[var(--bg-app)] rounded-lg p-4">
                       <h3 className="text-white font-semibold mb-3">File Type Whitelist</h3>
                       <p className="text-sm text-[var(--text-muted)] mb-3">
-                        Allowed MIME types for file uploads. When empty, the default list is used.
+                        Only whitelisted MIME types can be uploaded. Tag each as safe or bad — bad types are allowed but users get a warning.
                       </p>
                       <div className="flex gap-2 mb-3">
                         <Input
@@ -3008,8 +3058,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               e.preventDefault();
                               const type = fileTypeInput.trim().toLowerCase();
                               const current = platformSettings?.allowedFileTypes || [];
-                              if (!current.includes(type)) {
-                                void handleUpdatePlatformSettings({ allowedFileTypes: [...current, type] });
+                              if (!current.some((f) => f.type === type)) {
+                                void handleUpdatePlatformSettings({ allowedFileTypes: [...current, { type, safe: true }] });
                               }
                               setFileTypeInput("");
                             }
@@ -3020,8 +3070,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             if (!fileTypeInput.trim()) return;
                             const type = fileTypeInput.trim().toLowerCase();
                             const current = platformSettings?.allowedFileTypes || [];
-                            if (!current.includes(type)) {
-                              void handleUpdatePlatformSettings({ allowedFileTypes: [...current, type] });
+                            if (!current.some((f) => f.type === type)) {
+                              void handleUpdatePlatformSettings({ allowedFileTypes: [...current, { type, safe: true }] });
                             }
                             setFileTypeInput("");
                           }}
@@ -3036,18 +3086,31 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             No custom whitelist. Using defaults: image/jpeg, image/png, image/gif, image/webp, audio/mpeg, audio/ogg, audio/wav, video/mp4, video/webm, application/pdf, text/plain
                           </p>
                         ) : (
-                          (platformSettings?.allowedFileTypes || []).map((type) => (
-                            <div key={type} className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-card)] rounded text-sm">
-                              <span className="text-white">{type}</span>
-                              <button
-                                onClick={() => {
-                                  const current = platformSettings?.allowedFileTypes || [];
-                                  void handleUpdatePlatformSettings({ allowedFileTypes: current.filter((t) => t !== type) });
-                                }}
-                                className="text-red-400 hover:text-red-300 text-xs"
-                              >
-                                Remove
-                              </button>
+                          (platformSettings?.allowedFileTypes || []).map((entry) => (
+                            <div key={entry.type} className="flex items-center justify-between px-3 py-1.5 bg-[var(--bg-card)] rounded text-sm">
+                              <span className="text-white">{entry.type}</span>
+                              <div className="flex items-center gap-3">
+                                <button
+                                  onClick={() => {
+                                    const current = platformSettings?.allowedFileTypes || [];
+                                    void handleUpdatePlatformSettings({
+                                      allowedFileTypes: current.map((f) => f.type === entry.type ? { ...f, safe: !f.safe } : f),
+                                    });
+                                  }}
+                                  className={entry.safe ? "text-green-400 hover:text-green-300 text-xs font-medium" : "text-yellow-400 hover:text-yellow-300 text-xs font-medium"}
+                                >
+                                  {entry.safe ? "Safe" : "Bad"}
+                                </button>
+                                <button
+                                  onClick={() => {
+                                    const current = platformSettings?.allowedFileTypes || [];
+                                    void handleUpdatePlatformSettings({ allowedFileTypes: current.filter((f) => f.type !== entry.type) });
+                                  }}
+                                  className="text-red-400 hover:text-red-300 text-xs"
+                                >
+                                  Remove
+                                </button>
+                              </div>
                             </div>
                           ))
                         )}
