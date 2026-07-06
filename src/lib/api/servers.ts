@@ -353,7 +353,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: `Server has reached the channel limit of ${config.MAX_CHANNELS_PER_SERVER}` };
     }
 
-    const { name, type = 'text', parentId, nsfw } = body;
+    const { name, type = 'text', parentId, nsfw, forumMode } = body;
     const sanitizedName = sanitizeInput(name);
 
     if (type === 'category' && parentId) {
@@ -385,6 +385,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       position,
       parentId: parentId || null,
       nsfw: type !== 'category' ? Boolean(nsfw) : false,
+      ...(type === 'forum' ? { forumMode: forumMode === 'tickets' ? 'tickets' : 'posts' } : {}),
     });
 
     await channel.save();
@@ -399,9 +400,10 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }),
     body: t.Object({
       name: t.String({ minLength: 1, maxLength: 100 }),
-      type: t.Optional(t.Union([t.Literal('text'), t.Literal('voice'), t.Literal('announcement'), t.Literal('category')])),
+      type: t.Optional(t.Union([t.Literal('text'), t.Literal('voice'), t.Literal('announcement'), t.Literal('category'), t.Literal('forum')])),
       parentId: t.Optional(t.String()),
       nsfw: t.Optional(t.Boolean()),
+      forumMode: t.Optional(t.Union([t.Literal('posts'), t.Literal('tickets')])),
     }),
   })
   // Bulk reorder channels (drag & drop)
@@ -1445,7 +1447,12 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You are not a member of this server' };
     }
 
-    const channels = await Channel.find({ serverId: params.serverId }).sort({ position: 1 });
+    // Threads (public_thread / private_thread) live inside forum channels and are
+    // listed via /channels/:id/threads — never as top-level sidebar channels.
+    const channels = await Channel.find({
+      serverId: params.serverId,
+      type: { $nin: ['public_thread', 'private_thread'] },
+    }).sort({ position: 1 });
     // Transform _id to id for frontend compatibility
     return channels.map(ch => ({
       id: ch._id.toString(),
@@ -1456,6 +1463,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       parentId: ch.parentId?.toString() || null,
       topic: ch.topic,
       nsfw: ch.nsfw,
+      forumMode: ch.forumMode,
       rateLimitPerUser: ch.rateLimitPerUser,
       lastMessageId: ch.lastMessageId?.toString() || null,
       permissionOverwrites: (ch.permissionOverwrites || []).map((o: { id: any; type: string; allow: string; deny: string }) => ({

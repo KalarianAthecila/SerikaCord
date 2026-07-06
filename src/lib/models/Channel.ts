@@ -1,14 +1,19 @@
 import mongoose, { Schema, Document, Types } from 'mongoose';
 
-export type ChannelType = 
-  | 'text' 
-  | 'voice' 
-  | 'category' 
-  | 'announcement' 
-  | 'stage' 
-  | 'forum' 
-  | 'dm' 
+export type ChannelType =
+  | 'text'
+  | 'voice'
+  | 'category'
+  | 'announcement'
+  | 'stage'
+  | 'forum'
+  | 'public_thread'
+  | 'private_thread'
+  | 'dm'
   | 'group_dm';
+
+/** How a forum channel behaves: normal discussion posts, or a ticket system. */
+export type ForumMode = 'posts' | 'tickets';
 
 export interface IPermissionOverwrite {
   id: Types.ObjectId;
@@ -53,7 +58,18 @@ export interface IChannel extends Document {
   };
   defaultSortOrder?: 'latest_activity' | 'creation_date';
   defaultForumLayout?: 'not_set' | 'list_view' | 'gallery_view';
-  
+  forumMode: ForumMode; // 'posts' (normal forum) or 'tickets'
+  ticketAccessRoleIds: Types.ObjectId[]; // Roles that can see every ticket in a ticket-mode forum
+
+  // For threads (public_thread / private_thread) — a thread's parentId points at
+  // its forum/text channel, and messages are stored against the thread's own _id.
+  ownerId?: Types.ObjectId; // Thread creator
+  archived: boolean;
+  locked: boolean;
+  threadMemberIds: Types.ObjectId[]; // Explicit members (private threads / tickets)
+  appliedTags: string[]; // availableTags ids applied to this thread
+  messageCount: number;
+
   // For DMs
   recipientIds: Types.ObjectId[];
   
@@ -101,7 +117,7 @@ const ChannelSchema = new Schema<IChannel>({
   },
   type: {
     type: String,
-    enum: ['text', 'voice', 'category', 'announcement', 'stage', 'forum', 'dm', 'group_dm'],
+    enum: ['text', 'voice', 'category', 'announcement', 'stage', 'forum', 'public_thread', 'private_thread', 'dm', 'group_dm'],
     required: true,
     index: true,
   },
@@ -186,6 +202,39 @@ const ChannelSchema = new Schema<IChannel>({
     enum: ['not_set', 'list_view', 'gallery_view'],
     default: 'not_set',
   },
+  forumMode: {
+    type: String,
+    enum: ['posts', 'tickets'],
+    default: 'posts',
+  },
+  ticketAccessRoleIds: [{
+    type: Schema.Types.ObjectId,
+    ref: 'Role',
+  }],
+  ownerId: {
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+    default: null,
+  },
+  archived: {
+    type: Boolean,
+    default: false,
+  },
+  locked: {
+    type: Boolean,
+    default: false,
+  },
+  threadMemberIds: [{
+    type: Schema.Types.ObjectId,
+    ref: 'User',
+  }],
+  appliedTags: [{
+    type: String,
+  }],
+  messageCount: {
+    type: Number,
+    default: 0,
+  },
   recipientIds: [{
     type: Schema.Types.ObjectId,
     ref: 'User',
@@ -198,6 +247,8 @@ const ChannelSchema = new Schema<IChannel>({
 // Indexes
 ChannelSchema.index({ serverId: 1, position: 1 });
 ChannelSchema.index({ serverId: 1, parentId: 1 });
+// Listing threads under a forum/text channel, most-recently-active first
+ChannelSchema.index({ parentId: 1, archived: 1, lastMessageId: -1 });
 ChannelSchema.index({ recipientIds: 1 }, { sparse: true });
 
 export const Channel = mongoose.models.Channel || mongoose.model<IChannel>('Channel', ChannelSchema);

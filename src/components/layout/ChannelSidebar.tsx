@@ -15,6 +15,7 @@ import {
   Hash,
   Volume2,
   Megaphone,
+  MessagesSquare,
   ChevronDown,
   Settings,
   UserPlus,
@@ -435,6 +436,8 @@ export function ChannelSidebar({
           return <Volume2 className="w-5 h-5 text-[var(--text-muted)]" />;
         case "announcement":
           return <Megaphone className="w-5 h-5 text-[var(--text-muted)]" />;
+        case "forum":
+          return <MessagesSquare className="w-5 h-5 text-[var(--text-muted)]" />;
         case "category":
           return <Folder className="w-5 h-5 text-[var(--text-muted)]" />;
         default:

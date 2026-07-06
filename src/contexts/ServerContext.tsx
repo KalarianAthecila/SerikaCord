@@ -20,14 +20,16 @@ interface Server {
   afkTimeout?: number;
 }
 
-type ChannelType = 
-  | "text" 
-  | "voice" 
-  | "category" 
-  | "announcement" 
-  | "stage" 
-  | "forum" 
-  | "dm" 
+type ChannelType =
+  | "text"
+  | "voice"
+  | "category"
+  | "announcement"
+  | "stage"
+  | "forum"
+  | "public_thread"
+  | "private_thread"
+  | "dm"
   | "group_dm";
 
 interface PermissionOverwrite {
@@ -66,7 +68,7 @@ interface ServerContextType {
   joinServer: (inviteCode: string) => Promise<void>;
   leaveServer: (serverId: string) => Promise<void>;
   deleteChannel: (channelId: string) => Promise<void>;
-  updateChannel: (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[] }) => Promise<void>;
+  updateChannel: (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[]; type?: string; forumMode?: 'posts' | 'tickets'; ticketAccessRoleIds?: string[]; availableTags?: Array<{ id?: string; name: string; moderated?: boolean; emojiName?: string }>; archived?: boolean; locked?: boolean }) => Promise<void>;
   reorderChannels: (serverId: string, channelUpdates: Array<{ id: string; position: number; parentId?: string | null }>) => Promise<void>;
   members: any[];
   isMembersLoading: boolean;
@@ -313,7 +315,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
   };
 
-  const updateChannel = async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[] }) => {
+  const updateChannel = async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[]; type?: string; forumMode?: 'posts' | 'tickets'; ticketAccessRoleIds?: string[]; availableTags?: Array<{ id?: string; name: string; moderated?: boolean; emojiName?: string }>; archived?: boolean; locked?: boolean }) => {
     const response = await fetch(`/api/channels/${channelId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },

@@ -72,6 +72,12 @@ export function ChannelSettingsDialog({
   const [hasChanges, setHasChanges] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState("");
   const [roles, setRoles] = useState<ServerRole[]>([]);
+  // Forum config
+  const [forumMode, setForumMode] = useState<"posts" | "tickets">("posts");
+  const [ticketRoleIds, setTicketRoleIds] = useState<string[]>([]);
+  const [forumTags, setForumTags] = useState<Array<{ id?: string; name: string }>>([]);
+  const [newTagName, setNewTagName] = useState("");
+  const [forumChanges, setForumChanges] = useState(false);
   const [overwrites, setOverwrites] = useState<PermissionOverwrite[]>([]);
   const [hasPermChanges, setHasPermChanges] = useState(false);
   const [showAddRoleMenu, setShowAddRoleMenu] = useState(false);
@@ -131,6 +137,42 @@ export function ChannelSettingsDialog({
       .catch(() => {});
     return () => { active = false; };
   }, [open, currentServer]);
+
+  // Load full forum config when opening settings for a forum channel
+  useEffect(() => {
+    if (!open || !channel || channel.type !== "forum") return;
+    let active = true;
+    fetch(`/api/channels/${channel.id}`)
+      .then((r) => r.json())
+      .then((data) => {
+        if (!active || !data.channel) return;
+        const ch = data.channel;
+        setForumMode(ch.forumMode === "tickets" ? "tickets" : "posts");
+        setTicketRoleIds((ch.ticketAccessRoleIds || []).map((r: any) => r.toString?.() || r));
+        setForumTags((ch.availableTags || []).map((t: any) => ({ id: t.id, name: t.name })));
+        setForumChanges(false);
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [open, channel]);
+
+  const saveForumConfig = async () => {
+    if (!channel) return;
+    setIsSaving(true);
+    try {
+      await updateChannel(channel.id, {
+        forumMode,
+        ticketAccessRoleIds: ticketRoleIds,
+        availableTags: forumTags.map((t) => ({ id: t.id, name: t.name })),
+      } as any);
+      toast.success("Forum settings saved");
+      setForumChanges(false);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Failed to save forum settings");
+    } finally {
+      setIsSaving(false);
+    }
+  };
 
   // Track overview changes
   useEffect(() => {
@@ -777,6 +819,101 @@ export function ChannelSettingsDialog({
                         </div>
                       )}
                     </div>
+
+                    {/* Forum settings */}
+                    {channel.type === "forum" && (
+                      <div className="p-6 rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] space-y-5">
+                        <div className="space-y-1">
+                          <span className="text-sm font-semibold text-[var(--text-primary)]">Forum Type</span>
+                          <p className="text-xs text-[var(--text-muted)] leading-relaxed">
+                            Posts are public discussions. Tickets are private — each is only visible to its creator and the support roles you choose.
+                          </p>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          {(["posts", "tickets"] as const).map((mode) => (
+                            <button
+                              key={mode}
+                              onClick={() => { setForumMode(mode); setForumChanges(true); }}
+                              className={`p-3 rounded-lg border text-sm font-medium capitalize transition-colors ${
+                                forumMode === mode
+                                  ? "bg-[var(--app-accent)]/15 border-[var(--app-accent)] text-[var(--app-accent)]"
+                                  : "border-[var(--border-subtle)] text-[var(--text-muted)] hover:border-[var(--text-muted)]"
+                              }`}
+                            >
+                              {mode === "tickets" ? "Tickets" : "Posts"}
+                            </button>
+                          ))}
+                        </div>
+
+                        {forumMode === "tickets" && (
+                          <div className="space-y-2">
+                            <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Support Roles</Label>
+                            <p className="text-xs text-[var(--text-muted)]">Members with these roles can see and respond to every ticket.</p>
+                            <div className="flex flex-wrap gap-2 pt-1">
+                              {roles.filter((r) => !r.isDefault).map((r) => {
+                                const on = ticketRoleIds.includes(r.id);
+                                return (
+                                  <button
+                                    key={r.id}
+                                    onClick={() => {
+                                      setTicketRoleIds((prev) => on ? prev.filter((x) => x !== r.id) : [...prev, r.id]);
+                                      setForumChanges(true);
+                                    }}
+                                    className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
+                                      on ? "bg-[var(--app-accent)]/15 border-[var(--app-accent)] text-[var(--app-accent)]" : "border-[var(--border-subtle)] text-[var(--text-muted)] hover:border-[var(--text-muted)]"
+                                    }`}
+                                    style={on && r.color ? { color: r.color, borderColor: r.color } : undefined}
+                                  >
+                                    {r.name}
+                                  </button>
+                                );
+                              })}
+                              {roles.filter((r) => !r.isDefault).length === 0 && (
+                                <span className="text-xs text-[var(--text-muted)]">No roles yet — create roles in Server Settings.</span>
+                              )}
+                            </div>
+                          </div>
+                        )}
+
+                        <div className="space-y-2">
+                          <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Tags</Label>
+                          <div className="flex flex-wrap gap-2">
+                            {forumTags.map((tag, i) => (
+                              <span key={tag.id || i} className="text-xs px-2.5 py-1 rounded-full bg-[var(--app-accent)]/15 text-[var(--app-accent)] flex items-center gap-1.5">
+                                {tag.name}
+                                <button
+                                  onClick={() => { setForumTags((prev) => prev.filter((_, idx) => idx !== i)); setForumChanges(true); }}
+                                  className="hover:text-red-400"
+                                >×</button>
+                              </span>
+                            ))}
+                          </div>
+                          <div className="flex gap-2">
+                            <Input
+                              value={newTagName}
+                              onChange={(e) => setNewTagName(e.target.value.slice(0, 40))}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter" && newTagName.trim()) {
+                                  setForumTags((prev) => [...prev, { name: newTagName.trim() }]);
+                                  setNewTagName("");
+                                  setForumChanges(true);
+                                }
+                              }}
+                              placeholder="Add a tag and press Enter"
+                              className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] h-9 text-sm"
+                            />
+                          </div>
+                        </div>
+
+                        <button
+                          onClick={saveForumConfig}
+                          disabled={!forumChanges || isSaving}
+                          className="w-full py-2.5 rounded-lg bg-[var(--app-accent)] text-white text-sm font-semibold hover:opacity-90 disabled:opacity-50 transition-opacity"
+                        >
+                          Save Forum Settings
+                        </button>
+                      </div>
+                    )}
 
                     {/* Hide After Inactivity */}
                     <div className="space-y-3 p-6 bg-[var(--bg-app)] border border-[var(--border-subtle)] rounded-xl">

@@ -19,14 +19,16 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Hash, Volume2, Folder } from "lucide-react";
+import { Hash, Volume2, Folder, MessagesSquare, Ticket } from "lucide-react";
 import { toast } from "sonner";
+
+type CreatableChannelType = "text" | "voice" | "category" | "forum";
 
 interface CreateChannelDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   defaultParentId?: string;
-  defaultType?: "text" | "voice" | "category";
+  defaultType?: CreatableChannelType;
 }
 
 export function CreateChannelDialog({
@@ -37,9 +39,10 @@ export function CreateChannelDialog({
 }: CreateChannelDialogProps) {
   const { currentServer, fetchChannels, channels } = useServer();
   const [channelName, setChannelName] = useState("");
-  const [channelType, setChannelType] = useState<"text" | "voice" | "category">("text");
+  const [channelType, setChannelType] = useState<CreatableChannelType>("text");
   const [parentId, setParentId] = useState<string | undefined>(undefined);
   const [nsfw, setNsfw] = useState(false);
+  const [forumTickets, setForumTickets] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
 
@@ -53,10 +56,14 @@ export function CreateChannelDialog({
       setChannelType(defaultType || "text");
       setParentId(defaultParentId);
       setNsfw(false);
+      setForumTickets(false);
       setChannelName("");
       setError("");
     }
   }, [open, defaultType, defaultParentId]);
+
+  // Text & forum channels use lowercase-hyphenated names
+  const isSlugType = channelType === "text" || channelType === "forum";
 
   const handleCreate = async () => {
     if (!channelName.trim() || !currentServer) return;
@@ -64,10 +71,9 @@ export function CreateChannelDialog({
     setIsLoading(true);
     setError("");
 
-    const formattedName =
-      channelType === "text"
-        ? channelName.toLowerCase().replace(/\s+/g, "-")
-        : channelName.trim();
+    const formattedName = isSlugType
+      ? channelName.toLowerCase().replace(/\s+/g, "-")
+      : channelName.trim();
 
     try {
       const response = await fetch(`/api/servers/${currentServer.id}/channels`, {
@@ -78,6 +84,7 @@ export function CreateChannelDialog({
           type: channelType,
           parentId: channelType !== "category" ? parentId || null : undefined,
           nsfw: channelType !== "category" ? nsfw : undefined,
+          forumMode: channelType === "forum" ? (forumTickets ? "tickets" : "posts") : undefined,
         }),
       });
 
@@ -186,6 +193,34 @@ export function CreateChannelDialog({
               </button>
 
               <button
+                onClick={() => setChannelType("forum")}
+                className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
+                  channelType === "forum"
+                    ? "bg-[#8B5CF6]/10 border-[#8B5CF6]"
+                    : "bg-[#111111] border-[#222222] hover:border-[#333333]"
+                }`}
+              >
+                <MessagesSquare className="w-6 h-6 text-[#666666]" />
+                <div className="text-left">
+                  <div className="font-medium">Forum</div>
+                  <div className="text-xs text-[#666666]">
+                    Organize discussion into posts, or run a ticket system
+                  </div>
+                </div>
+                <div
+                  className={`ml-auto w-5 h-5 rounded-full border-2 flex items-center justify-center ${
+                    channelType === "forum"
+                      ? "border-[#8B5CF6] bg-[#8B5CF6]"
+                      : "border-[#666666]"
+                  }`}
+                >
+                  {channelType === "forum" && (
+                    <div className="w-2 h-2 rounded-full bg-white" />
+                  )}
+                </div>
+              </button>
+
+              <button
                 onClick={() => setChannelType("category")}
                 className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
                   channelType === "category"
@@ -226,6 +261,8 @@ export function CreateChannelDialog({
                   <Hash className="w-5 h-5" />
                 ) : channelType === "voice" ? (
                   <Volume2 className="w-5 h-5" />
+                ) : channelType === "forum" ? (
+                  <MessagesSquare className="w-5 h-5" />
                 ) : (
                   <Folder className="w-5 h-5" />
                 )}
@@ -235,7 +272,7 @@ export function CreateChannelDialog({
                 value={channelName}
                 onChange={(e) => {
                   const val = e.target.value;
-                  if (channelType === "text") {
+                  if (isSlugType) {
                     setChannelName(val.toLowerCase().replace(/\s+/g, "-"));
                   } else {
                     setChannelName(val);
@@ -246,6 +283,8 @@ export function CreateChannelDialog({
                     ? "new-channel"
                     : channelType === "voice"
                     ? "New Voice Channel"
+                    : channelType === "forum"
+                    ? "new-forum"
                     : "New Category"
                 }
                 className="pl-10 bg-[#111111] border-[#222222] text-white placeholder:text-[#555555] focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-0"
@@ -294,6 +333,27 @@ export function CreateChannelDialog({
                 type="checkbox"
                 checked={nsfw}
                 onChange={(e) => setNsfw(e.target.checked)}
+                className="w-4 h-4 rounded accent-[#8B5CF6] cursor-pointer"
+              />
+            </div>
+          )}
+
+          {/* Ticket mode (forum only) */}
+          {channelType === "forum" && (
+            <div className="flex items-center justify-between p-3 rounded-lg border border-[#222222] bg-[#111111]">
+              <div className="space-y-0.5">
+                <Label htmlFor="ticket-toggle" className="font-medium cursor-pointer text-sm flex items-center gap-1.5">
+                  <Ticket className="w-4 h-4 text-[#8B5CF6]" /> Ticket System
+                </Label>
+                <div className="text-xs text-[#666666] max-w-[280px]">
+                  Each new post becomes a private ticket, visible only to its creator and your configured support roles.
+                </div>
+              </div>
+              <input
+                id="ticket-toggle"
+                type="checkbox"
+                checked={forumTickets}
+                onChange={(e) => setForumTickets(e.target.checked)}
                 className="w-4 h-4 rounded accent-[#8B5CF6] cursor-pointer"
               />
             </div>

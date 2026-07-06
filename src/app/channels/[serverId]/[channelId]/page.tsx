@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { ChatArea } from "@/components/chat/ChatArea";
+import { ForumChannelView } from "@/components/chat/ForumChannelView";
 import { MemberSidebar } from "@/components/chat/MemberSidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -649,10 +650,40 @@ export default function ChannelPage() {
       if (currentChannel?.id !== channel.id) {
         setCurrentChannel(channel);
       }
-    } else if (channels.length > 0 && currentChannel) {
-      setCurrentChannel(null);
+      return;
     }
-  }, [channelId, channels, currentChannel, setCurrentChannel]);
+    // Threads aren't in the sidebar channel list — fetch the channel directly so
+    // navigating into a forum post / ticket works.
+    if (currentChannel?.id === channelId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch(`/api/channels/${channelId}`);
+        if (!res.ok) {
+          if (!cancelled && channels.length > 0 && currentChannel) setCurrentChannel(null);
+          return;
+        }
+        const data = await res.json();
+        const ch = data.channel;
+        if (cancelled || !ch) return;
+        setCurrentChannel({
+          id: ch._id || ch.id,
+          name: ch.name,
+          type: ch.type,
+          serverId: (ch.serverId || serverId)?.toString?.() || serverId,
+          position: ch.position ?? 0,
+          parentId: ch.parentId?.toString?.() || ch.parentId || null,
+          isNsfw: ch.nsfw || ch.isNsfw,
+          topic: ch.topic,
+          rateLimitPerUser: ch.rateLimitPerUser || 0,
+          permissionOverwrites: ch.permissionOverwrites || [],
+        });
+      } catch {
+        // ignore
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [channelId, channels, currentChannel, setCurrentChannel, serverId]);
 
   const isNsfw = currentChannel?.isNsfw;
   const isConfirmed = currentChannel ? confirmedNsfwChannels.has(currentChannel.id) : false;
@@ -776,6 +807,20 @@ export default function ChannelPage() {
           </Button>
         </div>
       </div>
+    );
+  }
+
+  // Forum channel experience — a list of posts / tickets
+  if (currentChannel?.type === "forum") {
+    return (
+      <>
+        <ForumChannelView
+          serverId={serverId}
+          channelId={currentChannel.id}
+          channelName={currentChannel.name}
+        />
+        {showMembers && !isMobile && <MemberSidebar />}
+      </>
     );
   }
 

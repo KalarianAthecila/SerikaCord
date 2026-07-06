@@ -1,5 +1,5 @@
 import { Elysia, t } from 'elysia';
-import { Channel, Message, Role, Server, ServerMember, ServerSticker } from '@/lib/models';
+import { Channel, Message, Role, Server, ServerMember, ServerSticker, User } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
 import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
 import { checkRateLimit, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage, rejectInvalidObjectIdParams } from '@/lib/security';
@@ -232,10 +232,50 @@ async function checkChannelAccess(userId: string, channelId: string): Promise<{
       return { hasAccess: false, error: 'You are not a member of this server' };
     }
 
+    // Private threads / tickets: only the creator, explicit members, holders of a
+    // configured ticket-access role, or server staff (owner) may view.
+    if (channel.type === 'private_thread') {
+      const isOwner = compareIds(channel.ownerId, userId);
+      const isMember = (channel.threadMemberIds || []).some((m: Types.ObjectId | string) => compareIds(m, userId));
+      if (!isOwner && !isMember) {
+        const server = await Server.findById(channel.serverId).select('ownerId');
+        const isServerOwner = server ? compareIds(server.ownerId, userId) : false;
+        let hasAccessRole = false;
+        if (!isServerOwner && channel.parentId) {
+          const parent = await Channel.findById(channel.parentId).select('ticketAccessRoleIds');
+          const accessRoles = (parent?.ticketAccessRoleIds || []).map((r: Types.ObjectId) => r.toString());
+          if (accessRoles.length) {
+            const memberRoles = (membership.roles || []).map((r: Types.ObjectId) => r.toString());
+            hasAccessRole = memberRoles.some((r) => accessRoles.includes(r));
+          }
+        }
+        if (!isServerOwner && !hasAccessRole) {
+          return { hasAccess: false, error: 'You do not have access to this thread' };
+        }
+      }
+    }
+
     return { hasAccess: true, channel };
   }
 
   return { hasAccess: false, error: 'Invalid channel' };
+}
+
+/**
+ * Returns true if a member (with the given role ids) can see every ticket in a
+ * ticket-mode forum — i.e. server owner or holder of a configured access role.
+ */
+async function canAccessAllTickets(
+  serverId: Types.ObjectId | string,
+  userId: string,
+  memberRoleIds: (Types.ObjectId | string)[],
+  ticketAccessRoleIds: (Types.ObjectId | string)[],
+): Promise<boolean> {
+  const server = await Server.findById(serverId).select('ownerId');
+  if (server && compareIds(server.ownerId, userId)) return true;
+  const access = (ticketAccessRoleIds || []).map((r) => r.toString());
+  const mine = (memberRoleIds || []).map((r) => r.toString());
+  return mine.some((r) => access.includes(r));
 }
 
 export const channelRoutes = new Elysia({ prefix: '/channels' })
@@ -288,16 +328,22 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: error || 'Access denied' };
     }
 
-    // Check permissions (owner or manage channels)
+    const isThread = channel.type === 'public_thread' || channel.type === 'private_thread';
+
+    // Check permissions (owner or manage channels). Thread owners may manage
+    // their own thread (rename / archive / lock).
+    let isServerOwner = false;
     if (channel.serverId) {
       const server = await Server.findById(channel.serverId);
-      if (!server?.ownerId.equals(user._id)) {
+      isServerOwner = !!server?.ownerId.equals(user._id);
+      const isThreadOwner = isThread && compareIds(channel.ownerId, user._id);
+      if (!isServerOwner && !isThreadOwner) {
         set.status = 403;
         return { error: 'You do not have permission to edit this channel' };
       }
     }
 
-    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId, position, permissionOverwrites, type } = body;
+    const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId, position, permissionOverwrites, type, forumMode, ticketAccessRoleIds, availableTags, archived, locked } = body;
 
     if (name !== undefined) channel.name = sanitizeInput(name);
     if (topic !== undefined) channel.topic = sanitizeInput(topic);
@@ -343,6 +389,32 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
+    // Thread self-management
+    if (isThread) {
+      if (archived !== undefined) channel.archived = Boolean(archived);
+      if (locked !== undefined && isServerOwner) channel.locked = Boolean(locked);
+    }
+
+    // Forum configuration (server owner only)
+    if (channel.type === 'forum' && isServerOwner) {
+      if (forumMode !== undefined && (forumMode === 'posts' || forumMode === 'tickets')) {
+        channel.forumMode = forumMode;
+      }
+      if (ticketAccessRoleIds !== undefined) {
+        channel.ticketAccessRoleIds = ticketAccessRoleIds
+          .filter((id: string) => isValidObjectId(id))
+          .map((id: string) => new Types.ObjectId(id));
+      }
+      if (availableTags !== undefined) {
+        channel.availableTags = availableTags.map((tag: { id?: string; name: string; moderated?: boolean; emojiName?: string }) => ({
+          id: tag.id || new Types.ObjectId().toString(),
+          name: tag.name,
+          moderated: Boolean(tag.moderated),
+          emojiName: tag.emojiName,
+        }));
+      }
+    }
+
     await channel.save();
 
     // Publish update event
@@ -376,6 +448,16 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         allow: t.String(),
         deny: t.String(),
       }))),
+      forumMode: t.Optional(t.Union([t.Literal('posts'), t.Literal('tickets')])),
+      ticketAccessRoleIds: t.Optional(t.Array(t.String())),
+      availableTags: t.Optional(t.Array(t.Object({
+        id: t.Optional(t.String()),
+        name: t.String({ minLength: 1, maxLength: 40 }),
+        moderated: t.Optional(t.Boolean()),
+        emojiName: t.Optional(t.String()),
+      }))),
+      archived: t.Optional(t.Boolean()),
+      locked: t.Optional(t.Boolean()),
     }),
   })
   // Delete channel
@@ -432,6 +514,188 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
   }, {
     params: t.Object({
       channelId: t.String(),
+    }),
+  })
+  // ── Forum threads ─────────────────────────────────────────────────────────
+  // List threads (posts / tickets) inside a forum channel.
+  .get('/:channelId/threads', async ({ headers, cookie, params, query, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const { hasAccess, channel, error } = await checkChannelAccess(user._id.toString(), params.channelId);
+    if (!hasAccess || !channel) {
+      set.status = 403;
+      return { error: error || 'Access denied' };
+    }
+    if (channel.type !== 'forum') {
+      set.status = 400;
+      return { error: 'Channel is not a forum' };
+    }
+
+    const includeArchived = (query as { archived?: string }).archived === 'true';
+    const filter: Record<string, unknown> = {
+      parentId: channel._id,
+      type: { $in: ['public_thread', 'private_thread'] },
+    };
+    if (!includeArchived) filter.archived = false;
+
+    let threads = await Channel.find(filter)
+      .sort({ lastMessageId: -1, createdAt: -1 })
+      .limit(100)
+      .lean();
+
+    // Ticket forums: hide tickets the requester isn't a party to (unless staff / access role).
+    if (channel.forumMode === 'tickets') {
+      const membership = await ServerMember.findOne({ serverId: channel.serverId, userId: user._id }).select('roles');
+      const canSeeAll = await canAccessAllTickets(
+        channel.serverId,
+        user._id.toString(),
+        (membership?.roles || []) as Types.ObjectId[],
+        (channel.ticketAccessRoleIds || []) as Types.ObjectId[],
+      );
+      if (!canSeeAll) {
+        threads = threads.filter((t) =>
+          compareIds(t.ownerId, user._id.toString()) ||
+          (t.threadMemberIds || []).some((m: Types.ObjectId) => compareIds(m, user._id.toString())),
+        );
+      }
+    }
+
+    const ownerIds = threads.map((t) => t.ownerId).filter(Boolean);
+    const owners = await User.find({ _id: { $in: ownerIds } }).select('username displayName avatar').lean();
+    const ownerMap = new Map(owners.map((o) => [o._id.toString(), o]));
+
+    return {
+      forumMode: channel.forumMode,
+      availableTags: channel.availableTags || [],
+      threads: threads.map((t) => {
+        const owner = t.ownerId ? ownerMap.get(t.ownerId.toString()) : null;
+        return {
+          id: t._id.toString(),
+          name: t.name,
+          type: t.type,
+          archived: t.archived,
+          locked: t.locked,
+          appliedTags: t.appliedTags || [],
+          messageCount: t.messageCount || 0,
+          lastMessageId: t.lastMessageId?.toString() || null,
+          createdAt: t.createdAt,
+          owner: owner ? {
+            id: owner._id.toString(),
+            username: owner.username,
+            displayName: owner.displayName,
+            avatar: owner.avatar,
+          } : null,
+        };
+      }),
+    };
+  }, {
+    params: t.Object({ channelId: t.String() }),
+    query: t.Object({ archived: t.Optional(t.String()) }),
+  })
+  // Create a thread (post / ticket) inside a forum channel.
+  .post('/:channelId/threads', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const { hasAccess, channel: forum, error } = await checkChannelAccess(user._id.toString(), params.channelId);
+    if (!hasAccess || !forum) {
+      set.status = 403;
+      return { error: error || 'Access denied' };
+    }
+    if (forum.type !== 'forum') {
+      set.status = 400;
+      return { error: 'Channel is not a forum' };
+    }
+
+    const { name, content, appliedTags = [] } = body;
+    const trimmedName = sanitizeInput(name).slice(0, 100);
+    if (!trimmedName) {
+      set.status = 400;
+      return { error: 'Post title is required' };
+    }
+    if (!content || !content.trim()) {
+      set.status = 400;
+      return { error: 'Post body is required' };
+    }
+    const validation = validateMessageContent(content);
+    if (!validation.valid) {
+      set.status = 400;
+      return { error: validation.error };
+    }
+
+    const isTicket = forum.forumMode === 'tickets';
+
+    // Validate applied tags against the forum's available tags
+    const validTagIds = new Set((forum.availableTags || []).map((tag: { id: string }) => tag.id));
+    const tags = (appliedTags || []).filter((id: string) => validTagIds.has(id));
+
+    const thread = new Channel({
+      serverId: forum.serverId,
+      name: trimmedName,
+      type: isTicket ? 'private_thread' : 'public_thread',
+      parentId: forum._id,
+      ownerId: user._id,
+      position: 0,
+      appliedTags: tags,
+      threadMemberIds: [user._id],
+      messageCount: 1,
+    });
+    await thread.save();
+
+    // Initial post message lives in the thread channel.
+    let sanitizedContent = normalizeEmojiFormat(sanitizeMessageContent(content));
+    const mentionData = await extractMentionsFromContent(sanitizedContent, forum.serverId || null);
+    const encryptedContent = await encryptForStorage(sanitizedContent);
+    const message = new Message({
+      channelId: thread._id,
+      serverId: forum.serverId,
+      authorId: user._id,
+      content: encryptedContent,
+      type: 'default',
+      mentionEveryone: mentionData.mentionEveryone,
+      mentionedUserIds: mentionData.mentionedUserIds,
+      mentionedRoleIds: mentionData.mentionedRoleIds,
+      mentionedChannelIds: mentionData.mentionedChannelIds,
+    });
+    await message.save();
+    thread.lastMessageId = message._id;
+    await thread.save();
+
+    const publisher = getPublisher();
+    if (publisher) {
+      await publisher.publish('thread:create', JSON.stringify({
+        channelId: forum._id,
+        threadId: thread._id,
+        serverId: forum.serverId,
+      }));
+    }
+
+    return {
+      success: true,
+      thread: {
+        id: thread._id.toString(),
+        name: thread.name,
+        type: thread.type,
+        parentId: forum._id.toString(),
+        serverId: forum.serverId?.toString(),
+        appliedTags: thread.appliedTags,
+        archived: false,
+        locked: false,
+      },
+    };
+  }, {
+    params: t.Object({ channelId: t.String() }),
+    body: t.Object({
+      name: t.String({ minLength: 1, maxLength: 100 }),
+      content: t.String({ minLength: 1, maxLength: 4000 }),
+      appliedTags: t.Optional(t.Array(t.String())),
     }),
   })
   // Get messages

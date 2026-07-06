@@ -5,6 +5,11 @@
  * only an API key (no user auth) — perfect for showing "Currently Listening"
  * on profile cards from a manually-linked Last.fm username.
  *
+ * Album cover art is fetched from the Cover Art Archive
+ * (https://coverartarchive.org) using the MusicBrainz release-group MBID
+ * returned by Last.fm. If the Cover Art Archive has no art for the release,
+ * we fall back to the image URLs provided by Last.fm.
+ *
  * Results are cached per-username for CACHE_TTL_MS to keep load low even when
  * many profile cards are open at once.
  */
@@ -27,7 +32,33 @@ interface CacheEntry {
 
 const CACHE_TTL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 5_000;
+const COVER_ART_TIMEOUT_MS = 3_000;
 const cache = new Map<string, CacheEntry>();
+
+/**
+ * Fetch the front-cover thumbnail (500px) URL from the Cover Art Archive
+ * for a given MusicBrainz release-group MBID.
+ *
+ * The Cover Art Archive responds with a 307 redirect to the actual image
+ * on archive.org. We use `redirect: 'manual'` to capture the Location
+ * header without downloading the image bytes.
+ */
+async function fetchCoverArtUrl(mbid: string, signal: AbortSignal): Promise<string | null> {
+  try {
+    const res = await fetch(
+      `https://coverartarchive.org/release-group/${mbid}/front-500`,
+      { redirect: 'manual', signal, cache: 'no-store' },
+    );
+    if ((res.status === 307 || res.status === 308) && res.headers.get('location')) {
+      const location = res.headers.get('location')!;
+      // Upgrade HTTP to HTTPS for security
+      return location.startsWith('http://') ? 'https://' + location.slice(7) : location;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
 
 export async function getLastFmNowPlaying(username: string): Promise<LastFmTrack | null> {
   const apiKey = config.LASTFM_API_KEY;
@@ -70,10 +101,23 @@ export async function getLastFmNowPlaying(username: string): Promise<LastFmTrack
       return null;
     }
 
-    const images: Array<{ '#text': string; size: string }> = track.image || [];
-    const albumArt = images.find(img => img.size === 'extralarge')?.['#text']
-      || images.find(img => img.size === 'large')?.['#text']
-      || null;
+    // Try Cover Art Archive first using the album's MusicBrainz release-group MBID
+    let albumArt: string | null = null;
+    const albumMbid = track.album?.mbid;
+    if (albumMbid) {
+      const coverController = new AbortController();
+      const coverTimeout = setTimeout(() => coverController.abort(), COVER_ART_TIMEOUT_MS);
+      albumArt = await fetchCoverArtUrl(albumMbid, coverController.signal);
+      clearTimeout(coverTimeout);
+    }
+
+    // Fall back to Last.fm's own image URLs if Cover Art Archive had nothing
+    if (!albumArt) {
+      const images: Array<{ '#text': string; size: string }> = track.image || [];
+      albumArt = images.find(img => img.size === 'extralarge')?.['#text']
+        || images.find(img => img.size === 'large')?.['#text']
+        || null;
+    }
 
     const value: LastFmTrack = {
       name: track.name || 'Unknown Track',
