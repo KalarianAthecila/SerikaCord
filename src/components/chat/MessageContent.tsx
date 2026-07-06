@@ -288,7 +288,7 @@ export const MessageContent = memo(function MessageContent({
             loading="lazy"
           />
           {onlyGif && (
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+            <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
               <GifFavoriteButton url={imageOnlyUrl} />
             </div>
           )}
@@ -336,7 +336,7 @@ export const MessageContent = memo(function MessageContent({
                   loading="lazy"
                 />
                 {inlineGif && (
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                  <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
                     <GifFavoriteButton url={part.url} />
                   </div>
                 )}

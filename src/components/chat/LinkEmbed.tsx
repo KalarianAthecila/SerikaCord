@@ -245,7 +245,7 @@ function GiphyEmbed({ gifId, url }: { gifId: string; url: string }) {
           GIPHY
         </div>
       </a>
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
         <GifFavoriteButton url={url} title="Giphy GIF" source="giphy" />
       </div>
     </div>
@@ -310,7 +310,7 @@ function TenorEmbed({ gifId, url, preview }: { gifId: string; url: string; previ
           Tenor
         </div>
       </a>
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
         <GifFavoriteButton url={url} title={preview?.title} source="tenor" />
       </div>
     </div>
@@ -374,7 +374,7 @@ function KlipyEmbed({ url, preview }: { url: string; preview?: { title?: string;
           Klipy
         </div>
       </a>
-      <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
+      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
         <GifFavoriteButton url={url} title={preview?.title} source="klipy" />
       </div>
     </div>

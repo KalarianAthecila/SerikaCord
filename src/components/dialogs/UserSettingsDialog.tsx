@@ -1226,10 +1226,11 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               {/* Profiles Tab */}
               {activeTab === "profiles" && (
                 <div>
-                  <h2 className="text-xl font-bold text-[var(--text-primary)] mb-5">Profiles</h2>
+                  <h2 className="text-xl font-bold text-[var(--text-primary)] mb-1">Profiles</h2>
+                  <p className="text-sm text-[var(--text-muted)] mb-5">Customize how others see you across SerikaCord</p>
 
                   {/* Tabs */}
-                  <div className="flex gap-6 border-b border-[var(--border-subtle)] mb-6">
+                  <div className="flex gap-1 p-1 bg-[var(--bg-app)] rounded-lg w-fit mb-8">
                     <button
                       onClick={() => {
                         if (!hasChanges) {
@@ -1239,10 +1240,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         }
                       }}
                       className={cn(
-                        "pb-3 font-medium border-b-2 transition-colors",
+                        "px-4 py-2 rounded-md text-sm font-medium transition-all",
                         profileTab === "main"
-                          ? "text-[var(--text-primary)] border-[#8B5CF6]"
-                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                          ? "bg-[var(--app-accent)] text-white shadow-sm"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                       )}
                     >
                       Main Profile
@@ -1256,18 +1257,18 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         }
                       }}
                       className={cn(
-                        "pb-3 font-medium border-b-2 transition-colors",
+                        "px-4 py-2 rounded-md text-sm font-medium transition-all",
                         profileTab === "server"
-                          ? "text-[var(--text-primary)] border-[#8B5CF6]"
-                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                          ? "bg-[var(--app-accent)] text-white shadow-sm"
+                          : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]"
                       )}
                     >
                       Per-server Profiles
                     </button>
                   </div>
 
-                  {/* Profile Preview Card */}
-                  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 lg:gap-8">
+                  {/* Profile Layout */}
+                  <div className="grid grid-cols-1 lg:grid-cols-[1fr,320px] gap-6 lg:gap-8">
                     <div>
                       {/* Main Profile Form */}
                       {profileTab === "main" && (
@@ -1287,29 +1288,27 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             </div>
                           )}
 
-                          {/* Avatar & Banner Upload */}
-                          <div className="space-y-4 mb-6">
-                            <div className="flex gap-4">
-                              <div className="flex-1">
-                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                                  Avatar
-                                </label>
+                          {/* Avatar & Banner Section */}
+                          <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5">
+                            <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider mb-4">Avatar & Banner</h3>
+                            <div className="flex gap-5 items-start">
+                              <div>
                                 <div
                                   onClick={() => avatarInputRef.current?.click()}
-                                  className="relative w-20 h-20 rounded-full bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
+                                  className="relative w-[72px] h-[72px] rounded-full bg-[var(--bg-sidebar-elevated)] border-2 border-dashed border-[var(--border-subtle)] hover:border-[var(--app-accent)] cursor-pointer transition-all group overflow-hidden"
                                 >
                                   {user?.avatar ? (
                                     <img src={user.avatar} alt="Avatar" className="w-full h-full object-cover" />
                                   ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-[#666]">
-                                      <Camera className="w-6 h-6" />
+                                    <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">
+                                      <Camera className="w-5 h-5" />
                                     </div>
                                   )}
                                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                     {isUploadingAvatar ? (
-                                      <Loader2 className="w-6 h-6 animate-spin text-white" />
+                                      <Loader2 className="w-5 h-5 animate-spin text-white" />
                                     ) : (
-                                      <Camera className="w-6 h-6 text-white" />
+                                      <Camera className="w-5 h-5 text-white" />
                                     )}
                                   </div>
                                 </div>
@@ -1322,25 +1321,22 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 />
                               </div>
                               <div className="flex-1">
-                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                                  Banner
-                                </label>
                                 <div
                                   onClick={() => bannerInputRef.current?.click()}
-                                  className="relative w-full h-20 rounded-lg bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
+                                  className="relative w-full h-[72px] rounded-lg bg-[var(--bg-sidebar-elevated)] border-2 border-dashed border-[var(--border-subtle)] hover:border-[var(--app-accent)] cursor-pointer transition-all group overflow-hidden"
                                 >
                                   {user?.banner ? (
                                     <img src={user.banner} alt="Banner" className="w-full h-full object-cover" />
                                   ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-[#666]">
-                                      <Image className="w-6 h-6" />
+                                    <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">
+                                      <Image className="w-5 h-5" />
                                     </div>
                                   )}
                                   <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                     {isUploadingBanner ? (
-                                      <Loader2 className="w-6 h-6 animate-spin text-white" />
+                                      <Loader2 className="w-5 h-5 animate-spin text-white" />
                                     ) : (
-                                      <Camera className="w-6 h-6 text-white" />
+                                      <Camera className="w-5 h-5 text-white" />
                                     )}
                                   </div>
                                 </div>
@@ -1355,28 +1351,31 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             </div>
                           </div>
 
-                          <div className="space-y-4">
-                            <div>
-                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                                Display Name
-                              </label>
-                              <Input
-                                value={displayName}
-                                onChange={(e) => setDisplayName(e.target.value)}
-                                className="bg-[var(--bg-app)] border-none text-white h-10"
-                              />
-                            </div>
-
-                            <div>
-                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                                Pronouns
-                              </label>
-                              <Input
-                                value={pronouns}
-                                onChange={(e) => setPronouns(e.target.value)}
-                                className="bg-[var(--bg-app)] border-none text-white h-10"
-                                placeholder="Add your pronouns"
-                              />
+                          {/* Basic Info Section */}
+                          <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                            <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Basic Info</h3>
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                              <div>
+                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                  Display Name
+                                </label>
+                                <Input
+                                  value={displayName}
+                                  onChange={(e) => setDisplayName(e.target.value)}
+                                  className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] h-10"
+                                />
+                              </div>
+                              <div>
+                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                  Pronouns
+                                </label>
+                                <Input
+                                  value={pronouns}
+                                  onChange={(e) => setPronouns(e.target.value)}
+                                  className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] h-10"
+                                  placeholder="Add your pronouns"
+                                />
+                              </div>
                             </div>
 
                             <div>
@@ -1386,24 +1385,28 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               <select
                                 value={timezone}
                                 onChange={(e) => setTimezone(e.target.value)}
-                                className="w-full h-10 rounded-md bg-[var(--bg-app)] border-none text-white px-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--accent-color)]"
+                                className="w-full h-10 rounded-md bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] px-3 text-sm focus:outline-none focus:ring-1 focus:ring-[var(--app-accent)]"
                               >
                                 <option value="">Select your timezone</option>
                                 {Intl.supportedValuesOf("timeZone").map((tz) => (
                                   <option key={tz} value={tz}>{tz}</option>
                                 ))}
                               </select>
-                              <label className="flex items-center gap-2 mt-2 cursor-pointer">
+                              <label className="flex items-center gap-2 mt-2.5 cursor-pointer">
                                 <input
                                   type="checkbox"
                                   checked={showTimezone}
                                   onChange={(e) => setShowTimezone(e.target.checked)}
-                                  className="w-4 h-4 rounded accent-[var(--accent-color)]"
+                                  className="w-4 h-4 rounded accent-[var(--app-accent)]"
                                 />
                                 <span className="text-sm text-[var(--text-secondary)]">Display my current time on my profile</span>
                               </label>
                             </div>
+                          </div>
 
+                          {/* About & Status Section */}
+                          <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                            <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">About & Status</h3>
                             <div>
                               <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
                                 About Me
@@ -1411,9 +1414,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               <Textarea
                                 value={bio}
                                 onChange={(e) => setBio(e.target.value)}
-                                className="bg-[var(--bg-app)] border-none text-white min-h-[100px] resize-none"
+                                className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] min-h-[100px] resize-none"
                                 maxLength={190}
                               />
+                              <p className="text-xs text-[var(--text-muted)] text-right mt-1">{bio.length}/190</p>
                             </div>
 
                             <div>
@@ -1423,21 +1427,22 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               <Input
                                 value={customStatus}
                                 onChange={(e) => setCustomStatus(e.target.value)}
-                                className="bg-[var(--bg-app)] border-none text-white h-10"
+                                className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] h-10"
                                 placeholder="What's on your mind?"
                                 maxLength={128}
                               />
                             </div>
+                          </div>
 
-                            {/* Display Name Style */}
-                            <div className="mt-8">
-                              <h2 className="text-[16px] font-bold text-white mb-4">Change Display Name Style</h2>
-                              <div className="bg-[#2B2D31] rounded-lg p-5">
+                          {/* Display Name Style */}
+                          <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5">
+                            <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider mb-4">Display Name Style</h3>
+                            <div className="space-y-6">
                                 {/* Font */}
                                 <div className="mb-6">
                                   <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-[14px] font-bold text-white">Choose Font</span>
-                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, font: 'default' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Font"><RotateCcw className="w-4 h-4" /></button>
+                                    <span className="text-[14px] font-bold text-[var(--text-primary)]">Choose Font</span>
+                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, font: 'default' }))} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" title="Reset Font"><RotateCcw className="w-4 h-4" /></button>
                                   </div>
                                   <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
                                     {([
@@ -1456,8 +1461,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                           className={cn(
                                             "h-14 rounded-lg flex flex-col items-center justify-center gap-0.5 transition-all border-2",
                                             isSelected
-                                              ? "border-[#5865F2] bg-[#2B2D31] text-white"
-                                              : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338] hover:text-white"
+                                              ? "border-[var(--app-accent)] bg-[var(--bg-sidebar-elevated)] text-[var(--text-primary)]"
+                                              : "border-transparent bg-[var(--bg-sidebar)] text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
                                           )}
                                         >
                                           <span
@@ -1469,7 +1474,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                           >
                                             {font.label}
                                           </span>
-                                          <span className="text-[10px] text-[#949ba4] font-medium uppercase tracking-wide">
+                                          <span className="text-[10px] text-[var(--text-muted)] font-medium uppercase tracking-wide">
                                             Aa
                                           </span>
                                         </button>
@@ -1481,8 +1486,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 {/* Effect */}
                                 <div className="mb-6">
                                   <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-[14px] font-bold text-white">Choose Effect</span>
-                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: 'solid' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Effect"><RotateCcw className="w-4 h-4" /></button>
+                                    <span className="text-[14px] font-bold text-[var(--text-primary)]">Choose Effect</span>
+                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, effect: 'solid' }))} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" title="Reset Effect"><RotateCcw className="w-4 h-4" /></button>
                                   </div>
                                   <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
                                     {([
@@ -1498,8 +1503,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                         className={cn(
                                           "h-[52px] rounded-lg flex items-center justify-center text-[15px] font-medium transition-all border-2",
                                           displayNameStyle.effect === effect.value
-                                            ? "border-[#5865F2] bg-[#2B2D31]"
-                                            : "border-transparent bg-[#1E1F22] text-[#B5BAC1] hover:bg-[#313338]"
+                                            ? "border-[var(--app-accent)] bg-[var(--bg-sidebar-elevated)]"
+                                            : "border-transparent bg-[var(--bg-sidebar)] text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
                                         )}
                                       >
                                         <span
@@ -1519,8 +1524,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 {/* Color */}
                                 <div>
                                   <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-[14px] font-bold text-white">Choose Color</span>
-                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, color: '', gradient: [] }))} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
+                                    <span className="text-[14px] font-bold text-[var(--text-primary)]">Choose Color</span>
+                                    <button onClick={() => setDisplayNameStyle((s) => ({ ...s, color: '', gradient: [] }))} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
                                   </div>
                                   <div className="flex flex-wrap gap-2.5">
                                     {/* Custom Color Picker */}
@@ -1541,7 +1546,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                         <Pencil className="w-3.5 h-3.5 text-white drop-shadow-md" />
                                       </div>
                                     </label>
-                                    <div className="w-px h-8 bg-[#3f4148] mx-1" />
+                                    <div className="w-px h-8 bg-[var(--border-subtle)] mx-1" />
                                     
                                     {displayNameStyle.effect === 'gradient' ? (
                                       [
@@ -1556,7 +1561,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                             key={i}
                                             onClick={() => setDisplayNameStyle((s) => ({ ...s, gradient: grad }))}
                                             className="w-8 h-8 rounded-full transition-all relative overflow-hidden ring-2"
-                                            style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}
+                                            style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px var(--bg-app), 0 0 0 4px var(--app-accent)' : 'none', outline: isSelected ? '2px solid var(--app-accent)' : 'none', outlineOffset: 1 }}
                                           >
                                             {isSelected && (
                                               <div className="absolute inset-0 flex items-center justify-center">
@@ -1577,7 +1582,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                             key={i}
                                             onClick={() => setDisplayNameStyle((s) => ({ ...s, color: col }))}
                                             className="w-8 h-8 rounded-full transition-all relative ring-2"
-                                            style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}
+                                            style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px var(--bg-app), 0 0 0 4px var(--app-accent)' : 'none', outline: isSelected ? '2px solid var(--app-accent)' : 'none', outlineOffset: 1 }}
                                           >
                                             {isSelected && (
                                               <div className="absolute inset-0 flex items-center justify-center">
@@ -1595,27 +1600,27 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
                             {/* Profile Color */}
                             <div className="mt-8">
-                              <h2 className="text-[16px] font-bold text-white mb-4">Profile Color</h2>
-                              <div className="bg-[#2B2D31] rounded-lg p-5">
+                              <h2 className="text-[16px] font-bold text-[var(--text-primary)] mb-4">Profile Color</h2>
+                              <div className="bg-[var(--bg-app)] rounded-xl border border-[var(--border-subtle)] p-5">
                                 {/* Color */}
                                 <div className="mb-6">
                                   <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-[14px] font-bold text-white">Choose Color</span>
-                                    <button onClick={() => setProfileColor('')} className="text-[#B5BAC1] hover:text-white" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
+                                    <span className="text-[14px] font-bold text-[var(--text-primary)]">Choose Color</span>
+                                    <button onClick={() => setProfileColor('')} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" title="Reset Color"><RotateCcw className="w-4 h-4" /></button>
                                   </div>
                                   <div className="flex flex-wrap gap-2.5">
                                     <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileColor || '#8B5CF6' }}>
                                       <input type="color" value={profileColor || '#8B5CF6'} onChange={(e) => setProfileColor(e.target.value)} className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0" />
                                       <div className="absolute inset-0 flex items-center justify-center pointer-events-none"><Pencil className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>
                                     </label>
-                                    <div className="w-px h-8 bg-[#3f4148] mx-1" />
+                                    <div className="w-px h-8 bg-[var(--border-subtle)] mx-1" />
                                     {[
                                       '#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6',
                                       '#D946EF', '#FF1744', '#00E676', '#00B0FF', '#D500F9', '#FF9800', '#9C27B0'
                                     ].map((col, i) => {
                                       const isSelected = profileColor === col;
                                       return (
-                                        <button key={i} onClick={() => setProfileColor(col)} className="w-8 h-8 rounded-full transition-all relative" style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}>
+                                        <button key={i} onClick={() => setProfileColor(col)} className="w-8 h-8 rounded-full transition-all relative" style={{ backgroundColor: col, boxShadow: isSelected ? '0 0 0 2px var(--bg-app), 0 0 0 4px var(--app-accent)' : 'none', outline: isSelected ? '2px solid var(--app-accent)' : 'none', outlineOffset: 1 }}>
                                           {isSelected && <div className="absolute inset-0 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>}
                                         </button>
                                       );
@@ -1625,10 +1630,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 {/* Gradient Background */}
                                 <div>
                                   <div className="flex items-center gap-2 mb-3">
-                                    <span className="text-[14px] font-bold text-white">Gradient Background (Optional)</span>
-                                    <button onClick={() => setProfileGradient([])} className="text-[#B5BAC1] hover:text-white" title="Reset Gradient"><RotateCcw className="w-4 h-4" /></button>
+                                    <span className="text-[14px] font-bold text-[var(--text-primary)]">Gradient Background (Optional)</span>
+                                    <button onClick={() => setProfileGradient([])} className="text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors" title="Reset Gradient"><RotateCcw className="w-4 h-4" /></button>
                                   </div>
-                                  <div className="flex flex-wrap gap-2.5 mb-3">
+                                  <div className="flex flex-wrap gap-2.5 mb-4">
                                     {[
                                       ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
                                       ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#F50057', '#FF3366'],
@@ -1637,16 +1642,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                     ].map((grad, i) => {
                                       const isSelected = JSON.stringify(profileGradient) === JSON.stringify(grad);
                                       return (
-                                        <button key={i} onClick={() => setProfileGradient(grad)} className="w-8 h-8 rounded-full transition-all relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px #fff, 0 0 0 4px rgba(0,0,0,0.3)' : 'none', outline: isSelected ? '2px solid #fff' : 'none', outlineOffset: 1 }}>
+                                        <button key={i} onClick={() => setProfileGradient(grad)} className="w-8 h-8 rounded-full transition-all relative overflow-hidden" style={{ background: `linear-gradient(135deg, ${grad.join(', ')})`, boxShadow: isSelected ? '0 0 0 2px var(--bg-app), 0 0 0 4px var(--app-accent)' : 'none', outline: isSelected ? '2px solid var(--app-accent)' : 'none', outlineOffset: 1 }}>
                                           {isSelected && <div className="absolute inset-0 flex items-center justify-center"><Check className="w-3.5 h-3.5 text-white drop-shadow-md" /></div>}
                                         </button>
                                       );
                                     })}
                                   </div>
                                   {/* Custom gradient color pickers */}
-                                  <div className="flex items-center gap-3 p-3 bg-[#1e1f22] rounded-lg">
+                                  <div className="flex items-center gap-3 p-3 bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg">
                                     <div className="flex items-center gap-2">
-                                      <label className="text-xs text-[#B5BAC1] font-medium">From</label>
+                                      <label className="text-xs text-[var(--text-secondary)] font-medium">From</label>
                                       <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[0] || '#8B5CF6' }}>
                                         <input
                                           type="color"
@@ -1672,21 +1677,20 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                           className="absolute inset-0 opacity-0 cursor-pointer"
                                         />
                                       </label>
-                                      <label className="text-xs text-[#B5BAC1] font-medium">To</label>
+                                      <label className="text-xs text-[var(--text-secondary)] font-medium">To</label>
                                     </div>
                                   </div>
                                 </div>
                               </div>
                             </div>
                           </div>
-                        </div>
                       )}
 
                       {/* Server Profile Form */}
                       {profileTab === "server" && (
                         <div className="space-y-6">
                           {/* Server Dropdown Selector */}
-                          <div>
+                          <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5">
                             <div className="flex items-center justify-between mb-2">
                               <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">
                                 Select Server
@@ -1701,7 +1705,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               value={selectedServerId}
                               onChange={(e) => setSelectedServerId(e.target.value)}
                               disabled={hasChanges}
-                              className="w-full bg-[var(--bg-app)] border border-[var(--border-subtle)] text-white h-10 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[#8B5CF6] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+                              className="w-full bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] text-[var(--text-primary)] h-10 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)] font-medium disabled:opacity-50 disabled:cursor-not-allowed"
                             >
                               {servers.map((srv: any) => (
                                 <option key={srv.id} value={srv.id}>
@@ -1713,93 +1717,93 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
                           {serverMemberLoading ? (
                             <div className="py-8 flex flex-col items-center justify-center text-[var(--text-secondary)]">
-                              <Loader2 className="w-8 h-8 animate-spin text-[#8B5CF6] mb-2" />
+                              <Loader2 className="w-8 h-8 animate-spin text-[var(--app-accent)] mb-2" />
                               <span className="text-sm font-medium">Loading server profile...</span>
                             </div>
                           ) : (
                             <div className="space-y-6">
-                              {/* Nickname Input */}
-                              <div>
-                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                                  Server Nickname
-                                </label>
-                                <Input
-                                  value={serverNickname}
-                                  onChange={(e) => setServerNickname(e.target.value)}
-                                  className="bg-[var(--bg-app)] border-none text-white h-10"
-                                  placeholder={displayName || user?.username || ""}
-                                  maxLength={32}
-                                />
-                              </div>
-
-                              {/* Server Avatar Override */}
-                              <div>
-                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                                  Server Avatar Override
-                                </label>
-                                <div className="flex items-center gap-4">
-                                  <div
-                                    onClick={() => avatarInputRef.current?.click()}
-                                    className="relative w-20 h-20 rounded-full bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
-                                  >
-                                    {serverAvatar || user?.avatar ? (
-                                      <img src={serverAvatar || user?.avatar} alt="Avatar" className="w-full h-full object-cover" />
-                                    ) : (
-                                      <div className="w-full h-full flex items-center justify-center text-[#666]">
-                                        <Camera className="w-6 h-6" />
-                                      </div>
-                                    )}
-                                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                                      {isUploadingAvatar ? (
-                                        <Loader2 className="w-6 h-6 animate-spin text-white" />
-                                      ) : (
-                                        <Camera className="w-6 h-6 text-white" />
-                                      )}
-                                    </div>
-                                  </div>
-                                  {serverAvatar && (
-                                    <button
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        setServerAvatar(null);
-                                      }}
-                                      className="text-xs text-red-400 hover:text-red-300 hover:underline font-medium transition-colors"
-                                    >
-                                      Reset to Global
-                                    </button>
-                                  )}
+                              {/* Nickname & Avatar Card */}
+                              <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                                <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Server Identity</h3>
+                                <div>
+                                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                    Server Nickname
+                                  </label>
+                                  <Input
+                                    value={serverNickname}
+                                    onChange={(e) => setServerNickname(e.target.value)}
+                                    className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] h-10"
+                                    placeholder={displayName || user?.username || ""}
+                                    maxLength={32}
+                                  />
                                 </div>
-                                <input
-                                  ref={avatarInputRef}
-                                  type="file"
-                                  accept="image/*"
-                                  className="hidden"
-                                  onChange={handleAvatarSelect}
-                                />
+
+                                <div>
+                                  <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
+                                    Server Avatar Override
+                                  </label>
+                                  <div className="flex items-center gap-4">
+                                    <div
+                                      onClick={() => avatarInputRef.current?.click()}
+                                      className="relative w-16 h-16 rounded-full bg-[var(--bg-sidebar-elevated)] border-2 border-dashed border-[var(--border-subtle)] hover:border-[var(--app-accent)] cursor-pointer transition-all group overflow-hidden"
+                                    >
+                                      {serverAvatar || user?.avatar ? (
+                                        <img src={serverAvatar || user?.avatar} alt="Avatar" className="w-full h-full object-cover" />
+                                      ) : (
+                                        <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">
+                                          <Camera className="w-5 h-5" />
+                                        </div>
+                                      )}
+                                      <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                                        {isUploadingAvatar ? (
+                                          <Loader2 className="w-5 h-5 animate-spin text-white" />
+                                        ) : (
+                                          <Camera className="w-5 h-5 text-white" />
+                                        )}
+                                      </div>
+                                    </div>
+                                    {serverAvatar && (
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          setServerAvatar(null);
+                                        }}
+                                        className="text-xs text-red-400 hover:text-red-300 hover:underline font-medium transition-colors"
+                                      >
+                                        Reset to Global
+                                      </button>
+                                    )}
+                                  </div>
+                                  <input
+                                    ref={avatarInputRef}
+                                    type="file"
+                                    accept="image/*"
+                                    className="hidden"
+                                    onChange={handleAvatarSelect}
+                                  />
+                                </div>
                               </div>
 
-                              {/* Server Banner Override */}
-                              <div>
-                                <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">
-                                  Server Banner Override
-                                </label>
-                                <div className="flex flex-col gap-2">
+                              {/* Server Banner override card */}
+                              <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                                <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Server Banner Override</h3>
+                                <div className="flex flex-col gap-2.5">
                                   <div
                                     onClick={() => bannerInputRef.current?.click()}
-                                    className="relative w-full h-20 rounded-lg bg-[var(--bg-app)] border-2 border-dashed border-[#333] hover:border-[#8B5CF6] cursor-pointer transition-colors group overflow-hidden"
+                                    className="relative w-full h-[72px] rounded-lg bg-[var(--bg-sidebar-elevated)] border-2 border-dashed border-[var(--border-subtle)] hover:border-[var(--app-accent)] cursor-pointer transition-all group overflow-hidden"
                                   >
                                     {serverBanner || user?.banner ? (
                                       <img src={serverBanner || user?.banner} alt="Banner" className="w-full h-full object-cover" />
                                     ) : (
-                                      <div className="w-full h-full flex items-center justify-center text-[#666]">
-                                        <Image className="w-6 h-6" />
+                                      <div className="w-full h-full flex items-center justify-center text-[var(--text-muted)]">
+                                        <Image className="w-5 h-5" />
                                       </div>
                                     )}
                                     <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
                                       {isUploadingBanner ? (
-                                        <Loader2 className="w-6 h-6 animate-spin text-white" />
+                                        <Loader2 className="w-5 h-5 animate-spin text-white" />
                                       ) : (
-                                        <Camera className="w-6 h-6 text-white" />
+                                        <Camera className="w-5 h-5 text-white" />
                                       )}
                                     </div>
                                   </div>
@@ -1824,8 +1828,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                 />
                               </div>
 
-                              <div className="p-4 bg-zinc-900/40 rounded-xl border border-zinc-800 text-xs text-[var(--text-secondary)] leading-relaxed space-y-1">
-                                <p className="font-semibold text-zinc-300">About Server Profiles</p>
+                              <div className="p-4 bg-[var(--bg-sidebar)] rounded-xl border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)] leading-relaxed space-y-1">
+                                <p className="font-semibold text-[var(--text-primary)]">About Server Profiles</p>
                                 <p>Custom nickname, avatar overrides, and banners apply only to the selected server.</p>
                                 <p>Global attributes (about me, custom status, and name styles) will fall back to your main profile settings.</p>
                               </div>
@@ -1836,7 +1840,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     </div>
 
                     {/* Preview */}
-                    <div>
+                    <div className="lg:sticky lg:top-5 self-start">
                       <h3 className="text-xs font-bold text-[var(--text-secondary)] uppercase mb-3">Preview</h3>
                       <div className="rounded-xl overflow-hidden w-full max-w-[320px] shadow-xl border border-white/5">
                         {/* Banner */}

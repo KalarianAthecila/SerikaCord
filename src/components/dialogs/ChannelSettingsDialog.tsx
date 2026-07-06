@@ -276,17 +276,17 @@ export function ChannelSettingsDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="!max-w-none !w-screen !h-screen !rounded-none p-0 bg-[var(--bg-primary)] border-none overflow-hidden flex !translate-x-[-50%] !translate-y-[-50%]"
+        className="!max-w-none !w-screen !h-screen !rounded-none p-0 bg-[var(--bg-app)] border-none overflow-hidden flex !translate-x-[-50%] !translate-y-[-50%]"
         onPointerDownOutside={(e) => e.preventDefault()}
       >
         {/* Sidebar Navigation */}
-        <div className="w-[220px] shrink-0 bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] flex flex-col">
-          <div className="px-4 pt-5 pb-3">
-            <h2 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">
+        <div className="w-[240px] shrink-0 bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] flex flex-col">
+          <div className="px-4 pt-6 pb-4">
+            <h2 className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-widest mb-1.5">
               {isVoice ? "Voice" : isCategory ? "Category" : "Text"} Channel
             </h2>
-            <p className="text-sm text-[var(--text-primary)] font-medium truncate mt-1 flex items-center gap-1.5">
-              {isVoice ? <Volume2 className="w-3.5 h-3.5" /> : !isCategory ? <Hash className="w-3.5 h-3.5" /> : null}
+            <p className="text-sm text-[var(--text-primary)] font-semibold truncate flex items-center gap-1.5">
+              {isVoice ? <Volume2 className="w-4 h-4 text-[var(--text-secondary)]" /> : !isCategory ? <Hash className="w-4 h-4 text-[var(--text-secondary)]" /> : null}
               {channel.name}
             </p>
           </div>
@@ -296,7 +296,7 @@ export function ChannelSettingsDialog({
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
-                className={`w-full px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2 transition-colors ${
+                className={`w-full px-3 py-2 rounded-md text-sm font-medium flex items-center gap-2.5 transition-colors ${
                   activeTab === tab.id
                     ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
                     : tab.id === "delete"
@@ -323,53 +323,80 @@ export function ChannelSettingsDialog({
         </div>
 
         {/* Main Content */}
-        <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
+        <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[var(--bg-card)]">
           {/* Header */}
-          <div className="flex items-center justify-between px-6 py-4 border-b border-[var(--border-subtle)]">
+          <div className="flex items-center justify-between px-8 py-5 border-b border-[var(--border-subtle)]">
             <h1 className="text-xl font-bold text-[var(--text-primary)]">
               {activeTab === "overview" ? "Overview" : activeTab === "permissions" ? "Permissions" : "Delete Channel"}
             </h1>
           </div>
 
           {/* Content Area */}
-          <div className="flex-1 overflow-y-auto px-6 py-5 space-y-6">
+          <div className="flex-1 overflow-y-auto px-8 py-6 space-y-6">
             {activeTab === "overview" && (
-              <>
-                {/* Channel Name */}
-                <div className="space-y-2">
-                  <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">
-                    Channel Name
-                  </Label>
-                  <Input
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    maxLength={100}
-                    className="bg-[var(--bg-sidebar)] border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--app-accent)] h-10"
-                  />
-                </div>
-
-                {/* Channel Topic (not for voice or category) */}
-                {!isVoice && !isCategory && (
+              <div className="max-w-[620px]">
+                {/* General section */}
+                <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-5">
+                  {/* Channel Name */}
                   <div className="space-y-2">
                     <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">
-                      Channel Topic
+                      Channel Name
                     </Label>
-                    <Textarea
-                      value={topic}
-                      onChange={(e) => setTopic(e.target.value)}
-                      maxLength={1024}
-                      placeholder="Set a topic to let everyone know what this channel is about"
-                      className="bg-[var(--bg-sidebar)] border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--app-accent)] min-h-[80px] resize-none"
+                    <Input
+                      value={name}
+                      onChange={(e) => setName(e.target.value)}
+                      maxLength={100}
+                      className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--app-accent)] h-10"
                     />
-                    <p className="text-xs text-[var(--text-muted)]">
-                      {topic.length}/1024
-                    </p>
                   </div>
-                )}
+
+                  {/* Channel Topic (not for voice or category) */}
+                  {!isVoice && !isCategory && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">
+                        Channel Topic
+                      </Label>
+                      <Textarea
+                        value={topic}
+                        onChange={(e) => setTopic(e.target.value)}
+                        maxLength={1024}
+                        placeholder="Set a topic to let everyone know what this channel is about"
+                        className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--app-accent)] min-h-[80px] resize-none"
+                      />
+                      <p className="text-xs text-[var(--text-muted)] text-right">
+                        {topic.length}/1024
+                      </p>
+                    </div>
+                  )}
+
+                  {/* Category */}
+                  {!isCategory && (
+                    <div className="space-y-2">
+                      <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">
+                        Category
+                      </Label>
+                      <Select value={parentId || "__none__"} onValueChange={(v) => setParentId(v === "__none__" ? null : v)}>
+                        <SelectTrigger className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] h-10">
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)]">
+                          <SelectItem value="__none__" className="text-[var(--text-secondary)]">
+                            No Category
+                          </SelectItem>
+                          {categories.map((cat) => (
+                            <SelectItem key={cat.id} value={cat.id} className="text-[var(--text-secondary)]">
+                              {cat.name}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  )}
+                </div>
 
                 {/* Slowmode (text only) */}
                 {!isVoice && !isCategory && (
-                  <div className="space-y-2">
+                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-3 mt-5">
                     <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider flex items-center gap-1.5">
                       <Clock className="w-3.5 h-3.5" />
                       Slowmode
@@ -383,7 +410,7 @@ export function ChannelSettingsDialog({
                         onChange={(e) => setSlowmode(slowmodeOptions[parseInt(e.target.value)].value)}
                         className="flex-1 accent-[var(--app-accent)]"
                       />
-                      <span className="text-sm text-[var(--text-secondary)] min-w-[40px] text-right font-medium">
+                      <span className="text-sm text-[var(--text-primary)] min-w-[44px] text-center font-semibold bg-[var(--bg-sidebar-elevated)] rounded-md px-2 py-1">
                         {slowmodeOptions.find((o) => o.value === slowmode)?.label || "Off"}
                       </span>
                     </div>
@@ -393,38 +420,14 @@ export function ChannelSettingsDialog({
                   </div>
                 )}
 
-                {/* Category */}
-                {!isCategory && (
-                  <div className="space-y-2">
-                    <Label className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">
-                      Category
-                    </Label>
-                    <Select value={parentId || "__none__"} onValueChange={(v) => setParentId(v === "__none__" ? null : v)}>
-                      <SelectTrigger className="bg-[var(--bg-sidebar)] border-[var(--border-subtle)] text-[var(--text-primary)] h-10">
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent className="bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)]">
-                        <SelectItem value="__none__" className="text-[var(--text-secondary)]">
-                          No Category
-                        </SelectItem>
-                        {categories.map((cat) => (
-                          <SelectItem key={cat.id} value={cat.id} className="text-[var(--text-secondary)]">
-                            {cat.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
-                )}
-
                 {/* NSFW Toggle (not for category) */}
                 {!isCategory && (
-                  <div className="flex items-center justify-between p-4 rounded-lg bg-[var(--bg-sidebar)] border border-[var(--border-subtle)]">
+                  <div className="flex items-center justify-between p-5 rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] mt-5">
                     <div className="space-y-1">
-                      <span className="text-sm font-medium text-[var(--text-primary)]">
+                      <span className="text-sm font-semibold text-[var(--text-primary)]">
                         Age-Restricted Channel
                       </span>
-                      <p className="text-xs text-[var(--text-muted)] max-w-sm">
+                      <p className="text-xs text-[var(--text-muted)] max-w-sm leading-relaxed">
                         Users must verify their age to view content in this channel. This channel will be marked with an age-restricted badge.
                       </p>
                     </div>
@@ -435,11 +438,11 @@ export function ChannelSettingsDialog({
                     />
                   </div>
                 )}
-              </>
+              </div>
             )}
 
             {activeTab === "permissions" && (
-              <div className="space-y-4">
+              <div className="max-w-[700px] space-y-4">
                 {/* Add role / member */}
                 <div className="flex items-center justify-between">
                   <div>
@@ -593,7 +596,7 @@ export function ChannelSettingsDialog({
             )}
 
             {activeTab === "delete" && (
-              <div className="space-y-6">
+              <div className="max-w-[520px] space-y-6">
                 <div className="p-4 rounded-lg bg-red-500/10 border border-red-500/20">
                   <h3 className="text-base font-semibold text-red-400 mb-2">
                     Delete #{channel.name}
