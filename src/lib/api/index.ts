@@ -4,7 +4,7 @@ import { jwt } from '@elysiajs/jwt';
 import { config } from '@/lib/config';
 import { connectDB } from '@/lib/db';
 import { authenticateRequest, invalidateUserCache } from '@/lib/services/auth';
-import { checkRateLimit, getClientIP, rejectInvalidObjectIdParams } from '@/lib/security';
+import { checkRateLimit, getClientIP, rejectInvalidObjectIdParams, decryptFromStorage } from '@/lib/security';
 import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection } from '@/lib/models';
 import { RichPresence } from '@/lib/models/RichPresence';
 import { authRoutes } from './auth';
@@ -406,32 +406,35 @@ const userRoutes = new Elysia({ prefix: '/users' })
         createdAt: { $gte: sevenDaysAgo },
         $or: orConditions,
       })
-        .select('content channelId createdAt authorId author')
+        .select('content channelId createdAt authorId')
         .sort({ createdAt: -1 })
         .limit(50)
+        .populate('authorId', 'username displayName avatar')
         .lean();
 
       // Map channel -> serverId for filtering
       const serversWithMentions = new Set<string>();
-      const mentions = mentionedMessages.map(msg => {
+      const mentions = await Promise.all(mentionedMessages.map(async (msg) => {
         const sid = channelToServer.get(msg.channelId.toString()) || '';
         if (sid) serversWithMentions.add(sid);
-        const author = msg.author as unknown as { id?: string; _id?: string; username?: string; displayName?: string; avatar?: string } | undefined;
+        const author = msg.authorId as unknown as { _id?: string; username?: string; displayName?: string; avatar?: string } | null;
+        const isPopulatedAuthor = author && typeof author === 'object' && 'username' in author;
+        const decryptedContent = await decryptFromStorage(msg.content || '');
         return {
           id: (msg as { _id: { toString(): string } })._id.toString(),
-          content: msg.content,
+          content: decryptedContent,
           channelId: msg.channelId.toString(),
           channelName: channelToName.get(msg.channelId.toString()) || '',
           serverId: sid,
           createdAt: msg.createdAt instanceof Date ? msg.createdAt.toISOString() : String(msg.createdAt),
-          author: author ? {
-            id: author.id || author._id?.toString() || '',
-            username: author.username || '',
-            displayName: author.displayName || author.username || '',
-            avatar: author.avatar,
+          author: isPopulatedAuthor ? {
+            id: author!._id?.toString() || '',
+            username: author!.username || '',
+            displayName: author!.displayName || author!.username || '',
+            avatar: author!.avatar,
           } : null,
         };
-      });
+      }));
 
       return {
         servers: Array.from(serversWithMentions).map(id => ({ id })),

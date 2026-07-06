@@ -112,7 +112,7 @@ export function MemberSidebar() {
   if (!currentServer) return null;
 
   return (
-    <div className="w-60 h-full bg-[var(--app-bg)] border-l border-[var(--app-border)] flex-shrink-0">
+    <div className="w-60 max-w-60 h-full bg-[var(--app-bg)] border-l border-[var(--app-border)] flex-shrink-0 overflow-hidden">
       <ScrollArea className="h-full">
         <div className="py-4 space-y-4">
           {isLoading ? (
@@ -165,28 +165,20 @@ function MemberItem({ member, serverId }: MemberItemProps) {
   const isOffline = member.status === "offline";
   const roleColor = member.highestRole?.color;
   // Only poll live activity for members who are actually around.
-  const userActivity = useUserActivity(member.id, { enabled: !isOffline });
+  const userActivity = useUserActivity(member.id, { enabled: !isOffline, intervalMs: 15_000 });
   const moeActivity = userActivity?.activity ?? null;
   const musicActivity = userActivity?.music ?? null;
   const subtitle = (!isOffline && member.customStatus) || null;
-  const nameplateBg = getNameplateBackground(member.customization);
 
   return (
     <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
       <button
         className={cn(
-          "relative overflow-hidden w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",
+          "w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",
           isOffline && "opacity-50"
         )}
         style={{ width: "calc(100% - 16px)" }}
       >
-        {nameplateBg && (
-          <span
-            aria-hidden
-            className="absolute inset-0 pointer-events-none"
-            style={{ background: nameplateBg, opacity: 0.45, WebkitMaskImage: "linear-gradient(90deg, #000 40%, transparent 100%)", maskImage: "linear-gradient(90deg, #000 40%, transparent 100%)" }}
-          />
-        )}
         <div className="relative flex-shrink-0">
           <Avatar className="w-8 h-8">
             <AvatarImage src={member.avatar || undefined} alt={member.displayName || member.username} />
@@ -228,7 +220,7 @@ function MemberItem({ member, serverId }: MemberItemProps) {
               <span className="truncate min-w-0">Watching {moeActivity.titleName}</span>
             </div>
           ) : musicActivity ? (
-            <div className="flex items-center gap-1 text-xs text-[#e4335a] min-w-0">
+            <div className="flex items-center gap-1 text-xs text-[var(--text-secondary)] min-w-0">
               <Music2 className="w-2.5 h-2.5 shrink-0 fill-current" />
               <span className="truncate min-w-0">{musicActivity.name} — {musicActivity.artist}</span>
             </div>

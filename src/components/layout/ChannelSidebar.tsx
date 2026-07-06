@@ -791,15 +791,12 @@ export function ChannelSidebar({
                       key={channel.id}
                       href={`/dm/${recipient.id}`}
                       className={cn(
-                        "relative overflow-hidden group flex items-center gap-2 px-2 py-[5px] rounded-md transition-colors min-w-0",
+                        "group flex items-center gap-2 px-2 py-[5px] rounded-md transition-colors min-w-0",
                         isActive
                           ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
                           : "text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
                       )}
                     >
-                      {getNameplateBackground(recipient.customization) && (
-                        <span aria-hidden className="absolute inset-0 pointer-events-none" style={{ background: getNameplateBackground(recipient.customization)!, opacity: 0.4, WebkitMaskImage: "linear-gradient(90deg, #000 45%, transparent 100%)", maskImage: "linear-gradient(90deg, #000 45%, transparent 100%)" }} />
-                      )}
                       <div className="relative shrink-0">
                         <Avatar className="w-8 h-8">
                           <AvatarImage src={recipient.avatar} />
@@ -1232,14 +1229,26 @@ function UserPanel({ user }: UserPanelProps) {
     window.dispatchEvent(new CustomEvent('openUserSettings'));
   };
 
+  const nameplateBg = getNameplateBackground(user?.customization);
+
   return (
     <div className="h-[52px] px-2 flex items-center bg-[var(--bg-sidebar)] border-t border-[var(--border-subtle)]">
       <UserProfilePopup onOpenSettings={handleSettingsClick}>
         <button
           className="relative overflow-hidden flex items-center gap-2 flex-1 min-w-0 p-1 rounded hover:bg-[var(--bg-sidebar-elevated)] transition-colors"
         >
-          {getNameplateBackground(user?.customization) && (
-            <span aria-hidden className="absolute inset-0 pointer-events-none" style={{ background: getNameplateBackground(user?.customization)!, opacity: 0.4, WebkitMaskImage: "linear-gradient(90deg, #000 50%, transparent 100%)", maskImage: "linear-gradient(90deg, #000 50%, transparent 100%)" }} />
+          {nameplateBg && (
+            <span 
+              aria-hidden 
+              className="absolute inset-0 pointer-events-none" 
+              style={{ 
+                background: nameplateBg, 
+                opacity: 0.6,
+                backgroundImage: 'radial-gradient(circle at 20% 30%, rgba(255,255,255,0.1) 0%, transparent 50%), radial-gradient(circle at 80% 70%, rgba(255,255,255,0.05) 0%, transparent 40%)',
+                WebkitMaskImage: "linear-gradient(90deg, #000 60%, transparent 100%)", 
+                maskImage: "linear-gradient(90deg, #000 60%, transparent 100%)" 
+              }} 
+            />
           )}
           <div className="relative shrink-0">
             <Avatar className="w-8 h-8">
@@ -1259,11 +1268,8 @@ function UserPanel({ user }: UserPanelProps) {
             />
           </div>
           <div className="relative flex-1 min-w-0 text-left">
-            <div className={cn("text-sm font-medium text-[var(--text-primary)] truncate", getDisplayNameStyleClasses(user?.customization?.displayNameStyle))} style={getDisplayNameStyleInline(user?.customization?.displayNameStyle)}>
+            <div className={cn("text-sm font-bold truncate", getDisplayNameStyleClasses(user?.customization?.displayNameStyle))} style={getDisplayNameStyleInline(user?.customization?.displayNameStyle)}>
               {user?.displayName || "Unknown"}
-            </div>
-            <div className="text-xs text-[var(--text-muted)] truncate">
-              {user?.username || "unknown"}
             </div>
           </div>
         </button>
