@@ -772,6 +772,16 @@ export function GifPicker({ onGifSelect, className }: GifPickerProps) {
               </div>
             ) : (
               <div className="p-2 grid grid-cols-2 gap-2">
+                {/* Favorites quick-access tile */}
+                {favorites.length > 0 && (
+                  <PreviewTile
+                    label="Favorites"
+                    icon={<Star className="w-4 h-4 text-yellow-400" />}
+                    previews={favorites.slice(0, 4).map((f) => ({ url: f.url, thumbnailUrl: f.url }))}
+                    onClick={() => setHomeTab("favorites")}
+                    gradientClassName="from-[#eab308] to-[#d97706]"
+                  />
+                )}
                 {/* Trending tile with live preview */}
                 <PreviewTile
                   label="Trending"

@@ -45,7 +45,12 @@ import {
   FlaskConical,
   RotateCcw,
   Clock,
+  BellRing,
+  MonitorSmartphone,
+  Award,
+  Megaphone,
 } from "lucide-react";
+import { requestNotificationPermission } from "@/lib/services/notificationService";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
 import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
@@ -75,6 +80,8 @@ type SettingsTab =
   | "premium"
   | "admin-users"
   | "admin-servers"
+  | "admin-badges"
+  | "admin-announcements"
   | "admin-settings"
   | "admin-logs"
   | "admin-experiments";
@@ -853,13 +860,18 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   };
 
   const handlePublishAnnouncement = async () => {
-    if (!announcementText.trim()) return;
+    // Strip only leading/trailing blank lines, preserve internal structure
+    const cleanedAnnouncement = announcementText
+      .split("\n")
+      .join("\n")
+      .replace(/^\n+|\n+$/g, "");
+    if (!cleanedAnnouncement) return;
     try {
       // Save announcement to platform settings
       const settingsResponse = await fetch("/api/admin/settings", {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ globalAnnouncement: announcementText.trim() }),
+        body: JSON.stringify({ globalAnnouncement: cleanedAnnouncement }),
       });
       if (!settingsResponse.ok) {
         toast.error("Failed to publish announcement");
@@ -872,7 +884,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       const broadcastResponse = await fetch("/api/admin/broadcast", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: announcementText.trim(), sendDMs: true }),
+        body: JSON.stringify({ message: cleanedAnnouncement, sendDMs: true }),
       });
       if (broadcastResponse.ok) {
         const broadcastData = await broadcastResponse.json().catch(() => null);
@@ -1004,7 +1016,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     if (activeTab === "admin-settings" && !platformSettings) {
       fetchPlatformSettings();
       fetchAdminStats();
-    } else if (activeTab === "admin-experiments" && !platformSettings) {
+    } else if ((activeTab === "admin-experiments" || activeTab === "admin-announcements") && !platformSettings) {
       fetchPlatformSettings();
     } else if (activeTab === "admin-logs" && adminLogs.length === 0) {
       fetchAdminLogs();
@@ -1078,11 +1090,23 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
   if (isStaff) {
     menuSections.push({
-      title: "Admin",
+      title: "Admin — Users",
       items: [
         { id: "admin-users" as SettingsTab, label: "User Management", icon: Users },
+        { id: "admin-badges" as SettingsTab, label: "Badge Management", icon: Award },
+      ],
+    });
+    menuSections.push({
+      title: "Admin — Platform",
+      items: [
         { id: "admin-servers" as SettingsTab, label: "Server Management", icon: Database },
+        { id: "admin-announcements" as SettingsTab, label: "Announcements", icon: Megaphone },
         { id: "admin-settings" as SettingsTab, label: "Platform Settings", icon: Settings },
+      ],
+    });
+    menuSections.push({
+      title: "Admin — System",
+      items: [
         { id: "admin-logs" as SettingsTab, label: "Activity Logs", icon: Activity },
         { id: "admin-experiments" as SettingsTab, label: "Experiments", icon: FlaskConical },
       ],
@@ -2190,38 +2214,96 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
               {/* Notifications Tab */}
               {activeTab === "notifications" && (
-                <div>
-                  <h2 className="text-xl font-bold text-white mb-5">Notifications</h2>
-                  <div className="bg-[var(--bg-app)] rounded-lg p-4">
-                    <div className="space-y-4">
-                      <label className="flex items-center justify-between cursor-pointer">
-                        <div>
-                          <p className="text-white font-medium">Enable Desktop Notifications</p>
-                          <p className="text-sm text-[var(--text-secondary)]">Receive notifications on your desktop</p>
-                        </div>
-                        <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.desktop)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), desktop: checked } }, "notifications")} />
-                      </label>
-                      <label className="flex items-center justify-between cursor-pointer">
-                        <div>
-                          <p className="text-white font-medium">Message Sounds</p>
-                          <p className="text-sm text-[var(--text-secondary)]">Play a sound for new messages</p>
-                        </div>
-                        <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.sounds)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), sounds: checked } }, "notifications")} />
-                      </label>
-                      <label className="flex items-center justify-between cursor-pointer">
-                        <div>
-                          <p className="text-white font-medium">Mute @everyone and @here</p>
-                          <p className="text-sm text-[var(--text-secondary)]">Suppress notifications from @everyone and @here</p>
-                        </div>
-                        <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.muteEveryone)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), muteEveryone: checked } }, "notifications")} />
-                      </label>
+                <div className="space-y-6">
+                  <h2 className="text-xl font-bold text-white">Notifications</h2>
+
+                  {/* Push / Desktop permission */}
+                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <MonitorSmartphone className="w-4 h-4 text-[var(--text-secondary)]" />
+                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Platform Notifications</h3>
                     </div>
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Enable Desktop &amp; Push Notifications</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Receive native notifications on desktop, mobile and browser</p>
+                      </div>
+                      <ToggleSwitch
+                        size="sm"
+                        checked={Boolean(userSettings?.notifications?.desktop)}
+                        onCheckedChange={async (checked) => {
+                          if (checked) {
+                            const granted = await requestNotificationPermission();
+                            if (!granted) {
+                              toast.error("Notification permission denied. Please enable it in your browser/OS settings.");
+                              return;
+                            }
+                          }
+                          saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), desktop: checked } }, "notifications");
+                        }}
+                      />
+                    </div>
+                    {userSettings?.notifications?.desktop && typeof Notification !== "undefined" && Notification.permission !== "granted" && (
+                      <div className="flex items-center justify-between p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                        <p className="text-xs text-amber-400">Browser permission not granted yet.</p>
+                        <button
+                          onClick={async () => {
+                            const granted = await requestNotificationPermission();
+                            if (granted) toast.success("Notifications enabled!");
+                            else toast.error("Permission denied. Check browser settings.");
+                          }}
+                          className="text-xs font-semibold text-amber-300 hover:text-amber-200 underline"
+                        >
+                          Grant Permission
+                        </button>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Notification behaviour */}
+                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <BellRing className="w-4 h-4 text-[var(--text-secondary)]" />
+                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Notification Behaviour</h3>
+                    </div>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Mentions only <span className="ml-1.5 text-[10px] font-bold uppercase px-1.5 py-0.5 rounded bg-[var(--app-accent)]/20 text-[var(--app-accent)]">Default</span></p>
+                        <p className="text-sm text-[var(--text-secondary)]">Only send desktop notifications when you are mentioned. Turn off to notify on all messages.</p>
+                      </div>
+                      <ToggleSwitch
+                        size="sm"
+                        checked={userSettings?.notifications?.notifyAllMessages !== true}
+                        onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), notifyAllMessages: !checked } }, "notifications")}
+                      />
+                    </label>
+
+                    <div className="h-px bg-[var(--border-subtle)]" />
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Message Sounds</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Play a sound when a new message arrives</p>
+                      </div>
+                      <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.sounds)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), sounds: checked } }, "notifications")} />
+                    </label>
+
+                    <div className="h-px bg-[var(--border-subtle)]" />
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Mute @everyone and @here</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Suppress popup notifications for @everyone and @here pings</p>
+                      </div>
+                      <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.muteEveryone)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), muteEveryone: checked } }, "notifications")} />
+                    </label>
                   </div>
                 </div>
               )}
 
               {/* Default fallback for other tabs */}
-              {!["profiles", "premium", "appearance", "voice-video", "notifications", "admin-users", "admin-servers", "admin-settings", "admin-logs", "admin-experiments"].includes(activeTab) && (
+              {!["profiles", "premium", "appearance", "voice-video", "notifications", "admin-users", "admin-servers", "admin-settings", "admin-logs", "admin-experiments", "admin-badges", "admin-announcements"].includes(activeTab) && (
                 <div>
                   <h2 className="text-xl font-bold text-white mb-5 capitalize">
                     {activeTab.replace(/-/g, " ")}
@@ -2949,7 +3031,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         onChange={(e) => setAnnouncementText(e.target.value)}
                         placeholder="Enter a global announcement to display to all users..."
                         className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-white mb-3"
-                        rows={3}
+                        rows={6}
                       />
                       <div className="flex gap-2">
                         <button
@@ -3219,6 +3301,147 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         ))
                       )}
                     </div>
+                  </div>
+                </div>
+              )}
+
+              {/* Admin Panel - Badge Management */}
+              {activeTab === "admin-badges" && isStaff && (
+                <div>
+                  <h2 className="text-xl font-bold text-white mb-2">Badge Management</h2>
+                  <p className="text-sm text-[var(--text-muted)] mb-6">Search for a user to assign or remove badges.</p>
+                  <div className="flex gap-2 mb-4">
+                    <Input
+                      value={adminUserSearch}
+                      onChange={(e) => setAdminUserSearch(e.target.value)}
+                      onKeyDown={(e) => e.key === "Enter" && void searchAdminUsers()}
+                      placeholder="Search by username or display name…"
+                      className="flex-1 bg-[var(--bg-app)] border-[var(--border-subtle)] text-white"
+                    />
+                    <button
+                      onClick={() => void searchAdminUsers()}
+                      className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C4DFF] text-white rounded font-medium text-sm"
+                    >
+                      Search
+                    </button>
+                  </div>
+                  {adminUsers.length > 0 && !selectedUser && (
+                    <div className="space-y-2 mb-6">
+                      {adminUsers.map((u) => (
+                        <button
+                          key={u.id}
+                          onClick={() => setSelectedUser(u)}
+                          className="w-full flex items-center gap-3 p-3 bg-[var(--bg-app)] hover:bg-[var(--bg-hover)] rounded-lg transition-colors text-left"
+                        >
+                          <Avatar className="w-9 h-9 shrink-0">
+                            <AvatarImage src={u.avatar} />
+                            <AvatarFallback className="bg-[#8B5CF6] text-white">{(u.displayName || u.username).charAt(0).toUpperCase()}</AvatarFallback>
+                          </Avatar>
+                          <div className="min-w-0">
+                            <p className="text-sm text-white font-medium truncate">{u.displayName || u.username}</p>
+                            <p className="text-xs text-[var(--text-muted)] truncate">@{u.username}</p>
+                          </div>
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {selectedUser && (
+                    <div className="bg-[var(--bg-app)] rounded-xl p-5">
+                      <div className="flex items-center gap-3 mb-5 pb-4 border-b border-[var(--border-subtle)]">
+                        <button onClick={() => setSelectedUser(null)} className="p-1.5 hover:bg-[var(--bg-hover)] rounded-lg text-[var(--text-muted)] transition-colors">
+                          <X className="w-4 h-4" />
+                        </button>
+                        <Avatar className="w-10 h-10 shrink-0">
+                          <AvatarImage src={selectedUser.avatar} />
+                          <AvatarFallback className="bg-[#8B5CF6] text-white">{(selectedUser.displayName || selectedUser.username).charAt(0).toUpperCase()}</AvatarFallback>
+                        </Avatar>
+                        <div>
+                          <p className="text-white font-semibold">{selectedUser.displayName || selectedUser.username}</p>
+                          <p className="text-xs text-[var(--text-muted)]">@{selectedUser.username}</p>
+                        </div>
+                      </div>
+                      <p className="text-xs text-[var(--text-muted)] uppercase font-semibold mb-3">Badges ({(selectedUser.badges || []).length})</p>
+                      <div className="grid grid-cols-2 gap-2">
+                        {Object.values(BADGES).map((badge) => {
+                          const isAssigned = (selectedUser.badges || []).includes(badge.id);
+                          const IconComponent = badge.icon;
+                          return (
+                            <button
+                              key={badge.id}
+                              onClick={() => void handleToggleBadge(badge.id)}
+                              className={cn(
+                                "flex items-center gap-2.5 p-2.5 rounded-lg border transition-all text-left",
+                                isAssigned
+                                  ? "bg-[var(--bg-card)] border-[#8B5CF6]/40"
+                                  : "bg-transparent border-[var(--border-subtle)] opacity-50 hover:opacity-80"
+                              )}
+                            >
+                              <div className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0" style={{ backgroundColor: `${badge.color}20` }}>
+                                <IconComponent className="w-4 h-4" style={{ color: badge.color }} />
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-white font-medium truncate">{badge.name}</p>
+                                <p className="text-xs text-[var(--text-muted)] truncate">{badge.description}</p>
+                              </div>
+                              <div className={cn("w-4 h-4 rounded-full border-2 flex-shrink-0 flex items-center justify-center transition-colors", isAssigned ? "bg-[#8B5CF6] border-[#8B5CF6]" : "border-[var(--text-muted)]")}>
+                                {isAssigned && <Check className="w-2.5 h-2.5 text-white" />}
+                              </div>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Admin Panel - Announcements */}
+              {activeTab === "admin-announcements" && isStaff && (
+                <div>
+                  <h2 className="text-xl font-bold text-white mb-2">Announcements</h2>
+                  <p className="text-sm text-[var(--text-muted)] mb-6">Publish a global banner announcement visible to all users. Blank lines are preserved.</p>
+                  <div className="bg-[var(--bg-app)] rounded-xl p-5 space-y-4">
+                    <div>
+                      <p className="text-xs text-[var(--text-muted)] uppercase font-semibold mb-2">Announcement Text</p>
+                      <Textarea
+                        value={announcementText}
+                        onChange={(e) => setAnnouncementText(e.target.value)}
+                        placeholder="Enter announcement text… Blank lines will be preserved as visual breaks."
+                        className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-white resize-y"
+                        rows={8}
+                      />
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={handlePublishAnnouncement}
+                        className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C4DFF] text-white rounded-lg font-medium text-sm flex items-center gap-2"
+                      >
+                        <Megaphone className="w-4 h-4" />
+                        Publish
+                      </button>
+                      {announcementText && (
+                        <button
+                          onClick={async () => {
+                            setAnnouncementText("");
+                            try {
+                              const res = await fetch("/api/admin/settings", { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ globalAnnouncement: "" }) });
+                              if (res.ok) { const data = await res.json(); setPlatformSettings(data); toast.success("Announcement cleared"); }
+                            } catch { toast.error("Failed to clear announcement"); }
+                          }}
+                          className="px-4 py-2 bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] text-[var(--text-secondary)] rounded-lg font-medium text-sm"
+                        >
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    {platformSettings?.globalAnnouncement && (
+                      <div className="mt-3 p-3 rounded-lg bg-[#8B5CF6]/10 border border-[#8B5CF6]/20 text-sm text-[var(--text-primary)]">
+                        <p className="text-[10px] uppercase font-semibold text-[var(--text-muted)] mb-1.5">Live Preview</p>
+                        {platformSettings.globalAnnouncement.split("\n").map((line: string, i: number, arr: string[]) => (
+                          <span key={i}>{line || "\u00A0"}{i < arr.length - 1 && <br />}</span>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )}

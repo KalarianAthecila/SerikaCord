@@ -725,38 +725,38 @@ export function ChannelSidebar({
 
   if (!currentServer) {
     return (
-      <div className="flex flex-col w-60 h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)]">
+      <div className="flex flex-col w-60 min-w-0 h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] overflow-hidden">
         {/* DM Header */}
-        <div className="h-12 px-4 flex items-center border-b border-[var(--border-subtle)]">
-          <button className="w-full h-7 px-2 rounded bg-[var(--bg-sidebar-elevated)] text-[var(--text-muted)] text-sm text-left hover:bg-[var(--bg-sidebar-elevated)] transition-colors">
+        <div className="h-12 px-3 flex items-center border-b border-[var(--border-subtle)] shrink-0">
+          <button className="w-full h-7 px-2.5 rounded-md bg-[var(--bg-sidebar-elevated)] text-[var(--text-muted)] text-sm text-left hover:brightness-110 transition-all truncate">
             Find or start a conversation
           </button>
         </div>
 
         {/* Navigation */}
-        <div className="px-2 pt-3 pb-1">
+        <div className="px-2 pt-2 pb-1 shrink-0">
           <Link
             href="/channels/me"
             className={cn(
-              "flex items-center gap-3 px-2 py-2 rounded-md transition-colors",
+              "flex items-center gap-2.5 px-2 py-2 rounded-md transition-colors w-full min-w-0",
               pathname === "/channels/me"
                 ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
                 : "text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
             )}
           >
-            <Users className="w-5 h-5" />
-            <span className="font-medium">Friends</span>
+            <Users className="w-5 h-5 shrink-0" />
+            <span className="font-medium truncate">Friends</span>
           </Link>
         </div>
 
         {/* DM List */}
-        <ScrollArea className="flex-1">
-          <div className="px-2 py-2">
-            <div className="px-2 mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">
+        <ScrollArea className="flex-1 overflow-hidden">
+          <div className="px-2 py-1">
+            <div className="px-2 mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase text-[var(--text-muted)] tracking-wide">
                 Direct Messages
               </span>
-              <button className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+              <button className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shrink-0">
                 <PlusCircle className="w-4 h-4" />
               </button>
             </div>
@@ -773,7 +773,7 @@ export function ChannelSidebar({
                       key={channel.id}
                       href={`/dm/${recipient.id}`}
                       className={cn(
-                        "group flex items-center gap-3 px-2 py-1.5 rounded-md transition-colors",
+                        "group flex items-center gap-2 px-2 py-[5px] rounded-md transition-colors min-w-0",
                         isActive
                           ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
                           : "text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
@@ -787,27 +787,26 @@ export function ChannelSidebar({
                           </AvatarFallback>
                         </Avatar>
                         <div
-                          className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[var(--bg-sidebar)]"
+                          className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[var(--bg-sidebar)]"
                           style={{ backgroundColor: statusColors[recipient.status] || statusColors.offline }}
                         />
                       </div>
-                      <span className={cn("flex-1 truncate text-sm flex items-center gap-1.5", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
-                        {recipient.displayName || recipient.username}
+                      <div className="flex-1 min-w-0 overflow-hidden">
+                        <span className={cn("block truncate text-sm", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
+                          {recipient.displayName || recipient.username}
+                        </span>
                         {recipient.isSystem && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none bg-blue-500/20 text-blue-400 whitespace-nowrap">
-                            System
-                          </span>
+                          <span className="text-[10px] text-blue-400">System</span>
                         )}
-                      </span>
+                      </div>
                       <button
-                        className="p-1 opacity-0 group-hover:opacity-100 hover:text-[var(--text-primary)] transition-opacity"
+                        className="p-1 opacity-0 group-hover:opacity-100 hover:text-[var(--text-primary)] transition-opacity shrink-0"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          // Close DM functionality would go here
                         }}
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </Link>
                   );

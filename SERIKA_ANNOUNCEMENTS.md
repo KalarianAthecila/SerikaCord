@@ -1,6 +1,18 @@
 # ✨ SerikaCord — Latest Updates
 
-Hey SerikaCord! We've been hard at work shipping improvements. Here's everything new from our last 10 updates:
+Hey SerikaCord! We've been hard at work shipping improvements. Here's everything new from our last 11 updates:
+
+---
+
+## 🚀 Custom Profile Previews, Drag-and-Drop & Composer Magic
+
+We've polished the User Profile Settings, enhanced channel settings layouts, improved drag-and-drop reordering, and added a keyboard focus helper:
+
+- **True Side-by-Side Profile Preview**: Profile Settings now displays your live customizable `ProfileCard` preview directly on the right side on desktop screens, updating in real-time as you tweak your colors, nickname, avatar, banner, or status!
+- **Channel Sidebar Drag-and-Drop to Bottom**: Easily reorder categories or channels to the absolute bottom of the list. Hovering near the bottom reveals a dedicated drop zone so nothing gets stuck.
+- **Type-to-Focus Composer**: Just start typing! When viewing any chat or DM, unless you are already focused on another input, typing any letter, number, or symbol automatically focuses the message bar.
+- **GIF Favorite Overlay**: The favorite star button on GIFs now sits perfectly in the top-right corner of the image, keeping the layout clean and unified.
+- **Last Message Previews & Long Broadcasts**: The DM list now decrypts and previews the actual latest message instead of showing a generic message. Database validation limits were also increased so long broadcasts are saved successfully without issues.
 
 ---
 

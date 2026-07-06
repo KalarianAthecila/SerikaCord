@@ -51,7 +51,14 @@ export function GlobalAnnouncementBanner() {
   return (
     <div className="flex-shrink-0 flex items-start gap-2 px-4 py-2 bg-[#8B5CF6]/10 border-b border-[#8B5CF6]/20 text-sm">
       <Megaphone className="w-4 h-4 text-[#8B5CF6] flex-shrink-0 mt-0.5" />
-      <span className="flex-1 text-[var(--text-primary)] whitespace-pre-wrap break-words">{data.announcement}</span>
+      <span className="flex-1 text-[var(--text-primary)] break-words">
+        {data.announcement.split("\n").map((line, i, arr) => (
+          <span key={i}>
+            {line || "\u00A0"}
+            {i < arr.length - 1 && <br />}
+          </span>
+        ))}
+      </span>
       <button
         onClick={handleDismiss}
         className="flex-shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"

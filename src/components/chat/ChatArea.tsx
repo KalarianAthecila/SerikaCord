@@ -23,6 +23,7 @@ import {
   HelpCircle,
   ChevronLeft,
   Loader2,
+  Megaphone,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
@@ -41,6 +42,7 @@ import {
   toggleChannelMute,
   subscribeChannelMutes,
 } from "@/lib/services/notificationUX";
+import { showNotification } from "@/lib/services/notificationService";
 import { useMentions, type MentionData } from "@/hooks/useMentions";
 import { useChatSession } from "@/hooks/useChatSession";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
@@ -103,7 +105,16 @@ function replaceAliasMention(content: string, alias: string, token: string): str
   if (!alias) return content;
   const escapedAlias = escapeRegex(alias);
   const pattern = new RegExp(`(^|\\s)@${escapedAlias}(?=$|[\\s.,!?;:])`, "gi");
-  return content.replace(pattern, (_match, prefix: string) => `${prefix}${token}`);
+  // Only replace in segments that are NOT already inside a token (<@id>, <@&id>, <:name:id>)
+  // Split on existing tokens and only process plain-text segments
+  const tokenSplit = /(<[@#][^>]{0,64}>|<a?:[a-zA-Z0-9_]+:[a-f0-9]{24}>)/g;
+  return content.replace(tokenSplit, (match) => `\x00${match}\x00`)
+    .split("\x00")
+    .map((seg) => {
+      if (seg.startsWith("<") && seg.endsWith(">")) return seg;
+      return seg.replace(pattern, (_match, prefix: string) => `${prefix}${token}`);
+    })
+    .join("");
 }
 
 interface ChatAreaProps {
@@ -377,12 +388,39 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         playNotificationSound();
       }
 
-      // Auto TTS: speak incoming messages when accessibility.tts is enabled
-      const ttsEnabled = user?.settings?.accessibility?.tts === true;
-      if (ttsEnabled && message.content && typeof window !== "undefined" && "speechSynthesis" in window) {
+      // Desktop / push notifications
+      const desktopEnabled = user?.settings?.notifications?.desktop !== false;
+      // By default only notify on mentions; "notifyAllMessages" opt-in enables all
+      const notifyAllMessages = user?.settings?.notifications?.notifyAllMessages === true;
+      const muteEveryone = user?.settings?.notifications?.muteEveryone === true;
+      const shouldNotify = desktopEnabled && (isHidden || isMentioned) &&
+        (isMentioned ? !(muteEveryone && message.mentionEveryone && !message.mentionedUserIds?.includes(user?.id || '')) : notifyAllMessages);
+
+      if (shouldNotify) {
         const authorName = message.author?.displayName || message.author?.username || "Someone";
-        // Strip custom emoji tokens, markdown, and HTML entities
-        const cleanContent = message.content
+        const preview = message.content?.slice(0, 80) || (message.attachments?.length ? "📎 Attachment" : "New message");
+        void showNotification(
+          isMentioned ? `${authorName} mentioned you` : authorName,
+          preview,
+          {
+            tag: `message-${message.channelId}`,
+            icon: message.author?.avatar || "/icons/icon-192x192.png",
+            data: {
+              channelId: message.channelId,
+              serverId: currentServer?.id,
+            },
+          }
+        );
+      }
+
+      // Auto TTS: speak incoming messages when accessibility.tts is enabled (or when /tts prefix present)
+      const ttsEnabled = user?.settings?.accessibility?.tts === true;
+      const hasTtsPrefix = typeof message.content === "string" && message.content.startsWith("/tts ");
+      if ((ttsEnabled || hasTtsPrefix) && message.content && typeof window !== "undefined" && "speechSynthesis" in window) {
+        const authorName = message.author?.displayName || message.author?.username || "Someone";
+        // Strip custom emoji tokens, markdown, HTML entities, and /tts prefix
+        const rawForTts = hasTtsPrefix ? message.content.slice(5) : message.content;
+        const cleanContent = rawForTts
           .replace(/<(a)?:[a-zA-Z0-9_]+:[a-f0-9]+>/gi, "")
           .replace(/<@!?[a-f0-9]+>/gi, "")
           .replace(/<@&[a-f0-9]+>/gi, "")
@@ -474,9 +512,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       if (result.handled) {
         // Clear the composer if the command was consumed
         if (result.ttsText) {
-          // TTS: speak then send the text as a normal message
+          // TTS: speak locally then send with /tts prefix so others can hear it too
           composer?.clear();
-          await chat.sendMessage({ contentOverride: result.ttsText });
+          await chat.sendMessage({ contentOverride: `/tts ${result.ttsText}` });
         } else if (result.sendAsMessage) {
           // Commands like /me, /shrug, /8ball, /roll produce a message
           composer?.clear();
@@ -689,6 +727,36 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       const mentionMatch = beforeCursor.match(/(^|[\s\n])@([^\s@]{0,40})$/m);
 
       if (!mentionMatch) {
+        // Completed emoji shortcode: `:skull:` → auto-insert unicode or custom emoji
+        const completedEmojiMatch = beforeCursor.match(/(^|\s):([a-zA-Z0-9_+-]{2,32}):$/);
+        if (completedEmojiMatch) {
+          const emojiName = completedEmojiMatch[2].toLowerCase();
+          const unicodeChar = EMOJI_NAMES[emojiName] || EMOJI_NAMES[emojiName.replace(/-/g, "_")] || EMOJI_NAMES[emojiName.replace(/_/g, "-")];
+          const customEmoji = allServerEmojis.find(e => e.name.toLowerCase() === emojiName);
+          const composer = messageBarRef.current?.getComposer();
+          if (composer) {
+            const tokenStart = caretPosition - emojiName.length - 2; // ':' + name + ':'
+            if (unicodeChar) {
+              composer.replaceRange(tokenStart, caretPosition, unicodeChar);
+              mentionRangeRef.current = null;
+              setMentionSuggestions([]);
+              setActiveMentionIndex(0);
+              return;
+            } else if (customEmoji) {
+              composer.replaceRangeWithEmoji(tokenStart, caretPosition, {
+                id: customEmoji.id,
+                name: customEmoji.name,
+                url: customEmoji.url,
+                animated: customEmoji.animated,
+              });
+              mentionRangeRef.current = null;
+              setMentionSuggestions([]);
+              setActiveMentionIndex(0);
+              return;
+            }
+          }
+        }
+
         // Emoji autocomplete: `:query` with 2+ chars (avoids firing on plain colons)
         const emojiMatch = beforeCursor.match(/(^|\s):([a-zA-Z0-9_+-]{2,32})$/);
         if (emojiMatch) {
@@ -920,24 +988,25 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         // (they're informational, not selectable values).
         if (selected) {
           if (selected.kind === "param-hint") {
-            e.preventDefault();
+            // Dismiss the hint but DO NOT block — fall through so Enter sends the message
             mentionRangeRef.current = null;
             setMentionSuggestions([]);
             setActiveMentionIndex(0);
-            return;
-          }
-          const composer = messageBarRef.current?.getComposer();
-          const currentText = composer?.getText()?.trim() ?? "";
-          if (selected.kind === "command" && currentText === `/${selected.label}`) {
-            // Exact match — dismiss suggestions and send the command
-            mentionRangeRef.current = null;
-            setMentionSuggestions([]);
-            setActiveMentionIndex(0);
-            // Fall through to Enter handler below
+            // Fall through to handleSend below
           } else {
-            e.preventDefault();
-            insertMentionFromSuggestion(selected);
-            return;
+            const composer = messageBarRef.current?.getComposer();
+            const currentText = composer?.getText()?.trim() ?? "";
+            if (selected.kind === "command" && currentText === `/${selected.label}`) {
+              // Exact match — dismiss suggestions and fall through to send
+              mentionRangeRef.current = null;
+              setMentionSuggestions([]);
+              setActiveMentionIndex(0);
+              // Fall through to Enter handler below
+            } else {
+              e.preventDefault();
+              insertMentionFromSuggestion(selected);
+              return;
+            }
           }
         }
       }
@@ -1012,8 +1081,15 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
               <ChevronLeft className="w-5 h-5 text-[var(--app-muted)]" />
             </button>
           )}
-          <Hash className="w-5 sm:w-6 h-5 sm:h-6 text-[var(--app-muted-2)] flex-shrink-0" />
+          {currentChannel.type === "announcement" ? (
+            <Megaphone className="w-5 sm:w-6 h-5 sm:h-6 text-[var(--app-muted-2)] flex-shrink-0" />
+          ) : (
+            <Hash className="w-5 sm:w-6 h-5 sm:h-6 text-[var(--app-muted-2)] flex-shrink-0" />
+          )}
           <span className="font-semibold text-[var(--text-primary)] truncate text-sm sm:text-base">{currentChannel.name}</span>
+          {currentChannel.type === "announcement" && (
+            <span className="ml-1 shrink-0 px-1.5 py-0.5 rounded text-[10px] font-bold bg-blue-500/15 text-blue-400 select-none hidden sm:inline">ANNOUNCEMENTS</span>
+          )}
         </div>
         <div className="flex items-center gap-2 sm:gap-4 text-[var(--app-muted)]">
           <button
@@ -1144,6 +1220,13 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       />
 
       <TypingIndicator text={chat.typingStatusText} />
+
+      {currentChannel?.type === "announcement" && (
+        <div className="mx-4 mb-2 px-4 py-2.5 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center gap-2.5 text-xs text-blue-400">
+          <Megaphone className="w-4 h-4 shrink-0" />
+          <span>This is an <strong>announcement channel</strong>. Only admins can post here.</span>
+        </div>
+      )}
 
       <MessageBar
         ref={messageBarRef}

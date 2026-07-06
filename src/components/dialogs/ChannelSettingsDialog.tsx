@@ -18,7 +18,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { Hash, Volume2, X, Settings, Trash2, Shield, Clock, Plus, Check, Minus, Smile, Bold, Italic, Underline, Strikethrough, Eye, Lock, ChevronRight, ChevronDown, Link, Radio, Info, Search, MessageSquare, AlertCircle } from "lucide-react";
+import { Hash, Volume2, Megaphone, Folder, X, Settings, Trash2, Shield, Clock, Plus, Check, Minus, Smile, Bold, Italic, Underline, Strikethrough, Eye, Lock, ChevronRight, ChevronDown, Link, Radio, Info, Search, MessageSquare, AlertCircle } from "lucide-react";
 import { toast } from "sonner";
 import { CHANNEL_PERMISSIONS } from "@/lib/constants/channels";
 import { parsePermissionBitfield, stringifyPermissionBitfield } from "@/lib/roles/bitfield";
@@ -437,8 +437,8 @@ export function ChannelSettingsDialog({
 
   const tabs = [
     { id: "overview" as const, label: "Overview", icon: Settings },
+    { id: "permissions" as const, label: "Permissions", icon: Shield },
     ...(isCategory ? [] : [
-      { id: "permissions" as const, label: "Permissions", icon: Shield },
       { id: "integrations" as const, label: "Integrations", icon: Radio },
       { id: "invites" as const, label: "Invites", icon: Link }
     ]),
@@ -484,10 +484,10 @@ export function ChannelSettingsDialog({
           <div className="space-y-4">
             <div className="px-4">
               <h2 className="text-[10px] font-bold uppercase text-[var(--text-muted)] tracking-widest mb-1.5">
-                {isVoice ? "Voice" : isCategory ? "Category" : "Text"} Channel
+                {isVoice ? "Voice" : isCategory ? "Category" : channel.type === "announcement" ? "Announcement" : "Text"} Channel
               </h2>
               <p className="text-sm text-[var(--text-primary)] font-semibold truncate flex items-center gap-1.5">
-                {isVoice ? <Volume2 className="w-4 h-4 text-[var(--text-secondary)]" /> : !isCategory ? <Hash className="w-4 h-4 text-[var(--text-secondary)]" /> : null}
+                {isVoice ? <Volume2 className="w-4 h-4 text-[var(--text-muted)]" /> : isCategory ? <Folder className="w-4 h-4 text-[var(--text-muted)]" /> : channel.type === "announcement" ? <Megaphone className="w-4 h-4 text-blue-400" /> : <Hash className="w-4 h-4 text-[var(--text-muted)]" />}
                 {channel.name}
               </p>
             </div>
@@ -528,10 +528,17 @@ export function ChannelSettingsDialog({
         {/* Main Content */}
         <div className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[var(--bg-card)]">
           {/* Header */}
-          <div className="flex items-center justify-between px-10 py-6 border-b border-[var(--border-subtle)]">
-            <h1 className="text-xl font-bold text-[var(--text-primary)] capitalize">
-              {activeTab === "delete" ? "Delete Channel" : activeTab}
-            </h1>
+          <div className="flex items-center gap-4 px-10 py-5 border-b border-[var(--border-subtle)] bg-[var(--bg-app)]">
+            <div className="flex-1 min-w-0">
+              <h1 className="text-lg font-bold text-[var(--text-primary)] capitalize">
+                {activeTab === "delete" ? "Delete Channel" : activeTab === "overview" ? "Channel Overview" : activeTab.charAt(0).toUpperCase() + activeTab.slice(1)}
+              </h1>
+              <p className="text-xs text-[var(--text-muted)] mt-0.5 flex items-center gap-1.5">
+                {channel.type === "announcement" ? <Megaphone className="w-3 h-3 text-blue-400" /> : isVoice ? <Volume2 className="w-3 h-3" /> : <Hash className="w-3 h-3" />}
+                {channel.name}
+                {channel.type === "announcement" && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-blue-500/15 text-blue-400">ANNOUNCEMENTS</span>}
+              </p>
+            </div>
           </div>
 
           {/* Content Area */}
@@ -547,7 +554,7 @@ export function ChannelSettingsDialog({
                     </Label>
                     <div className="relative flex items-center">
                       <span className="absolute left-3 text-[var(--text-muted)]">
-                        {isVoice ? <Volume2 className="w-4 h-4" /> : <Hash className="w-4 h-4" />}
+                        {isVoice ? <Volume2 className="w-4 h-4" /> : isCategory ? <Folder className="w-4 h-4" /> : channel.type === "announcement" ? <Megaphone className="w-4 h-4" /> : <Hash className="w-4 h-4" />}
                       </span>
                       <Input
                         value={name}
@@ -560,6 +567,17 @@ export function ChannelSettingsDialog({
                       </button>
                     </div>
                   </div>
+
+                  {/* Category info note */}
+                  {isCategory && (
+                    <div className="flex gap-3 p-3.5 rounded-xl bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-xs text-[var(--text-secondary)] leading-relaxed">
+                      <Folder className="w-4 h-4 shrink-0 text-[var(--text-muted)] mt-0.5" />
+                      <div>
+                        <span className="font-semibold text-[var(--text-primary)] block mb-0.5">Category</span>
+                        Categories group channels together. Use the <strong>Permissions</strong> tab to set default access rules that all channels in this category inherit.
+                      </div>
+                    </div>
+                  )}
 
                   {/* Channel Topic (not for voice or category) */}
                   {!isVoice && !isCategory && (
@@ -1159,12 +1177,15 @@ export function ChannelSettingsDialog({
           </div>
 
           {/* Unsaved Changes Bar */}
-          {hasChanges && activeTab === "overview" && (
-            <div className="shrink-0 px-8 py-4 border-t border-[var(--border-subtle)] bg-[var(--bg-sidebar)] flex items-center justify-between animate-in slide-in-from-bottom-2">
-              <span className="text-sm text-[var(--text-secondary)]">
-                Careful — you have unsaved changes!
-              </span>
-              <div className="flex items-center gap-3">
+          {(hasChanges && activeTab === "overview") && (
+            <div className="shrink-0 px-8 py-3.5 border-t border-[var(--border-subtle)] bg-[var(--bg-app)] flex items-center justify-between gap-4 animate-in slide-in-from-bottom-2 duration-200">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 animate-pulse" />
+                <span className="text-sm text-[var(--text-secondary)] truncate">
+                  You have unsaved changes
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => {
                     if (channel) {
@@ -1176,27 +1197,30 @@ export function ChannelSettingsDialog({
                       setSlowmode(channel.rateLimitPerUser || 0);
                     }
                   }}
-                  className="text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline transition-colors"
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-sidebar-elevated)] transition-colors"
                 >
                   Reset
                 </button>
                 <Button
                   onClick={handleSave}
                   disabled={isSaving || !name.trim()}
-                  className="bg-[var(--app-accent)] hover:opacity-90 text-[var(--text-on-accent)] text-sm px-5 h-9"
+                  className="bg-[var(--app-accent)] hover:opacity-90 disabled:opacity-40 text-[var(--text-on-accent)] text-sm px-5 h-9 font-semibold"
                 >
-                  {isSaving ? "Saving..." : "Save Changes"}
+                  {isSaving ? "Saving…" : "Save Changes"}
                 </Button>
               </div>
             </div>
           )}
 
           {hasPermChanges && activeTab === "permissions" && (
-            <div className="shrink-0 px-8 py-4 border-t border-[var(--border-subtle)] bg-[var(--bg-sidebar)] flex items-center justify-between animate-in slide-in-from-bottom-2">
-              <span className="text-sm text-[var(--text-secondary)]">
-                You have unsaved permission changes!
-              </span>
-              <div className="flex items-center gap-3">
+            <div className="shrink-0 px-8 py-3.5 border-t border-[var(--border-subtle)] bg-[var(--bg-app)] flex items-center justify-between gap-4 animate-in slide-in-from-bottom-2 duration-200">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-2 h-2 rounded-full bg-amber-400 shrink-0 animate-pulse" />
+                <span className="text-sm text-[var(--text-secondary)] truncate">
+                  You have unsaved permission changes
+                </span>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
                 <button
                   onClick={() => {
                     if (channel) {
@@ -1208,16 +1232,16 @@ export function ChannelSettingsDialog({
                       })));
                     }
                   }}
-                  className="text-sm text-[var(--text-muted)] hover:text-[var(--text-primary)] hover:underline transition-colors"
+                  className="px-3.5 py-2 rounded-lg text-sm font-medium text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-sidebar-elevated)] transition-colors"
                 >
                   Reset
                 </button>
                 <Button
                   onClick={handleSavePermissions}
                   disabled={isSaving}
-                  className="bg-[var(--app-accent)] hover:opacity-90 text-[var(--text-on-accent)] text-sm px-5 h-9"
+                  className="bg-[var(--app-accent)] hover:opacity-90 disabled:opacity-40 text-[var(--text-on-accent)] text-sm px-5 h-9 font-semibold"
                 >
-                  {isSaving ? "Saving..." : "Save Changes"}
+                  {isSaving ? "Saving…" : "Save Changes"}
                 </Button>
               </div>
             </div>

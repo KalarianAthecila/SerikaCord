@@ -110,13 +110,17 @@ export const MessageContent = memo(function MessageContent({
     onImageClick?.(src, alt);
   };
 
+  // Strip /tts prefix for display; mark as TTS message
+  const isTtsMessage = content.startsWith("/tts ");
+  const displayContent = isTtsMessage ? content.slice(5) : content;
+
   // Check if the entire message is just an image URL
   const imageOnlyUrl = useMemo(() => {
-    if (isOnlyUrl(content) && isImageLikeUrl(content.trim())) {
-      return content.trim();
+    if (isOnlyUrl(displayContent) && isImageLikeUrl(displayContent.trim())) {
+      return displayContent.trim();
     }
     return null;
-  }, [content]);
+  }, [displayContent]);
 
   // Parse content to identify custom emojis and inline images
   const parsedContent = useMemo(() => {
@@ -141,15 +145,15 @@ export const MessageContent = memo(function MessageContent({
     let urlMatch;
     const segments: Array<{ type: "text" | "url"; content: string }> = [];
     
-    while ((urlMatch = urlRegex.exec(content)) !== null) {
+    while ((urlMatch = urlRegex.exec(displayContent)) !== null) {
       if (urlMatch.index > lastIndex) {
-        segments.push({ type: "text", content: content.slice(lastIndex, urlMatch.index) });
+        segments.push({ type: "text", content: displayContent.slice(lastIndex, urlMatch.index) });
       }
       segments.push({ type: "url", content: urlMatch[0] });
       lastIndex = urlMatch.index + urlMatch[0].length;
     }
-    if (lastIndex < content.length) {
-      segments.push({ type: "text", content: content.slice(lastIndex) });
+    if (lastIndex < displayContent.length) {
+      segments.push({ type: "text", content: displayContent.slice(lastIndex) });
     }
 
     let customEmojiCount = 0;
@@ -233,13 +237,13 @@ export const MessageContent = memo(function MessageContent({
     }
 
     return { parts, customEmojiCount };
-  }, [content, serverEmojis, imageOnlyUrl]);
+  }, [displayContent, serverEmojis, imageOnlyUrl]);
 
   // Determine if message is emoji-only for larger display
   const isLargeEmoji = useMemo(() => {
     if (imageOnlyUrl) return false;
-    return isOnlyEmoji(content, parsedContent.customEmojiCount);
-  }, [content, parsedContent.customEmojiCount, imageOnlyUrl]);
+    return isOnlyEmoji(displayContent, parsedContent.customEmojiCount);
+  }, [displayContent, parsedContent.customEmojiCount, imageOnlyUrl]);
 
   // Apply twemoji to text parts after render
   useEffect(() => {
@@ -253,7 +257,7 @@ export const MessageContent = memo(function MessageContent({
         });
       });
     }
-  }, [content, serverEmojis]);
+  }, [displayContent, serverEmojis]);
 
   const emojiSize = isLargeEmoji ? "w-14 h-14" : "w-5 h-5";
 
@@ -438,6 +442,11 @@ export const MessageContent = memo(function MessageContent({
           </span>
         );
       })}
+      {isTtsMessage && (
+        <span className="inline-flex items-center gap-1 ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-400 align-middle select-none">
+          🔊 TTS
+        </span>
+      )}
       {edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
     </span>
   );
