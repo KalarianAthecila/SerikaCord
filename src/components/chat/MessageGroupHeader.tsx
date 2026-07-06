@@ -9,6 +9,7 @@ import { formatMessageTimestamp } from "@/lib/chat/messages";
 import { useTheme } from "@/contexts/ThemeContext";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
 import { cn } from "@/lib/utils";
+import type { CSSProperties } from 'react';
 import type { MessageAuthor } from "@/lib/chat/types";
 
 interface GroupAvatarProps {
@@ -67,6 +68,11 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
   const hasCustomStyle = Boolean(author.customization?.displayNameStyle && (author.customization.displayNameStyle.color || author.customization.displayNameStyle.gradient?.length || author.customization.displayNameStyle.effect !== 'solid' || author.customization.displayNameStyle.font !== 'default'));
   const effectiveColor = !hasCustomStyle && settings.showRoleColors && roleColor ? roleColor : undefined;
 
+  // Cap font weight so bold/rounded styles don't make names look larger than others in chat
+  const chatInline: CSSProperties = hasCustomStyle
+    ? { ...styleInline, fontWeight: 500 }
+    : (effectiveColor ? { color: effectiveColor } : {});
+
   return (
     <div className="flex items-baseline gap-2 mb-1">
       {author.id && author.id !== "unknown" ? (
@@ -82,15 +88,15 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
           side="right"
           align="start"
         >
-          <button className={cn("text-sm font-medium hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded flex items-center gap-1", styleClasses)} style={hasCustomStyle ? styleInline : (effectiveColor ? { color: effectiveColor } : undefined)}>
-            {name}
+          <button className={cn("!text-sm font-medium leading-tight whitespace-nowrap truncate max-w-[55vw] xs:max-w-[45vw] sm:max-w-[30vw] hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded flex items-center gap-1", styleClasses)} style={chatInline}>
+            <span className="truncate">{name}</span>
             {author.isOwner && (
               <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
             )}
           </button>
         </MemberProfilePopup>
       ) : (
-        <span className={cn("text-sm font-medium text-[var(--text-primary)]", styleClasses)} style={hasCustomStyle ? styleInline : (effectiveColor ? { color: effectiveColor } : undefined)}>{name}</span>
+        <span className={cn("!text-sm font-medium leading-tight whitespace-nowrap truncate max-w-[55vw] xs:max-w-[45vw] sm:max-w-[30vw] text-[var(--text-primary)]", styleClasses)} style={chatInline}>{name}</span>
       )}
       <SystemPill isSystem={author.isSystem} />
       <StaffPill badges={author.badges} />
