@@ -102,6 +102,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ customStatus: trimmed || null }),
       });
+      await refresh();
     } catch (error) {
       console.error("Failed to update custom status:", error);
       await refresh();
@@ -321,7 +322,6 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                     <button
                       onClick={async () => {
                         setStatusText("");
-                        updateUser({ customStatus: undefined });
                         setEditingStatus(false);
                         try {
                           await fetch("/api/users/me", {
@@ -329,6 +329,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                             headers: { "Content-Type": "application/json" },
                             body: JSON.stringify({ customStatus: null }),
                           });
+                          await refresh();
                         } catch {
                           await refresh();
                         }

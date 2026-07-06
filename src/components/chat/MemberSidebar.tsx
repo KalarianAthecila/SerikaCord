@@ -1,9 +1,9 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef } from "react";
-import { Crown, Play, Pause } from "lucide-react";
+import { Crown, Play, Pause, Music2 } from "lucide-react";
 import { useServer } from "@/contexts/ServerContext";
-import { useMoeActivity } from "@/hooks/useMoeActivity";
+import { useUserActivity } from "@/hooks/useMoeActivity";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
@@ -158,14 +158,16 @@ function MemberItem({ member, serverId }: MemberItemProps) {
   const isOffline = member.status === "offline";
   const roleColor = member.highestRole?.color;
   // Only poll live activity for members who are actually around.
-  const moeActivity = useMoeActivity(member.id, { enabled: !isOffline });
+  const userActivity = useUserActivity(member.id, { enabled: !isOffline });
+  const moeActivity = userActivity?.activity ?? null;
+  const musicActivity = userActivity?.music ?? null;
   const subtitle = (!isOffline && member.customStatus) || null;
 
   return (
     <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
       <button
         className={cn(
-          "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-3 hover:bg-[var(--app-surface)] transition-all group",
+          "w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",
           isOffline && "opacity-50"
         )}
         style={{ width: "calc(100% - 16px)" }}
@@ -193,8 +195,8 @@ function MemberItem({ member, serverId }: MemberItemProps) {
             const styleInline = getDisplayNameStyleInline(member.customization?.displayNameStyle);
             const hasCustomStyle = Boolean(member.customization?.displayNameStyle && (member.customization.displayNameStyle.color || member.customization.displayNameStyle.gradient?.length || member.customization.displayNameStyle.effect !== 'solid' || member.customization.displayNameStyle.font !== 'default'));
             return (
-              <div className={cn("flex items-center gap-1 text-sm font-medium truncate text-[var(--text-primary)]", styleClasses)} style={hasCustomStyle ? styleInline : (roleColor ? { color: roleColor } : undefined)}>
-                {member.displayName || member.username || "Unknown"}
+              <div className={cn("flex items-center gap-1 text-sm font-medium text-[var(--text-primary)]", styleClasses)} style={hasCustomStyle ? styleInline : (roleColor ? { color: roleColor } : undefined)}>
+                <span className="truncate">{member.displayName || member.username || "Unknown"}</span>
                 {member.isOwner && (
                   <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
                 )}
@@ -209,6 +211,11 @@ function MemberItem({ member, serverId }: MemberItemProps) {
                 <Play className="w-2.5 h-2.5 shrink-0 fill-current" />
               )}
               <span className="truncate min-w-0">Watching {moeActivity.titleName}</span>
+            </div>
+          ) : musicActivity ? (
+            <div className="flex items-center gap-1 text-xs text-[#e4335a] min-w-0">
+              <Music2 className="w-2.5 h-2.5 shrink-0 fill-current" />
+              <span className="truncate min-w-0">{musicActivity.name} — {musicActivity.artist}</span>
             </div>
           ) : (
             subtitle && (

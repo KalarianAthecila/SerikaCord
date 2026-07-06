@@ -619,7 +619,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       pronouns: t.Optional(t.String({ maxLength: 32 })),
       timezone: t.Optional(t.Union([t.String(), t.Null()])),
       showTimezone: t.Optional(t.Boolean()),
-      customStatus: t.Optional(t.String({ maxLength: 128 })),
+      customStatus: t.Optional(t.Union([t.String({ maxLength: 128 }), t.Null()])),
       status: t.Optional(t.Union([
         t.Literal('online'),
         t.Literal('idle'),
