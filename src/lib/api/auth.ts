@@ -540,160 +540,14 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }),
   })
 
-  // ── Last.fm OAuth ──────────────────────────────────────────────────────────
-  // Step 1: Redirect the user to Last.fm's auth page.
-  // The frontend calls /api/auth/lastfm/initiate (with the user's auth token in
-  // header/cookie) which sets a short-lived state cookie then redirects.
-  .get('/lastfm/initiate', async ({ headers, cookie, set }) => {
-    const authHeader = headers.authorization ?? null;
-    const authToken = cookie.auth_token?.value;
-    const cookies: Record<string, string> = {};
-    if (typeof authToken === 'string' && authToken) {
-      cookies.auth_token = authToken;
-    }
-    const { user, error: authError } = await authenticateRequest(authHeader, cookies);
-    if (!user) {
-      set.status = 302;
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=unauthorized`;
-      return;
-    }
-
-    // Check if connections are enabled
-    const platformSettings = await getPlatformSettings();
-    if (platformSettings.connectionsEnabled === false) {
-      set.status = 302;
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=connections_disabled`;
-      return;
-    }
-
-    const apiKey = config.LASTFM_API_KEY;
-    if (!apiKey) {
-      set.status = 302;
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_not_configured`;
-      return;
-    }
-
-    // Store the user id in a short-lived cookie so the callback can associate
-    // the session key with the right account.
-    const userId = (user._id as { toString(): string }).toString();
-    (cookie as any).lastfm_state = {
-      value: userId,
-      httpOnly: true,
-      path: '/',
-      maxAge: 600, // 10 minutes
-      sameSite: 'lax',
-    };
-
-    const callbackUrl = encodeURIComponent(`${config.FRONTEND_URL || config.API_BASE_URL}/api/auth/lastfm/callback`);
-    set.status = 302;
-    set.redirect = `https://www.last.fm/api/auth/?api_key=${apiKey}&cb=${callbackUrl}`;
-  })
-
-  // Step 2: Last.fm redirects back here with ?token=...
-  // We exchange the token for a session key, fetch the user info, then save
-  // the connection and redirect back to the settings page.
-  .get('/lastfm/callback', async ({ query, cookie, set }) => {
-    const { token } = query as { token?: string };
-    const userId = (cookie as any).lastfm_state?.value;
-
-    if (!token) {
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_denied`;
-      return;
-    }
-    if (!userId) {
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_state_missing`;
-      return;
-    }
-
-    const apiKey = config.LASTFM_API_KEY;
-    const secret = config.LASTFM_API_SECRET;
-    if (!apiKey || !secret) {
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_not_configured`;
-      return;
-    }
-
-    try {
-      // Build signed getSession call
-      const params: Record<string, string> = {
-        api_key: apiKey,
-        method: 'auth.getSession',
-        token,
-      };
-      // Signature: alphabetical params concatenated (no &= separators) + secret, then MD5
-      const sigStr =
-        Object.keys(params)
-          .sort()
-          .map((k) => `${k}${params[k]}`)
-          .join('') + secret;
-      const apiSig = createHash('md5').update(sigStr, 'utf8').digest('hex');
-
-      const url = new URL('https://ws.audioscrobbler.com/2.0/');
-      url.searchParams.set('method', 'auth.getSession');
-      url.searchParams.set('api_key', apiKey);
-      url.searchParams.set('token', token);
-      url.searchParams.set('api_sig', apiSig);
-      url.searchParams.set('format', 'json');
-
-      const resp = await fetch(url.toString());
-      const data = await resp.json() as any;
-
-      if (data.error || !data.session) {
-        set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_session_failed`;
-        return;
-      }
-
-      const lfmUsername: string = data.session.name;
-      const sessionKey: string = data.session.key;
-
-      // Fetch user info for avatar
-      const infoUrl = new URL('https://ws.audioscrobbler.com/2.0/');
-      infoUrl.searchParams.set('method', 'user.getInfo');
-      infoUrl.searchParams.set('user', lfmUsername);
-      infoUrl.searchParams.set('api_key', apiKey);
-      infoUrl.searchParams.set('format', 'json');
-      const infoResp = await fetch(infoUrl.toString());
-      const infoData = await infoResp.json() as any;
-      const avatar: string | undefined = infoData.user?.image?.find((img: any) => img.size === 'large')?.['#text'] || undefined;
-
-      // Upsert the connection
-      await UserConnection.findOneAndUpdate(
-        { userId, provider: 'lastfm' },
-        {
-          $set: {
-            userId,
-            provider: 'lastfm',
-            accountId: lfmUsername,
-            username: lfmUsername,
-            displayName: lfmUsername,
-            avatar,
-            metadata: { sessionKey },
-          },
-        },
-        { upsert: true, new: true },
-      );
-
-      // Clear the state cookie
-      (cookie as any).lastfm_state = { value: '', maxAge: 0, path: '/' };
-
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?success=lastfm`;
-    } catch (err) {
-      console.error('Last.fm callback error:', err);
-      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_error`;
-    }
-  }, {
-    query: t.Object({
-      token: t.Optional(t.String()),
-    }),
-  })
-
-  // ── Generic OAuth2 providers ───────────────────────────────────────────────
-  // Supports GitHub, Spotify, Twitch, Steam via env-var-configured credentials.
-  // Each provider has an initiate route (redirect to provider auth page) and a
-  // callback route (exchange code for token, fetch user info, upsert connection).
+  // ── OAuth provider routes (Last.fm + generic OAuth2) ───────────────────────
+  // Last.fm uses a custom flow; other providers (GitHub, Spotify, etc.) use
+  // standard OAuth2. Both are handled under /:provider/initiate and
+  // /:provider/callback to avoid route conflicts between static and dynamic
+  // paths in Elysia.
 
   .get('/:provider/initiate', async ({ params, headers, cookie, set }) => {
     const provider = params.provider;
-    if (provider === 'lastfm') return; // handled by dedicated route above
 
     // Authenticate user
     const authHeader = headers.authorization ?? null;
@@ -717,6 +571,31 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       return;
     }
 
+    // ── Last.fm initiate ────────────────────────────────────────────────────
+    if (provider === 'lastfm') {
+      const apiKey = config.LASTFM_API_KEY;
+      if (!apiKey) {
+        set.status = 302;
+        set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_not_configured`;
+        return;
+      }
+
+      const userId = (user._id as { toString(): string }).toString();
+      (cookie as any).lastfm_state = {
+        value: userId,
+        httpOnly: true,
+        path: '/',
+        maxAge: 600,
+        sameSite: 'lax',
+      };
+
+      const callbackUrl = encodeURIComponent(`${config.FRONTEND_URL || config.API_BASE_URL}/api/auth/lastfm/callback`);
+      set.status = 302;
+      set.redirect = `https://www.last.fm/api/auth/?api_key=${apiKey}&cb=${callbackUrl}`;
+      return;
+    }
+
+    // ── Generic OAuth2 initiate ─────────────────────────────────────────────
     const prov = OAUTH2_PROVIDERS[provider];
     if (!prov || !prov.clientId) {
       set.status = 302;
@@ -742,9 +621,102 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
 
   .get('/:provider/callback', async ({ params, query, cookie, set }) => {
     const provider = params.provider;
-    if (provider === 'lastfm') return;
-
     const redirectBase = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections`;
+
+    // ── Last.fm callback ─────────────────────────────────────────────────────
+    if (provider === 'lastfm') {
+      const { token } = query as { token?: string };
+      const userId = (cookie as any).lastfm_state?.value;
+
+      if (!token) {
+        set.status = 302;
+        set.redirect = `${redirectBase}?error=lastfm_denied`;
+        return;
+      }
+      if (!userId) {
+        set.status = 302;
+        set.redirect = `${redirectBase}?error=lastfm_state_missing`;
+        return;
+      }
+
+      const apiKey = config.LASTFM_API_KEY;
+      const secret = config.LASTFM_API_SECRET;
+      if (!apiKey || !secret) {
+        set.status = 302;
+        set.redirect = `${redirectBase}?error=lastfm_not_configured`;
+        return;
+      }
+
+      try {
+        const params: Record<string, string> = {
+          api_key: apiKey,
+          method: 'auth.getSession',
+          token,
+        };
+        const sigStr =
+          Object.keys(params)
+            .sort()
+            .map((k) => `${k}${params[k]}`)
+            .join('') + secret;
+        const apiSig = createHash('md5').update(sigStr, 'utf8').digest('hex');
+
+        const url = new URL('https://ws.audioscrobbler.com/2.0/');
+        url.searchParams.set('method', 'auth.getSession');
+        url.searchParams.set('api_key', apiKey);
+        url.searchParams.set('token', token);
+        url.searchParams.set('api_sig', apiSig);
+        url.searchParams.set('format', 'json');
+
+        const resp = await fetch(url.toString());
+        const data = await resp.json() as any;
+
+        if (data.error || !data.session) {
+          set.status = 302;
+          set.redirect = `${redirectBase}?error=lastfm_session_failed`;
+          return;
+        }
+
+        const lfmUsername: string = data.session.name;
+        const sessionKey: string = data.session.key;
+
+        const infoUrl = new URL('https://ws.audioscrobbler.com/2.0/');
+        infoUrl.searchParams.set('method', 'user.getInfo');
+        infoUrl.searchParams.set('user', lfmUsername);
+        infoUrl.searchParams.set('api_key', apiKey);
+        infoUrl.searchParams.set('format', 'json');
+        const infoResp = await fetch(infoUrl.toString());
+        const infoData = await infoResp.json() as any;
+        const avatar: string | undefined = infoData.user?.image?.find((img: any) => img.size === 'large')?.['#text'] || undefined;
+
+        await UserConnection.findOneAndUpdate(
+          { userId, provider: 'lastfm' },
+          {
+            $set: {
+              userId,
+              provider: 'lastfm',
+              accountId: lfmUsername,
+              username: lfmUsername,
+              displayName: lfmUsername,
+              avatar,
+              metadata: { sessionKey },
+            },
+          },
+          { upsert: true, new: true },
+        );
+
+        (cookie as any).lastfm_state = { value: '', maxAge: 0, path: '/' };
+
+        set.status = 302;
+        set.redirect = `${redirectBase}?success=lastfm`;
+      } catch (err) {
+        console.error('Last.fm callback error:', err);
+        set.status = 302;
+        set.redirect = `${redirectBase}?error=lastfm_error`;
+      }
+      return;
+    }
+
+    // ── Generic OAuth2 / Steam callback ──────────────────────────────────────
 
     // Steam uses OpenID — extract SteamID from openid.identity
     if (provider === 'steam') {
@@ -859,6 +831,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }
   }, {
     query: t.Object({
+      token: t.Optional(t.String()),
       code: t.Optional(t.String()),
       state: t.Optional(t.String()),
       error: t.Optional(t.String()),
