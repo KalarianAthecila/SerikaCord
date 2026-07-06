@@ -10,6 +10,7 @@ import {
   authenticateRequest,
 } from '../services/auth';
 import { UserConnection } from '../models';
+import { getPlatformSettings } from '../models/PlatformSettings';
 import {
   accountsRegister,
   accountsLogin,
@@ -552,14 +553,24 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }
     const { user, error: authError } = await authenticateRequest(authHeader, cookies);
     if (!user) {
-      set.status = 401;
-      return { error: authError || 'Unauthorized' };
+      set.status = 302;
+      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=unauthorized`;
+      return;
+    }
+
+    // Check if connections are enabled
+    const platformSettings = await getPlatformSettings();
+    if (platformSettings.connectionsEnabled === false) {
+      set.status = 302;
+      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=connections_disabled`;
+      return;
     }
 
     const apiKey = config.LASTFM_API_KEY;
     if (!apiKey) {
-      set.status = 503;
-      return { error: 'Last.fm is not configured on this instance' };
+      set.status = 302;
+      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=lastfm_not_configured`;
+      return;
     }
 
     // Store the user id in a short-lived cookie so the callback can associate
@@ -574,6 +585,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     };
 
     const callbackUrl = encodeURIComponent(`${config.FRONTEND_URL || config.API_BASE_URL}/api/auth/lastfm/callback`);
+    set.status = 302;
     set.redirect = `https://www.last.fm/api/auth/?api_key=${apiKey}&cb=${callbackUrl}`;
   })
 
@@ -692,12 +704,22 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     }
     const { user, error: authError } = await authenticateRequest(authHeader, cookies);
     if (!user) {
-      set.status = 401;
-      return { error: authError || 'Unauthorized' };
+      set.status = 302;
+      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=unauthorized`;
+      return;
+    }
+
+    // Check if connections are enabled
+    const platformSettings = await getPlatformSettings();
+    if (platformSettings.connectionsEnabled === false) {
+      set.status = 302;
+      set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=connections_disabled`;
+      return;
     }
 
     const prov = OAUTH2_PROVIDERS[provider];
     if (!prov || !prov.clientId) {
+      set.status = 302;
       set.redirect = `${config.FRONTEND_URL || config.API_BASE_URL}/channels/settings/connections?error=${provider}_not_configured`;
       return;
     }
@@ -714,6 +736,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
 
     const callbackUrl = encodeURIComponent(`${config.FRONTEND_URL || config.API_BASE_URL}/api/auth/${provider}/callback`);
     const authUrl = prov.getAuthUrl(prov.clientId, callbackUrl, prov.scopes);
+    set.status = 302;
     set.redirect = authUrl;
   })
 

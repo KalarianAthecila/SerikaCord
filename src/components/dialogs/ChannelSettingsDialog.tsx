@@ -400,7 +400,12 @@ export function ChannelSettingsDialog({
     setIsSaving(true);
     try {
       const updates: Record<string, unknown> = {};
-      if (name !== channel.name) updates.name = name.trim();
+      if (name !== channel.name) {
+        const formattedName = (!isVoice && !isCategory)
+          ? name.toLowerCase().replace(/\s+/g, "-").trim()
+          : name.trim();
+        updates.name = formattedName;
+      }
       if (topic !== (channel.topic || "")) updates.topic = topic;
       if (nsfw !== (channel.isNsfw || false)) updates.nsfw = nsfw;
       if (announcement !== (channel.type === "announcement")) {
@@ -558,7 +563,14 @@ export function ChannelSettingsDialog({
                       </span>
                       <Input
                         value={name}
-                        onChange={(e) => setName(e.target.value)}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (!isVoice && !isCategory) {
+                            setName(val.toLowerCase().replace(/\s+/g, "-"));
+                          } else {
+                            setName(val);
+                          }
+                        }}
                         maxLength={100}
                         className="pl-9 pr-9 bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-primary)] focus:border-[var(--app-accent)] h-10"
                       />

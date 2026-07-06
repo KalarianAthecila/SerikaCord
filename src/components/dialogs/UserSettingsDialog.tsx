@@ -129,6 +129,7 @@ function ConnectionsTabContent({
   setConnectingProvider,
   connectingValue,
   setConnectingValue,
+  connectionsEnabled = true,
 }: {
   userConnections: any[];
   setUserConnections: Dispatch<SetStateAction<any[]>>;
@@ -136,6 +137,7 @@ function ConnectionsTabContent({
   setConnectingProvider: (v: string | null) => void;
   connectingValue: string;
   setConnectingValue: (v: string) => void;
+  connectionsEnabled?: boolean;
 }) {
   const connectedMap = Object.fromEntries(userConnections.map((c) => [c.provider, c]));
 
@@ -162,6 +164,8 @@ function ConnectionsTabContent({
         session_failed: "Failed to complete authorisation. Please try again.",
         error: "An error occurred while linking the account.",
         not_configured: "This provider is not configured on this instance.",
+        connections_disabled: "Connections have been temporarily disabled by staff.",
+        unauthorized: "You must be logged in to connect an account.",
       };
       // Match prefix errors like "lastfm_denied", "github_denied", etc.
       const base = error.includes("_") ? error.split("_").slice(1).join("_") : error;
@@ -218,6 +222,16 @@ function ConnectionsTabContent({
       <p className="text-sm text-[var(--text-muted)] mb-6">
         Link your accounts to show them on your profile. Some connections display live activity.
       </p>
+
+      {!connectionsEnabled && (
+        <div className="mb-6 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20 flex items-center gap-3">
+          <Lock className="w-5 h-5 text-yellow-400 shrink-0" />
+          <div>
+            <p className="text-yellow-400 font-semibold text-sm">Connections are temporarily disabled</p>
+            <p className="text-yellow-400/70 text-xs">Account linking has been turned off by staff. You can still disconnect existing accounts.</p>
+          </div>
+        </div>
+      )}
 
       {/* Inline connect form */}
       {connectingProvider && activeProviderDef && (
@@ -299,22 +313,31 @@ function ConnectionsTabContent({
                         >
                           Disconnect
                         </button>
-                      ) : p.id === "website" ? (
-                        <button
-                          onClick={() => { setConnectingProvider(isExpanded ? null : p.id); setConnectingValue(""); }}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium text-white shrink-0 transition-opacity hover:opacity-90"
-                          style={{ backgroundColor: p.color }}
-                        >
-                          {isExpanded ? "Cancel" : "Connect"}
-                        </button>
+                      ) : connectionsEnabled ? (
+                        p.id === "website" ? (
+                          <button
+                            onClick={() => { setConnectingProvider(isExpanded ? null : p.id); setConnectingValue(""); }}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium text-white shrink-0 transition-opacity hover:opacity-90"
+                            style={{ backgroundColor: p.color }}
+                          >
+                            {isExpanded ? "Cancel" : "Connect"}
+                          </button>
+                        ) : (
+                          <a
+                            href={`/api/auth/${p.id}/initiate`}
+                            className="px-3 py-1.5 rounded-lg text-xs font-medium text-white shrink-0 transition-opacity hover:opacity-90 inline-block"
+                            style={{ backgroundColor: p.color }}
+                          >
+                            Connect
+                          </a>
+                        )
                       ) : (
-                        <a
-                          href={`/api/auth/${p.id}/initiate`}
-                          className="px-3 py-1.5 rounded-lg text-xs font-medium text-white shrink-0 transition-opacity hover:opacity-90 inline-block"
-                          style={{ backgroundColor: p.color }}
+                        <button
+                          disabled
+                          className="px-3 py-1.5 rounded-lg text-xs font-medium bg-white/[0.04] text-[#555] cursor-not-allowed shrink-0"
                         >
                           Connect
-                        </a>
+                        </button>
                       )}
                     </div>
                   );
@@ -409,6 +432,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const [authorizedApps, setAuthorizedApps] = useState<any[]>([]);
   const [deviceSessions, setDeviceSessions] = useState<any[]>([]);
   const [userConnections, setUserConnections] = useState<any[]>([]);
+  const [connectionsEnabled, setConnectionsEnabled] = useState(true);
 
   // Avatar/Banner upload state
   const avatarInputRef = useRef<HTMLInputElement>(null);
@@ -465,6 +489,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const [platformSettings, setPlatformSettings] = useState<{
     maintenanceMode: boolean;
     allowRegistration: boolean;
+    connectionsEnabled?: boolean;
     globalAnnouncement?: string;
     oembedWhitelist?: string[];
     allowedFileTypes?: { type: string; safe: boolean }[];
@@ -1075,7 +1100,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     }
   };
 
-  const handleUpdatePlatformSettings = async (updates: { maintenanceMode?: boolean; allowRegistration?: boolean; oembedWhitelist?: string[]; allowedFileTypes?: { type: string; safe: boolean }[]; warnOnUnknownFileTypes?: boolean }) => {
+  const handleUpdatePlatformSettings = async (updates: { maintenanceMode?: boolean; allowRegistration?: boolean; connectionsEnabled?: boolean; oembedWhitelist?: string[]; allowedFileTypes?: { type: string; safe: boolean }[]; warnOnUnknownFileTypes?: boolean }) => {
     try {
       const response = await fetch("/api/admin/settings", {
         method: "PATCH",
@@ -1257,6 +1282,12 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       fetchPlatformSettings();
     } else if (activeTab === "admin-logs" && adminLogs.length === 0) {
       fetchAdminLogs();
+    }
+    if (activeTab === "connections") {
+      fetch("/api/admin/settings/connections")
+        .then((r) => r.json())
+        .then((d) => { if (typeof d.connectionsEnabled === "boolean") setConnectionsEnabled(d.connectionsEnabled); })
+        .catch(() => {});
     }
   }, [activeTab]);
 
@@ -2548,6 +2579,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                   setConnectingProvider={setConnectingProvider}
                   connectingValue={connectingValue}
                   setConnectingValue={setConnectingValue}
+                  connectionsEnabled={connectionsEnabled}
                 />
               )}
 
@@ -3242,6 +3274,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                           <p className="text-sm text-[var(--text-muted)]">Enable new user sign-ups</p>
                         </div>
                         <ToggleSwitch size="sm" checked={platformSettings?.allowRegistration !== false} onCheckedChange={(checked) => handleUpdatePlatformSettings({ allowRegistration: checked })} />
+                      </label>
+                    </div>
+                    <div className="bg-[var(--bg-app)] rounded-lg p-4">
+                      <h3 className="text-white font-semibold mb-3">Connections</h3>
+                      <label className="flex items-center justify-between cursor-pointer">
+                        <div>
+                          <p className="text-white">Enable Account Connections</p>
+                          <p className="text-sm text-[var(--text-muted)]">Allow users to link external accounts (Last.fm, Spotify, GitHub, etc.)</p>
+                        </div>
+                        <ToggleSwitch size="sm" checked={platformSettings?.connectionsEnabled !== false} onCheckedChange={(checked) => handleUpdatePlatformSettings({ connectionsEnabled: checked })} />
                       </label>
                     </div>
                     <div className="bg-[var(--bg-app)] rounded-lg p-4">

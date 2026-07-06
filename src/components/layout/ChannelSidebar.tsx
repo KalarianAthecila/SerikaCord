@@ -1015,14 +1015,14 @@ export function ChannelSidebar({
                     onClick={() => toggleCategory(category.id)}
                     onContextMenu={(e) => handleContextMenu(e, category)}
                   >
-                    <div className="flex items-center gap-0.5">
+                    <div className="flex items-center gap-0.5 min-w-0">
                       <ChevronRight
                         className={cn(
-                          "w-3 h-3 text-[var(--text-muted)] transition-transform",
+                          "w-3 h-3 text-[var(--text-muted)] transition-transform shrink-0",
                           !isCollapsed && "rotate-90"
                         )}
                       />
-                      <span className="text-xs font-bold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)] select-none">
+                      <span className="text-xs font-bold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)] select-none truncate min-w-0">
                         {category.name}
                       </span>
                     </div>

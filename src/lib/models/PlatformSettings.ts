@@ -9,6 +9,7 @@ export interface IPlatformSettings {
   _id: string;
   maintenanceMode: boolean;
   allowRegistration: boolean;
+  connectionsEnabled: boolean;
   globalAnnouncement?: string;
   announcementUpdatedAt?: Date;
   encryptionKey: string;
@@ -28,6 +29,10 @@ const PlatformSettingsSchema = new Schema<IPlatformSettings>({
     default: false,
   },
   allowRegistration: {
+    type: Boolean,
+    default: true,
+  },
+  connectionsEnabled: {
     type: Boolean,
     default: true,
   },

@@ -506,6 +506,12 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // ==================== PLATFORM SETTINGS ====================
 
+  // Public endpoint — returns only connectionsEnabled flag (no auth required)
+  .get('/settings/connections', async () => {
+    const settings = await getPlatformSettings();
+    return { connectionsEnabled: settings.connectionsEnabled };
+  })
+
   // Get platform settings
   .get('/settings', async ({ headers, cookie, set }) => {
     const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -526,9 +532,10 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: error || 'Admin access required' };
     }
 
-    const { maintenanceMode, allowRegistration, globalAnnouncement, oembedWhitelist, allowedFileTypes, warnOnUnknownFileTypes } = body as {
+    const { maintenanceMode, allowRegistration, connectionsEnabled, globalAnnouncement, oembedWhitelist, allowedFileTypes, warnOnUnknownFileTypes } = body as {
       maintenanceMode?: boolean;
       allowRegistration?: boolean;
+      connectionsEnabled?: boolean;
       globalAnnouncement?: string;
       oembedWhitelist?: string[];
       allowedFileTypes?: { type: string; safe: boolean }[];
@@ -538,6 +545,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const updates: Record<string, unknown> = {};
     if (maintenanceMode !== undefined) updates.maintenanceMode = maintenanceMode;
     if (allowRegistration !== undefined) updates.allowRegistration = allowRegistration;
+    if (connectionsEnabled !== undefined) updates.connectionsEnabled = connectionsEnabled;
     if (globalAnnouncement !== undefined) {
       updates.globalAnnouncement = globalAnnouncement || null;
       updates.announcementUpdatedAt = new Date();
@@ -561,6 +569,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     body: t.Object({
       maintenanceMode: t.Optional(t.Boolean()),
       allowRegistration: t.Optional(t.Boolean()),
+      connectionsEnabled: t.Optional(t.Boolean()),
       globalAnnouncement: t.Optional(t.String()),
       oembedWhitelist: t.Optional(t.Array(t.String())),
       allowedFileTypes: t.Optional(t.Array(t.Object({
