@@ -25,7 +25,7 @@ import { getBadgesByPriority } from "@/lib/constants/badges";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 import { hasPermissionBit } from "@/lib/roles/bitfield";
-import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
+import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle, getProfileBannerStyle } from "@/lib/userDisplayNameStyle";
 import { useMoeActivity, useUserActivity } from "@/hooks/useMoeActivity";
 import { NowWatchingCard } from "@/components/user/NowWatchingCard";
 import { MusicActivityCard } from "@/components/user/MusicActivityCard";
@@ -63,7 +63,17 @@ export interface ProfileCardUser {
   }>;
   customization?: {
     profileColor?: string;
+    profileAccentColor?: string;
     profileGradient?: string[];
+    profileGradientAngle?: number;
+    profileGradientType?: 'linear' | 'radial';
+    profileGradientRadialPosition?: string;
+    profileCardEffect?: 'normal' | 'glassmorphism' | 'glow' | 'holographic' | 'neon';
+    profileCardBlur?: number;
+    profileCardOpacity?: number;
+    profileCardBorderColor?: string;
+    profileCardBorderGlow?: boolean;
+    profileCardBorderWidth?: number;
     displayNameStyle?: {
       font?: 'default' | 'serif' | 'mono' | 'rounded' | 'cursive' | 'bold';
       effect?: 'solid' | 'gradient' | 'neon' | 'toon' | 'pop';
@@ -243,10 +253,19 @@ export function ProfileCard({
 
   const badges = user.badges?.length ? getBadgesByPriority(user.badges as string[]) : [];
 
+  const bgStyle = getProfileBackgroundStyle(user.customization);
+  const hasBgOverride = Boolean(bgStyle.background || bgStyle.backgroundColor);
+  const isHolographic = user.customization?.profileCardEffect === 'holographic';
+
   return (
     <div
-      className={cn("w-[340px] rounded-xl overflow-hidden bg-[#0c0c10] border border-white/[0.06] shadow-2xl", className)}
-      style={getProfileBackgroundStyle(user.customization)}
+      className={cn(
+        "w-[340px] rounded-xl overflow-hidden border border-white/[0.06] shadow-2xl transition-all duration-300",
+        !hasBgOverride && !isHolographic && "bg-[#0c0c10]",
+        isHolographic && "holographic-animation",
+        className
+      )}
+      style={bgStyle}
     >
       {/* Banner — tall, Discord-profile style */}
       <div className="relative h-[120px]">
@@ -255,13 +274,11 @@ export function ProfileCard({
             className="absolute inset-0 bg-cover bg-center"
             style={{ backgroundImage: `url(${user.banner})` }}
           />
-        ) : user.customization?.profileGradient && user.customization.profileGradient.length >= 2 ? (
+        ) : (user.customization?.profileGradient && user.customization.profileGradient.length >= 2) || user.customization?.profileColor ? (
           <div
             className="absolute inset-0"
-            style={{ background: `linear-gradient(135deg, ${user.customization.profileGradient.join(', ')})` }}
+            style={getProfileBannerStyle(user.customization)}
           />
-        ) : user.customization?.profileColor ? (
-          <div className="absolute inset-0" style={{ backgroundColor: user.customization.profileColor }} />
         ) : (
           <div className="absolute inset-0 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#4F46E5]" />
         )}

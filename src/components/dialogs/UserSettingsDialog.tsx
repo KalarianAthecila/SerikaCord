@@ -54,6 +54,7 @@ import {
 import { requestNotificationPermission } from "@/lib/services/notificationService";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
+import { NAMEPLATE_PRESETS, getNameplateBackground } from "@/lib/constants/nameplates";
 import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 import { toast } from "sonner";
@@ -419,6 +420,21 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   }>({ font: 'default', effect: 'solid', color: '', gradient: [] });
   const [profileColor, setProfileColor] = useState("");
   const [profileGradient, setProfileGradient] = useState<string[]>([]);
+  const [profileGradientAngle, setProfileGradientAngle] = useState(135);
+  const [profileGradientType, setProfileGradientType] = useState<'linear' | 'radial'>('linear');
+  const [profileGradientRadialPosition, setProfileGradientRadialPosition] = useState('center');
+  const [profileCardEffect, setProfileCardEffect] = useState<'normal' | 'glassmorphism' | 'glow' | 'holographic' | 'neon'>('normal');
+  const [profileCardBlur, setProfileCardBlur] = useState(8);
+  const [profileCardOpacity, setProfileCardOpacity] = useState(0.85);
+  const [profileCardBorderColor, setProfileCardBorderColor] = useState("");
+  const [profileCardBorderGlow, setProfileCardBorderGlow] = useState(false);
+  const [profileCardBorderWidth, setProfileCardBorderWidth] = useState(1);
+  const [nameplate, setNameplate] = useState<{
+    type?: 'none' | 'color' | 'gradient' | 'preset';
+    color?: string;
+    gradient?: string[];
+    presetId?: string;
+  }>({ type: 'none' });
 
   const previewUser = useMemo(() => {
     const isServer = profileTab === "server";
@@ -441,6 +457,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
         profileColor: profileColor,
         profileGradient: profileGradient,
         displayNameStyle: displayNameStyle,
+        nameplate: nameplate,
+        profileGradientAngle,
+        profileGradientType,
+        profileGradientRadialPosition,
+        profileCardEffect,
+        profileCardBlur,
+        profileCardOpacity,
+        profileCardBorderColor,
+        profileCardBorderGlow,
+        profileCardBorderWidth,
       }
     };
   }, [
@@ -458,7 +484,17 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     status,
     profileColor,
     profileGradient,
-    displayNameStyle
+    displayNameStyle,
+    nameplate,
+    profileGradientAngle,
+    profileGradientType,
+    profileGradientRadialPosition,
+    profileCardEffect,
+    profileCardBlur,
+    profileCardOpacity,
+    profileCardBorderColor,
+    profileCardBorderGlow,
+    profileCardBorderWidth,
   ]);
 
   const [isSaving, setIsSaving] = useState(false);
@@ -587,6 +623,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       setDisplayNameStyle(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] });
       setProfileColor(user.customization?.profileColor || "");
       setProfileGradient(user.customization?.profileGradient || []);
+      setProfileGradientAngle(user.customization?.profileGradientAngle ?? 135);
+      setProfileGradientType(user.customization?.profileGradientType || 'linear');
+      setProfileGradientRadialPosition(user.customization?.profileGradientRadialPosition || 'center');
+      setProfileCardEffect(user.customization?.profileCardEffect || 'normal');
+      setProfileCardBlur(user.customization?.profileCardBlur ?? 8);
+      setProfileCardOpacity(user.customization?.profileCardOpacity ?? 0.85);
+      setProfileCardBorderColor(user.customization?.profileCardBorderColor || "");
+      setProfileCardBorderGlow(user.customization?.profileCardBorderGlow ?? false);
+      setProfileCardBorderWidth(user.customization?.profileCardBorderWidth ?? 1);
+      setNameplate(user.customization?.nameplate || { type: 'none' });
     }
   }, [user]);
 
@@ -723,7 +769,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
         status !== (user.status || "online") ||
         JSON.stringify(displayNameStyle) !== JSON.stringify(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] }) ||
         profileColor !== (user.customization?.profileColor || "") ||
-        JSON.stringify(profileGradient) !== JSON.stringify(user.customization?.profileGradient || []);
+        JSON.stringify(profileGradient) !== JSON.stringify(user.customization?.profileGradient || []) ||
+        JSON.stringify(nameplate) !== JSON.stringify(user.customization?.nameplate || { type: 'none' });
       setHasChanges(changed);
     } else if (profileTab === "server") {
       const changed =
@@ -743,6 +790,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     displayNameStyle,
     profileColor,
     profileGradient,
+    nameplate,
     user,
     profileTab,
     serverNickname,
@@ -783,6 +831,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               displayNameStyle,
               profileColor,
               profileGradient,
+              profileGradientAngle,
+              profileGradientType,
+              profileGradientRadialPosition,
+              profileCardEffect,
+              profileCardBlur,
+              profileCardOpacity,
+              profileCardBorderColor,
+              profileCardBorderGlow,
+              profileCardBorderWidth,
+              nameplate,
             },
           }),
         });
@@ -802,6 +860,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               displayNameStyle,
               profileColor,
               profileGradient,
+              profileGradientAngle,
+              profileGradientType,
+              profileGradientRadialPosition,
+              profileCardEffect,
+              profileCardBlur,
+              profileCardOpacity,
+              profileCardBorderColor,
+              profileCardBorderGlow,
+              profileCardBorderWidth,
+              nameplate,
             },
           });
           setHasChanges(false);
@@ -2008,6 +2076,121 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                               </div>
                             </div>
 
+                            {/* Nameplate */}
+                            <div className="mt-8">
+                              <h2 className="text-[16px] font-bold text-[var(--text-primary)] mb-1">Nameplate</h2>
+                              <p className="text-xs text-[var(--text-muted)] mb-4">A decorative plate shown behind your name in the member list, DMs, and your sidebar panel.</p>
+                              <div className="bg-[var(--bg-app)] rounded-xl border border-[var(--border-subtle)] p-5 space-y-5">
+                                {/* Live preview */}
+                                <div className="relative rounded-lg overflow-hidden border border-[var(--border-subtle)]">
+                                  {getNameplateBackground({ nameplate }) && (
+                                    <div className="absolute inset-0" style={{ background: getNameplateBackground({ nameplate })!, opacity: 0.5 }} />
+                                  )}
+                                  <div className="relative flex items-center gap-2.5 px-3 py-2.5">
+                                    <img src={user?.avatar || undefined} alt="" className="w-8 h-8 rounded-full object-cover bg-[var(--bg-sidebar-elevated)]" />
+                                    <span
+                                      className={cn("text-sm font-semibold text-[var(--text-primary)]", getDisplayNameStyleClasses(displayNameStyle))}
+                                      style={getDisplayNameStyleInline(displayNameStyle)}
+                                    >
+                                      {displayName || user?.username || "Your name"}
+                                    </span>
+                                  </div>
+                                </div>
+
+                                {/* Type selector */}
+                                <div className="flex flex-wrap gap-2">
+                                  {([
+                                    { id: 'none', label: 'None' },
+                                    { id: 'color', label: 'Solid' },
+                                    { id: 'gradient', label: 'Gradient' },
+                                    { id: 'preset', label: 'Presets' },
+                                  ] as const).map((opt) => (
+                                    <button
+                                      key={opt.id}
+                                      onClick={() => setNameplate((n) => ({ ...n, type: opt.id }))}
+                                      className={cn(
+                                        "px-3 py-1.5 rounded-lg text-sm font-medium border transition-colors",
+                                        (nameplate.type || 'none') === opt.id
+                                          ? "bg-[var(--app-accent)]/15 border-[var(--app-accent)] text-[var(--app-accent)]"
+                                          : "border-[var(--border-subtle)] text-[var(--text-muted)] hover:text-[var(--text-primary)]"
+                                      )}
+                                    >
+                                      {opt.label}
+                                    </button>
+                                  ))}
+                                </div>
+
+                                {/* Solid colour swatches */}
+                                {nameplate.type === 'color' && (
+                                  <div className="flex flex-wrap gap-2">
+                                    {['#F43F5E', '#EAB308', '#22C55E', '#10B981', '#06B6D4', '#3B82F6', '#6366F1', '#8B5CF6', '#D946EF', '#FF9800', '#9C27B0', '#434343'].map((col) => {
+                                      const on = nameplate.color === col;
+                                      return (
+                                        <button
+                                          key={col}
+                                          onClick={() => setNameplate((n) => ({ ...n, type: 'color', color: col }))}
+                                          className="w-8 h-8 rounded-full relative transition-all"
+                                          style={{ backgroundColor: col, boxShadow: on ? '0 0 0 2px var(--bg-app), 0 0 0 4px var(--app-accent)' : 'none' }}
+                                        >
+                                          {on && <Check className="w-3.5 h-3.5 text-white absolute inset-0 m-auto drop-shadow-md" />}
+                                        </button>
+                                      );
+                                    })}
+                                    <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40" style={{ backgroundColor: nameplate.color || '#8B5CF6' }}>
+                                      <input type="color" value={nameplate.color || '#8B5CF6'} onChange={(e) => setNameplate((n) => ({ ...n, type: 'color', color: e.target.value }))} className="absolute inset-[-10px] w-[200%] h-[200%] cursor-pointer opacity-0" />
+                                      <Pencil className="w-3.5 h-3.5 text-white absolute inset-0 m-auto drop-shadow-md pointer-events-none" />
+                                    </label>
+                                  </div>
+                                )}
+
+                                {/* Gradient swatches */}
+                                {nameplate.type === 'gradient' && (
+                                  <div className="flex flex-wrap gap-2">
+                                    {[
+                                      ['#FF3366', '#FFD12A'], ['#00E676', '#00B0FF'], ['#D500F9', '#FF1744'], ['#1DE9B6', '#3D5AFE'],
+                                      ['#FF4081', '#E040FB'], ['#2979FF', '#00E5FF'], ['#7C4DFF', '#E040FB'], ['#FF9800', '#FF5722'],
+                                      ['#4CAF50', '#8BC34A'], ['#9C27B0', '#673AB7'], ['#00BCD4', '#009688'], ['#434343', '#000000'],
+                                    ].map((grad, i) => {
+                                      const on = JSON.stringify(nameplate.gradient) === JSON.stringify(grad);
+                                      return (
+                                        <button
+                                          key={i}
+                                          onClick={() => setNameplate((n) => ({ ...n, type: 'gradient', gradient: grad }))}
+                                          className="w-10 h-8 rounded-md relative transition-all"
+                                          style={{ background: `linear-gradient(90deg, ${grad.join(', ')})`, boxShadow: on ? '0 0 0 2px var(--bg-app), 0 0 0 4px var(--app-accent)' : 'none' }}
+                                        >
+                                          {on && <Check className="w-3.5 h-3.5 text-white absolute inset-0 m-auto drop-shadow-md" />}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+
+                                {/* Preset gallery */}
+                                {nameplate.type === 'preset' && (
+                                  <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                                    {NAMEPLATE_PRESETS.map((preset) => {
+                                      const on = nameplate.presetId === preset.id;
+                                      return (
+                                        <button
+                                          key={preset.id}
+                                          onClick={() => setNameplate((n) => ({ ...n, type: 'preset', presetId: preset.id }))}
+                                          className={cn(
+                                            "relative h-11 rounded-lg overflow-hidden border transition-all flex items-center px-3",
+                                            on ? "border-[var(--app-accent)] ring-2 ring-[var(--app-accent)]" : "border-[var(--border-subtle)]"
+                                          )}
+                                        >
+                                          <div className="absolute inset-0" style={{ background: preset.css, opacity: 0.55 }} />
+                                          <span className="relative text-xs font-semibold text-white drop-shadow-md">{preset.name}</span>
+                                          {on && <Check className="w-4 h-4 text-white absolute right-2 top-1/2 -translate-y-1/2 drop-shadow-md" />}
+                                        </button>
+                                      );
+                                    })}
+                                  </div>
+                                )}
+                              </div>
+                            </div>
+
                             {/* Profile Color */}
                             <div className="mt-8">
                               <h2 className="text-[16px] font-bold text-[var(--text-primary)] mb-4">Profile Color</h2>
@@ -2058,36 +2241,226 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                                       );
                                     })}
                                   </div>
-                                  {/* Custom gradient color pickers */}
-                                  <div className="flex items-center gap-3 p-3 bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg">
-                                    <div className="flex items-center gap-2">
-                                      <label className="text-xs text-[var(--text-secondary)] font-medium">From</label>
-                                      <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[0] || '#8B5CF6' }}>
-                                        <input
-                                          type="color"
-                                          value={profileGradient[0] || '#8B5CF6'}
-                                          onChange={(e) => {
-                                            const end = profileGradient[1] || '#6366F1';
-                                            setProfileGradient([e.target.value, end]);
-                                          }}
-                                          className="absolute inset-0 opacity-0 cursor-pointer"
-                                        />
-                                      </label>
+                                  {/* Custom Gradient Controls */}
+                                  <div className="mt-4 border-t border-[var(--border-subtle)] pt-4">
+                                    <div className="flex items-center justify-between mb-3">
+                                      <span className="text-[14px] font-bold text-[var(--text-primary)]">Custom Gradient Stops (2 to 5 colors)</span>
+                                      {profileGradient.length < 5 && (
+                                        <button 
+                                          onClick={() => setProfileGradient([...profileGradient, '#8B5CF6'])}
+                                          className="text-xs text-[var(--app-accent)] hover:underline font-semibold flex items-center gap-1"
+                                        >
+                                          + Add Stop
+                                        </button>
+                                      )}
                                     </div>
-                                    <div className="flex-1 h-2 rounded-full" style={{ background: profileGradient.length >= 2 ? `linear-gradient(90deg, ${profileGradient.join(', ')})` : 'linear-gradient(90deg, #8B5CF6, #6366F1)' }} />
-                                    <div className="flex items-center gap-2">
-                                      <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all" style={{ backgroundColor: profileGradient[1] || '#6366F1' }}>
-                                        <input
-                                          type="color"
-                                          value={profileGradient[1] || '#6366F1'}
-                                          onChange={(e) => {
-                                            const start = profileGradient[0] || '#8B5CF6';
-                                            setProfileGradient([start, e.target.value]);
-                                          }}
-                                          className="absolute inset-0 opacity-0 cursor-pointer"
-                                        />
-                                      </label>
-                                      <label className="text-xs text-[var(--text-secondary)] font-medium">To</label>
+                                    
+                                    <div className="space-y-2 mb-4">
+                                      {profileGradient.map((color, idx) => (
+                                        <div key={idx} className="flex items-center gap-3 p-2 bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg">
+                                          <span className="text-xs text-[var(--text-secondary)] font-medium w-16">Stop {idx + 1}</span>
+                                          <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all border border-[var(--border-subtle)]" style={{ backgroundColor: color }}>
+                                            <input
+                                              type="color"
+                                              value={color}
+                                              onChange={(e) => {
+                                                const newGrad = [...profileGradient];
+                                                newGrad[idx] = e.target.value;
+                                                setProfileGradient(newGrad);
+                                              }}
+                                              className="absolute inset-0 opacity-0 cursor-pointer"
+                                            />
+                                          </label>
+                                          <span className="text-xs font-mono text-[var(--text-muted)] select-all">{color.toUpperCase()}</span>
+                                          <div className="flex-1" />
+                                          {profileGradient.length > 2 && (
+                                            <button 
+                                              onClick={() => {
+                                                const newGrad = profileGradient.filter((_, i) => i !== idx);
+                                                setProfileGradient(newGrad);
+                                              }}
+                                              className="text-red-500 hover:text-red-400 text-xs font-medium"
+                                            >
+                                              Remove
+                                            </button>
+                                          )}
+                                        </div>
+                                      ))}
+                                    </div>
+
+                                    {profileGradient.length >= 2 && (
+                                      <div className="grid grid-cols-2 gap-3 mb-4">
+                                        <div>
+                                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Gradient Type</label>
+                                          <select
+                                            value={profileGradientType}
+                                            onChange={(e) => setProfileGradientType(e.target.value as 'linear' | 'radial')}
+                                            className="w-full bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-[var(--text-primary)] h-10 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)] font-medium"
+                                          >
+                                            <option value="linear">Linear</option>
+                                            <option value="radial">Radial</option>
+                                          </select>
+                                        </div>
+
+                                        {profileGradientType === 'linear' ? (
+                                          <div>
+                                            <div className="flex justify-between items-center mb-2">
+                                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Gradient Angle</label>
+                                              <span className="text-xs font-mono text-[var(--text-muted)]">{profileGradientAngle}°</span>
+                                            </div>
+                                            <input 
+                                              type="range" 
+                                              min="0" 
+                                              max="360" 
+                                              value={profileGradientAngle}
+                                              onChange={(e) => setProfileGradientAngle(Number(e.target.value))}
+                                              className="w-full accent-[var(--app-accent)]"
+                                            />
+                                          </div>
+                                        ) : (
+                                          <div>
+                                            <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Radial Position</label>
+                                            <select
+                                              value={profileGradientRadialPosition}
+                                              onChange={(e) => setProfileGradientRadialPosition(e.target.value)}
+                                              className="w-full bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-[var(--text-primary)] h-10 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)] font-medium"
+                                            >
+                                              <option value="center">Center</option>
+                                              <option value="top left">Top Left</option>
+                                              <option value="top right">Top Right</option>
+                                              <option value="bottom left">Bottom Left</option>
+                                              <option value="bottom right">Bottom Right</option>
+                                            </select>
+                                          </div>
+                                        )}
+                                      </div>
+                                    )}
+                                  </div>
+
+                                  {/* Premium Card Effects */}
+                                  <div className="mt-6 border-t border-[var(--border-subtle)] pt-6">
+                                    <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">Premium Card Effect</h3>
+                                    <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 mb-6">
+                                      {[
+                                        { id: 'normal', name: 'Normal', desc: 'Default profile styling' },
+                                        { id: 'glassmorphism', name: 'Glassmorphism', desc: 'Frosted glass look' },
+                                        { id: 'glow', name: 'Outer Glow', desc: 'Luminous ambient aura' },
+                                        { id: 'neon', name: 'Neon Border', desc: 'Vibrant neon edges' },
+                                        { id: 'holographic', name: 'Holographic', desc: 'Animated color shift' }
+                                      ].map((effect) => {
+                                        const isSelected = profileCardEffect === effect.id;
+                                        return (
+                                          <button
+                                            key={effect.id}
+                                            onClick={() => setProfileCardEffect(effect.id as any)}
+                                            className={cn(
+                                              "p-3 rounded-lg border text-left transition-all relative overflow-hidden",
+                                              isSelected 
+                                                ? "border-[var(--app-accent)] bg-[var(--app-accent)]/10" 
+                                                : "border-[var(--border-subtle)] bg-[var(--bg-sidebar)] hover:border-white/20"
+                                            )}
+                                          >
+                                            <div className="text-xs font-bold text-[var(--text-primary)] mb-0.5">{effect.name}</div>
+                                            <div className="text-[10px] text-[var(--text-muted)] leading-tight">{effect.desc}</div>
+                                            {isSelected && (
+                                              <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--app-accent)]" />
+                                            )}
+                                          </button>
+                                        );
+                                      })}
+                                    </div>
+
+                                    {/* Glassmorphism Controls */}
+                                    {profileCardEffect === 'glassmorphism' && (
+                                      <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg mb-6">
+                                        <div>
+                                          <div className="flex justify-between items-center mb-2">
+                                            <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Backdrop Blur</label>
+                                            <span className="text-xs font-mono text-[var(--text-muted)]">{profileCardBlur}px</span>
+                                          </div>
+                                          <input 
+                                            type="range" 
+                                            min="0" 
+                                            max="24" 
+                                            value={profileCardBlur}
+                                            onChange={(e) => setProfileCardBlur(Number(e.target.value))}
+                                            className="w-full accent-[var(--app-accent)]"
+                                          />
+                                        </div>
+                                        <div>
+                                          <div className="flex justify-between items-center mb-2">
+                                            <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Card Opacity</label>
+                                            <span className="text-xs font-mono text-[var(--text-muted)]">{Math.round(profileCardOpacity * 100)}%</span>
+                                          </div>
+                                          <input 
+                                            type="range" 
+                                            min="10" 
+                                            max="100" 
+                                            value={Math.round(profileCardOpacity * 100)}
+                                            onChange={(e) => setProfileCardOpacity(Number(e.target.value) / 100)}
+                                            className="w-full accent-[var(--app-accent)]"
+                                          />
+                                        </div>
+                                      </div>
+                                    )}
+
+                                    {/* Custom Border Styling */}
+                                    <div className="bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg p-4">
+                                      <div className="flex items-center justify-between mb-4">
+                                        <div className="flex items-center gap-2">
+                                          <input 
+                                            type="checkbox"
+                                            id="borderGlow"
+                                            checked={profileCardBorderGlow}
+                                            onChange={(e) => setProfileCardBorderGlow(e.target.checked)}
+                                            className="rounded border-[var(--border-subtle)] text-[var(--app-accent)] focus:ring-[var(--app-accent)] bg-transparent"
+                                          />
+                                          <label htmlFor="borderGlow" className="text-xs font-bold text-[var(--text-primary)] cursor-pointer">
+                                            Enable Border Glow
+                                          </label>
+                                        </div>
+                                        {profileCardBorderColor && (
+                                          <button 
+                                            onClick={() => setProfileCardBorderColor("")} 
+                                            className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-[10px]"
+                                          >
+                                            Reset Color
+                                          </button>
+                                        )}
+                                      </div>
+
+                                      <div className="grid grid-cols-2 gap-4">
+                                        <div>
+                                          <div className="flex justify-between items-center mb-2">
+                                            <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Border Width</label>
+                                            <span className="text-xs font-mono text-[var(--text-muted)]">{profileCardBorderWidth}px</span>
+                                          </div>
+                                          <input 
+                                            type="range" 
+                                            min="1" 
+                                            max="5" 
+                                            value={profileCardBorderWidth}
+                                            onChange={(e) => setProfileCardBorderWidth(Number(e.target.value))}
+                                            className="w-full accent-[var(--app-accent)]"
+                                          />
+                                        </div>
+                                        <div>
+                                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Border Color</label>
+                                          <div className="flex items-center gap-2">
+                                            <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all border border-[var(--border-subtle)]" style={{ backgroundColor: profileCardBorderColor || '#ffffff' }}>
+                                              <input
+                                                type="color"
+                                                value={profileCardBorderColor || '#ffffff'}
+                                                onChange={(e) => setProfileCardBorderColor(e.target.value)}
+                                                className="absolute inset-0 opacity-0 cursor-pointer"
+                                              />
+                                            </label>
+                                            <span className="text-xs font-mono text-[var(--text-muted)] select-all">
+                                              {profileCardBorderColor ? profileCardBorderColor.toUpperCase() : "MATCH THEME"}
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
                                     </div>
                                   </div>
                                 </div>
@@ -3740,6 +4113,15 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         setDisplayNameStyle(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] });
                         setProfileColor(user.customization?.profileColor || "");
                         setProfileGradient(user.customization?.profileGradient || []);
+                        setProfileGradientAngle(user.customization?.profileGradientAngle ?? 135);
+                        setProfileGradientType(user.customization?.profileGradientType || 'linear');
+                        setProfileGradientRadialPosition(user.customization?.profileGradientRadialPosition || 'center');
+                        setProfileCardEffect(user.customization?.profileCardEffect || 'normal');
+                        setProfileCardBlur(user.customization?.profileCardBlur ?? 8);
+                        setProfileCardOpacity(user.customization?.profileCardOpacity ?? 0.85);
+                        setProfileCardBorderColor(user.customization?.profileCardBorderColor || "");
+                        setProfileCardBorderGlow(user.customization?.profileCardBorderGlow ?? false);
+                        setProfileCardBorderWidth(user.customization?.profileCardBorderWidth ?? 1);
                       }
                     } else {
                       setServerNickname(initialServerNickname);

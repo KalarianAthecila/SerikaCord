@@ -34,7 +34,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
-import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
+import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle, getProfileBannerStyle } from "@/lib/userDisplayNameStyle";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 
 interface UserProfileProps {
@@ -68,6 +68,7 @@ interface UserProfileProps {
         color?: string;
         gradient?: string[];
       };
+      [key: string]: any;
     };
   };
   isOpen: boolean;
@@ -181,6 +182,9 @@ interface ProfileContentProps {
 
 function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expanded, isCurrentUser, openSettings }: ProfileContentProps) {
   const currentUser = useAuth().user;
+  const bgStyle = getProfileBackgroundStyle(user.customization);
+  const hasBgOverride = Boolean(bgStyle.background || bgStyle.backgroundColor);
+  const isHolographic = user.customization?.profileCardEffect === 'holographic';
   return (
     <div className="relative">
       {/* Banner */}
@@ -192,11 +196,12 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
         style={{
           background: user.banner 
             ? `url(${user.banner}) center/cover`
-            : user.customization?.profileGradient && user.customization.profileGradient.length >= 2
-              ? `linear-gradient(135deg, ${user.customization.profileGradient.join(', ')})`
-              : user.customization?.profileColor
-                ? user.customization.profileColor
-                : user.bannerColor || 'linear-gradient(135deg, #5865F2 0%, #EB459E 100%)',
+            : (user.customization?.profileGradient || user.customization?.profileColor)
+              ? undefined
+              : user.bannerColor || 'linear-gradient(135deg, #5865F2 0%, #EB459E 100%)',
+          ...(!user.banner && (user.customization?.profileGradient || user.customization?.profileColor)
+            ? getProfileBannerStyle(user.customization)
+            : {}),
         }}
       >
         {/* Gradient overlay */}
@@ -308,7 +313,14 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
 
       {/* User Info Card */}
       <div className="px-4 pb-4">
-        <div className="bg-[#111214] rounded-xl p-4 mt-3" style={getProfileBackgroundStyle(user.customization)}>
+        <div 
+          className={cn(
+            "rounded-xl p-4 mt-3 transition-all duration-300",
+            !hasBgOverride && !isHolographic && "bg-[#111214] border border-white/[0.06]",
+            isHolographic && "holographic-animation"
+          )} 
+          style={bgStyle}
+        >
           {/* Name & Badges */}
           <div className="flex items-start justify-between mb-1">
             <div>

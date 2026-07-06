@@ -95,6 +95,15 @@ export default function MobileSettingsSectionPage() {
   }>({ font: "default", effect: "solid", color: "", gradient: [] });
   const [profileColor, setProfileColor] = useState("");
   const [profileGradient, setProfileGradient] = useState<string[]>([]);
+  const [profileGradientAngle, setProfileGradientAngle] = useState(135);
+  const [profileGradientType, setProfileGradientType] = useState<'linear' | 'radial'>('linear');
+  const [profileGradientRadialPosition, setProfileGradientRadialPosition] = useState('center');
+  const [profileCardEffect, setProfileCardEffect] = useState<'normal' | 'glassmorphism' | 'glow' | 'holographic' | 'neon'>('normal');
+  const [profileCardBlur, setProfileCardBlur] = useState(8);
+  const [profileCardOpacity, setProfileCardOpacity] = useState(0.85);
+  const [profileCardBorderColor, setProfileCardBorderColor] = useState("");
+  const [profileCardBorderGlow, setProfileCardBorderGlow] = useState(false);
+  const [profileCardBorderWidth, setProfileCardBorderWidth] = useState(1);
 
   const avatarInputRef = useRef<HTMLInputElement>(null);
   const bannerInputRef = useRef<HTMLInputElement>(null);
@@ -117,6 +126,15 @@ export default function MobileSettingsSectionPage() {
       setDisplayNameStyle(user.customization?.displayNameStyle || { font: "default", effect: "solid", color: "", gradient: [] });
       setProfileColor(user.customization?.profileColor || "");
       setProfileGradient(user.customization?.profileGradient || []);
+      setProfileGradientAngle(user.customization?.profileGradientAngle ?? 135);
+      setProfileGradientType(user.customization?.profileGradientType || 'linear');
+      setProfileGradientRadialPosition(user.customization?.profileGradientRadialPosition || 'center');
+      setProfileCardEffect(user.customization?.profileCardEffect || 'normal');
+      setProfileCardBlur(user.customization?.profileCardBlur ?? 8);
+      setProfileCardOpacity(user.customization?.profileCardOpacity ?? 0.85);
+      setProfileCardBorderColor(user.customization?.profileCardBorderColor || "");
+      setProfileCardBorderGlow(user.customization?.profileCardBorderGlow ?? false);
+      setProfileCardBorderWidth(user.customization?.profileCardBorderWidth ?? 1);
     }
   }, [user]);
 
@@ -138,6 +156,15 @@ export default function MobileSettingsSectionPage() {
             displayNameStyle,
             profileColor,
             profileGradient,
+            profileGradientAngle,
+            profileGradientType,
+            profileGradientRadialPosition,
+            profileCardEffect,
+            profileCardBlur,
+            profileCardOpacity,
+            profileCardBorderColor,
+            profileCardBorderGlow,
+            profileCardBorderWidth,
           },
         }),
       });
@@ -956,6 +983,15 @@ export default function MobileSettingsSectionPage() {
                   onClick={() => {
                     setProfileColor("");
                     setProfileGradient([]);
+                    setProfileGradientAngle(135);
+                    setProfileGradientType('linear');
+                    setProfileGradientRadialPosition('center');
+                    setProfileCardEffect('normal');
+                    setProfileCardBlur(8);
+                    setProfileCardOpacity(0.85);
+                    setProfileCardBorderColor("");
+                    setProfileCardBorderGlow(false);
+                    setProfileCardBorderWidth(1);
                   }}
                   className="text-xs text-[var(--app-accent)] flex items-center gap-1 hover:underline"
                 >
@@ -1005,7 +1041,7 @@ export default function MobileSettingsSectionPage() {
 
                 <div>
                   <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Gradient Background (Optional)</label>
-                  <div className="flex flex-wrap gap-2">
+                  <div className="flex flex-wrap gap-2 mb-4">
                     {[
                       ["#FF3366", "#FFD12A"], ["#00E676", "#00B0FF"], ["#D500F9", "#FF1744"], ["#1DE9B6", "#3D5AFE"],
                       ["#FF4081", "#E040FB"], ["#2979FF", "#00E5FF"], ["#7C4DFF", "#E040FB"], ["#F50057", "#FF3366"],
@@ -1028,6 +1064,233 @@ export default function MobileSettingsSectionPage() {
                         </button>
                       );
                     })}
+                  </div>
+                </div>
+
+                {/* Custom Gradient Controls */}
+                <div className="mt-4 border-t border-[var(--border-subtle)] pt-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="text-[11px] font-bold text-[var(--text-secondary)] uppercase">Custom Gradient Stops (2 to 5 stops)</span>
+                    {profileGradient.length < 5 && (
+                      <button 
+                        type="button"
+                        onClick={() => setProfileGradient([...profileGradient, '#8B5CF6'])}
+                        className="text-xs text-[var(--app-accent)] hover:underline font-semibold flex items-center gap-1"
+                      >
+                        + Add Stop
+                      </button>
+                    )}
+                  </div>
+                  
+                  <div className="space-y-2 mb-4">
+                    {profileGradient.map((color, idx) => (
+                      <div key={idx} className="flex items-center gap-3 p-2 bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg font-medium text-xs">
+                        <span className="text-xs text-[var(--text-secondary)] font-medium w-16">Stop {idx + 1}</span>
+                        <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all border border-[var(--border-subtle)]" style={{ backgroundColor: color }}>
+                          <input
+                            type="color"
+                            value={color}
+                            onChange={(e) => {
+                              const newGrad = [...profileGradient];
+                              newGrad[idx] = e.target.value;
+                              setProfileGradient(newGrad);
+                            }}
+                            className="absolute inset-0 opacity-0 cursor-pointer"
+                          />
+                        </label>
+                        <span className="text-xs font-mono text-[var(--text-muted)] select-all">{color.toUpperCase()}</span>
+                        <div className="flex-1" />
+                        {profileGradient.length > 2 && (
+                          <button 
+                            type="button"
+                            onClick={() => {
+                              const newGrad = profileGradient.filter((_, i) => i !== idx);
+                              setProfileGradient(newGrad);
+                            }}
+                            className="text-red-500 hover:text-red-400 text-xs font-medium"
+                          >
+                            Remove
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+
+                  {profileGradient.length >= 2 && (
+                    <div className="grid grid-cols-2 gap-3 mb-4">
+                      <div>
+                        <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Gradient Type</label>
+                        <select
+                          value={profileGradientType}
+                          onChange={(e) => setProfileGradientType(e.target.value as 'linear' | 'radial')}
+                          className="w-full bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-[var(--text-primary)] h-10 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)] font-medium"
+                        >
+                          <option value="linear">Linear</option>
+                          <option value="radial">Radial</option>
+                        </select>
+                      </div>
+
+                      {profileGradientType === 'linear' ? (
+                        <div>
+                          <div className="flex justify-between items-center mb-2">
+                            <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Gradient Angle</label>
+                            <span className="text-xs font-mono text-[var(--text-muted)]">{profileGradientAngle}°</span>
+                          </div>
+                          <input 
+                            type="range" 
+                            min="0" 
+                            max="360" 
+                            value={profileGradientAngle}
+                            onChange={(e) => setProfileGradientAngle(Number(e.target.value))}
+                            className="w-full accent-[var(--app-accent)]"
+                          />
+                        </div>
+                      ) : (
+                        <div>
+                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Radial Position</label>
+                          <select
+                            value={profileGradientRadialPosition}
+                            onChange={(e) => setProfileGradientRadialPosition(e.target.value)}
+                            className="w-full bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] text-[var(--text-primary)] h-10 px-3 rounded-lg focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)] font-medium"
+                          >
+                            <option value="center">Center</option>
+                            <option value="top left">Top Left</option>
+                            <option value="top right">Top Right</option>
+                            <option value="bottom left">Bottom Left</option>
+                            <option value="bottom right">Bottom Right</option>
+                          </select>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                {/* Premium Card Effects */}
+                <div className="mt-6 border-t border-[var(--border-subtle)] pt-6">
+                  <h3 className="text-sm font-bold text-[var(--text-primary)] mb-3">Premium Card Effect</h3>
+                  <div className="grid grid-cols-2 gap-3 mb-6">
+                    {[
+                      { id: 'normal', name: 'Normal', desc: 'Default profile styling' },
+                      { id: 'glassmorphism', name: 'Glassmorphism', desc: 'Frosted glass look' },
+                      { id: 'glow', name: 'Outer Glow', desc: 'Luminous ambient aura' },
+                      { id: 'neon', name: 'Neon Border', desc: 'Vibrant neon edges' },
+                      { id: 'holographic', name: 'Holographic', desc: 'Animated color shift' }
+                    ].map((effect) => {
+                      const isSelected = profileCardEffect === effect.id;
+                      return (
+                        <button
+                          key={effect.id}
+                          type="button"
+                          onClick={() => setProfileCardEffect(effect.id as any)}
+                          className={cn(
+                            "p-3 rounded-lg border text-left transition-all relative overflow-hidden",
+                            isSelected 
+                              ? "border-[var(--app-accent)] bg-[var(--app-accent)]/10" 
+                              : "border-[var(--border-subtle)] bg-[var(--bg-sidebar)] hover:border-white/20"
+                          )}
+                        >
+                          <div className="text-xs font-bold text-[var(--text-primary)] mb-0.5">{effect.name}</div>
+                          <div className="text-[10px] text-[var(--text-muted)] leading-tight">{effect.desc}</div>
+                          {isSelected && (
+                            <div className="absolute top-1 right-1 w-2 h-2 rounded-full bg-[var(--app-accent)]" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Glassmorphism Controls */}
+                  {profileCardEffect === 'glassmorphism' && (
+                    <div className="grid grid-cols-2 gap-4 p-4 bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg mb-6">
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Backdrop Blur</label>
+                          <span className="text-xs font-mono text-[var(--text-muted)]">{profileCardBlur}px</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="24" 
+                          value={profileCardBlur}
+                          onChange={(e) => setProfileCardBlur(Number(e.target.value))}
+                          className="w-full accent-[var(--app-accent)]"
+                        />
+                      </div>
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Card Opacity</label>
+                          <span className="text-xs font-mono text-[var(--text-muted)]">{Math.round(profileCardOpacity * 100)}%</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="10" 
+                          max="100" 
+                          value={Math.round(profileCardOpacity * 100)}
+                          onChange={(e) => setProfileCardOpacity(Number(e.target.value) / 100)}
+                          className="w-full accent-[var(--app-accent)]"
+                        />
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Custom Border Styling */}
+                  <div className="bg-[var(--bg-sidebar)] border border-[var(--border-subtle)] rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <input 
+                          type="checkbox"
+                          id="borderGlow"
+                          checked={profileCardBorderGlow}
+                          onChange={(e) => setProfileCardBorderGlow(e.target.checked)}
+                          className="rounded border-[var(--border-subtle)] text-[var(--app-accent)] focus:ring-[var(--app-accent)] bg-transparent"
+                        />
+                        <label htmlFor="borderGlow" className="text-xs font-bold text-[var(--text-primary)] cursor-pointer">
+                          Enable Border Glow
+                        </label>
+                      </div>
+                      {profileCardBorderColor && (
+                        <button 
+                          type="button"
+                          onClick={() => setProfileCardBorderColor("")} 
+                          className="text-[var(--text-muted)] hover:text-[var(--text-primary)] text-[10px]"
+                        >
+                          Reset Color
+                        </button>
+                      )}
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4 font-medium text-xs">
+                      <div>
+                        <div className="flex justify-between items-center mb-2">
+                          <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase">Border Width</label>
+                          <span className="text-xs font-mono text-[var(--text-muted)]">{profileCardBorderWidth}px</span>
+                        </div>
+                        <input 
+                          type="range" 
+                          min="1" 
+                          max="5" 
+                          value={profileCardBorderWidth}
+                          onChange={(e) => setProfileCardBorderWidth(Number(e.target.value))}
+                          className="w-full accent-[var(--app-accent)]"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2">Border Color</label>
+                        <div className="flex items-center gap-2">
+                          <label className="relative w-8 h-8 rounded-full overflow-hidden cursor-pointer ring-2 ring-transparent hover:ring-white/40 transition-all border border-[var(--border-subtle)]" style={{ backgroundColor: profileCardBorderColor || '#ffffff' }}>
+                            <input
+                              type="color"
+                              value={profileCardBorderColor || '#ffffff'}
+                              onChange={(e) => setProfileCardBorderColor(e.target.value)}
+                              className="absolute inset-0 opacity-0 cursor-pointer"
+                            />
+                          </label>
+                          <span className="text-xs font-mono text-[var(--text-muted)] select-all">
+                            {profileCardBorderColor ? profileCardBorderColor.toUpperCase() : "MATCH THEME"}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>

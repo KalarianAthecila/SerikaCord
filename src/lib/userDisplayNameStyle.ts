@@ -94,16 +94,150 @@ export function getDisplayNameStyleInline(style: DisplayNameStyle | undefined): 
   return css;
 }
 
+// Convert hex color to rgba helper
+export const convertHexToRgba = (hex: string, opacity: number): string => {
+  if (!hex || typeof hex !== 'string') return hex;
+  const cleanHex = hex.replace('#', '');
+  if (cleanHex.length === 3) {
+    const r = parseInt(cleanHex.substring(0, 1) + cleanHex.substring(0, 1), 16);
+    const g = parseInt(cleanHex.substring(1, 2) + cleanHex.substring(1, 2), 16);
+    const b = parseInt(cleanHex.substring(2, 3) + cleanHex.substring(2, 3), 16);
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  } else if (cleanHex.length === 6) {
+    const r = parseInt(cleanHex.substring(0, 2), 16);
+    const g = parseInt(cleanHex.substring(2, 4), 16);
+    const b = parseInt(cleanHex.substring(4, 6), 16);
+    return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  }
+  if (hex.startsWith('rgb')) {
+    return hex.replace(/[\d.]+\)/, `${opacity})`).replace('rgb(', 'rgba(');
+  }
+  return hex;
+};
+
 export function getProfileBackgroundStyle(customization?: {
   profileColor?: string;
-  profileGradient?: string[];
   profileAccentColor?: string;
+  profileGradient?: string[];
+  profileGradientAngle?: number;
+  profileGradientType?: 'linear' | 'radial';
+  profileGradientRadialPosition?: string;
+  profileCardEffect?: 'normal' | 'glassmorphism' | 'glow' | 'holographic' | 'neon';
+  profileCardBlur?: number;
+  profileCardOpacity?: number;
+  profileCardBorderColor?: string;
+  profileCardBorderGlow?: boolean;
+  profileCardBorderWidth?: number;
 } | null): CSSProperties {
   if (!customization) return {};
-  const { profileGradient, profileColor } = customization;
+  const {
+    profileGradient,
+    profileColor,
+    profileGradientType = 'linear',
+    profileGradientAngle = 135,
+    profileGradientRadialPosition = 'center',
+    profileCardEffect = 'normal',
+    profileCardBlur = 8,
+    profileCardOpacity = 0.85,
+    profileCardBorderColor,
+    profileCardBorderGlow = false,
+    profileCardBorderWidth = 1,
+  } = customization;
+
+  const style: CSSProperties = {};
+
+  // 1. Background Value
+  let backgroundVal = '';
+  if (profileGradient && profileGradient.length >= 2) {
+    if (profileGradientType === 'radial') {
+      backgroundVal = `radial-gradient(circle at ${profileGradientRadialPosition}, ${profileGradient.join(', ')})`;
+    } else {
+      backgroundVal = `linear-gradient(${profileGradientAngle}deg, ${profileGradient.join(', ')})`;
+    }
+  } else if (profileColor) {
+    backgroundVal = profileColor;
+  }
+
+  // 2. Card Effect styling
+  if (profileCardEffect === 'glassmorphism') {
+    style.backdropFilter = `blur(${profileCardBlur}px)`;
+    style.WebkitBackdropFilter = `blur(${profileCardBlur}px)`;
+
+    if (profileGradient && profileGradient.length >= 2) {
+      const transparentGrad = profileGradient.map((color) => convertHexToRgba(color, profileCardOpacity));
+      if (profileGradientType === 'radial') {
+        style.background = `radial-gradient(circle at ${profileGradientRadialPosition}, ${transparentGrad.join(', ')})`;
+      } else {
+        style.background = `linear-gradient(${profileGradientAngle}deg, ${transparentGrad.join(', ')})`;
+      }
+    } else if (profileColor) {
+      style.backgroundColor = convertHexToRgba(profileColor, profileCardOpacity);
+    } else {
+      style.backgroundColor = `rgba(12, 12, 16, ${profileCardOpacity})`;
+    }
+  } else if (profileCardEffect === 'holographic') {
+    style.background = `linear-gradient(${profileGradientAngle}deg, #ff7b00, #ff007b, #9900ff, #0022ff, #00ff77, #ff7b00)`;
+    style.backgroundSize = '400% 400%';
+    style.animation = 'holographic-animation 12s ease infinite';
+  } else {
+    // Normal / other effects
+    if (backgroundVal) {
+      if (backgroundVal.startsWith('linear-gradient') || backgroundVal.startsWith('radial-gradient')) {
+        style.background = backgroundVal;
+      } else {
+        style.backgroundColor = backgroundVal;
+      }
+    }
+  }
+
+  // Glow / Neon shadow effects
+  const primaryAccent = (profileGradient && profileGradient[0]) || profileColor || '#8B5CF6';
+  const secondaryAccent = (profileGradient && profileGradient[1]) || primaryAccent;
+
+  if (profileCardEffect === 'glow') {
+    style.boxShadow = `0 10px 30px -5px rgba(0, 0, 0, 0.3), 0 0 20px 2px ${convertHexToRgba(primaryAccent, 0.35)}`;
+  } else if (profileCardEffect === 'neon') {
+    style.boxShadow = `0 0 5px ${primaryAccent}, 0 0 15px ${secondaryAccent}`;
+  }
+
+  // Custom Border styling
+  if (profileCardBorderColor) {
+    style.borderColor = profileCardBorderColor;
+    style.borderWidth = `${profileCardBorderWidth}px`;
+    style.borderStyle = 'solid';
+  } else if (profileCardBorderGlow) {
+    style.borderColor = primaryAccent;
+    style.borderWidth = `${profileCardBorderWidth}px`;
+    style.borderStyle = 'solid';
+    style.boxShadow = style.boxShadow 
+      ? `${style.boxShadow}, 0 0 8px ${convertHexToRgba(primaryAccent, 0.5)}`
+      : `0 0 8px ${convertHexToRgba(primaryAccent, 0.5)}`;
+  }
+
+  return style;
+}
+
+export function getProfileBannerStyle(customization?: {
+  profileColor?: string;
+  profileGradient?: string[];
+  profileGradientAngle?: number;
+  profileGradientType?: 'linear' | 'radial';
+  profileGradientRadialPosition?: string;
+} | null): CSSProperties {
+  if (!customization) return {};
+  const {
+    profileGradient,
+    profileColor,
+    profileGradientType = 'linear',
+    profileGradientAngle = 135,
+    profileGradientRadialPosition = 'center',
+  } = customization;
 
   if (profileGradient && profileGradient.length >= 2) {
-    return { background: `linear-gradient(135deg, ${profileGradient.join(', ')})` };
+    if (profileGradientType === 'radial') {
+      return { background: `radial-gradient(circle at ${profileGradientRadialPosition}, ${profileGradient.join(', ')})` };
+    }
+    return { background: `linear-gradient(${profileGradientAngle}deg, ${profileGradient.join(', ')})` };
   }
   if (profileColor) {
     return { backgroundColor: profileColor };

@@ -1675,7 +1675,10 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
 // Main API app
 export const api = new Elysia({ prefix: '/api' })
   .onError(({ code, error, set, request }) => {
-    console.error('API Error:', code, error);
+    let path = '';
+    try { path = new URL(request.url).pathname; } catch {}
+    const method = request.method;
+    console.error('API Error:', code, `${method} ${path}`, error);
 
     if (code === 'VALIDATION') {
       set.status = 400;
@@ -1684,8 +1687,6 @@ export const api = new Elysia({ prefix: '/api' })
 
     if (code === 'NOT_FOUND') {
       set.status = 404;
-      let path = '';
-      try { path = new URL(request.url).pathname; } catch {}
 
       // Discord-compatible shape for the bot API so libraries parse it correctly.
       if (path.startsWith('/api/v10')) {

@@ -597,3 +597,21 @@ html.theme-midnight body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Holographic animated background keyframes */
+@keyframes holographic-animation {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.holographic-animation {
+  background-size: 400% 400% !important;
+  animation: holographic-animation 12s ease infinite !important;
+}

@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
+import { getNameplateBackground } from "@/lib/constants/nameplates";
 import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
@@ -790,12 +791,15 @@ export function ChannelSidebar({
                       key={channel.id}
                       href={`/dm/${recipient.id}`}
                       className={cn(
-                        "group flex items-center gap-2 px-2 py-[5px] rounded-md transition-colors min-w-0",
+                        "relative overflow-hidden group flex items-center gap-2 px-2 py-[5px] rounded-md transition-colors min-w-0",
                         isActive
                           ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
                           : "text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
                       )}
                     >
+                      {getNameplateBackground(recipient.customization) && (
+                        <span aria-hidden className="absolute inset-0 pointer-events-none" style={{ background: getNameplateBackground(recipient.customization)!, opacity: 0.4, WebkitMaskImage: "linear-gradient(90deg, #000 45%, transparent 100%)", maskImage: "linear-gradient(90deg, #000 45%, transparent 100%)" }} />
+                      )}
                       <div className="relative shrink-0">
                         <Avatar className="w-8 h-8">
                           <AvatarImage src={recipient.avatar} />
@@ -808,7 +812,7 @@ export function ChannelSidebar({
                           style={{ backgroundColor: statusColors[recipient.status] || statusColors.offline }}
                         />
                       </div>
-                      <div className="flex-1 min-w-0 overflow-hidden">
+                      <div className="relative flex-1 min-w-0 overflow-hidden">
                         <span className={cn("block truncate text-sm", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
                           {recipient.displayName || recipient.username}
                         </span>
@@ -1232,8 +1236,11 @@ function UserPanel({ user }: UserPanelProps) {
     <div className="h-[52px] px-2 flex items-center bg-[var(--bg-sidebar)] border-t border-[var(--border-subtle)]">
       <UserProfilePopup onOpenSettings={handleSettingsClick}>
         <button
-          className="flex items-center gap-2 flex-1 min-w-0 p-1 rounded hover:bg-[var(--bg-sidebar-elevated)] transition-colors"
+          className="relative overflow-hidden flex items-center gap-2 flex-1 min-w-0 p-1 rounded hover:bg-[var(--bg-sidebar-elevated)] transition-colors"
         >
+          {getNameplateBackground(user?.customization) && (
+            <span aria-hidden className="absolute inset-0 pointer-events-none" style={{ background: getNameplateBackground(user?.customization)!, opacity: 0.4, WebkitMaskImage: "linear-gradient(90deg, #000 50%, transparent 100%)", maskImage: "linear-gradient(90deg, #000 50%, transparent 100%)" }} />
+          )}
           <div className="relative shrink-0">
             <Avatar className="w-8 h-8">
               <AvatarImage src={user?.avatar} alt={user?.displayName} />
@@ -1251,7 +1258,7 @@ function UserPanel({ user }: UserPanelProps) {
               )}
             />
           </div>
-          <div className="flex-1 min-w-0 text-left">
+          <div className="relative flex-1 min-w-0 text-left">
             <div className={cn("text-sm font-medium text-[var(--text-primary)] truncate", getDisplayNameStyleClasses(user?.customization?.displayNameStyle))} style={getDisplayNameStyleInline(user?.customization?.displayNameStyle)}>
               {user?.displayName || "Unknown"}
             </div>

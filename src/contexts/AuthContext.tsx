@@ -38,6 +38,13 @@ interface User {
       color?: string;
       gradient?: string[];
     };
+    nameplate?: {
+      type?: 'none' | 'color' | 'gradient' | 'preset';
+      color?: string;
+      gradient?: string[];
+      presetId?: string;
+    };
+    [key: string]: any;
   };
   gifFavorites?: Array<{ url: string; title?: string; source?: string; addedAt: number }>;
 }

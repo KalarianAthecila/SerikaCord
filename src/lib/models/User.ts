@@ -14,13 +14,30 @@ export interface IUserDisplayNameStyle {
   gradient?: string[];
 }
 
+export interface IUserNameplate {
+  type?: 'none' | 'color' | 'gradient' | 'preset';
+  color?: string;         // for type 'color'
+  gradient?: string[];    // for type 'gradient'
+  presetId?: string;      // for type 'preset' — id from NAMEPLATE_PRESETS
+}
+
 export interface IUserCustomization {
   profileColor?: string;          // Primary profile color (Serika+ only)
   profileAccentColor?: string;    // Accent color for profile
   profileGradient?: string[];     // Gradient colors for profile card background
+  profileGradientAngle?: number;
+  profileGradientType?: 'linear' | 'radial';
+  profileGradientRadialPosition?: string;
+  profileCardEffect?: 'normal' | 'glassmorphism' | 'glow' | 'holographic' | 'neon';
+  profileCardBlur?: number;
+  profileCardOpacity?: number;
+  profileCardBorderColor?: string;
+  profileCardBorderGlow?: boolean;
+  profileCardBorderWidth?: number;
   aboutMeStyle?: 'default' | 'card' | 'minimal';
   bannerAnimation?: 'none' | 'parallax' | 'pulse' | 'gradient';
   displayNameStyle?: IUserDisplayNameStyle;
+  nameplate?: IUserNameplate;     // Decorative plate behind the name in lists
   theme?: 'dark' | 'light' | 'oled' | 'custom';
   customTheme?: {
     primary?: string;
@@ -293,6 +310,15 @@ const UserSchema = new Schema<IUser>({
     profileColor: { type: String, default: null },
     profileAccentColor: { type: String, default: null },
     profileGradient: [{ type: String }],
+    profileGradientAngle: { type: Number, default: 135 },
+    profileGradientType: { type: String, enum: ['linear', 'radial'], default: 'linear' },
+    profileGradientRadialPosition: { type: String, default: 'center' },
+    profileCardEffect: { type: String, enum: ['normal', 'glassmorphism', 'glow', 'holographic', 'neon'], default: 'normal' },
+    profileCardBlur: { type: Number, default: 8 },
+    profileCardOpacity: { type: Number, default: 0.85 },
+    profileCardBorderColor: { type: String, default: null },
+    profileCardBorderGlow: { type: Boolean, default: false },
+    profileCardBorderWidth: { type: Number, default: 1 },
     aboutMeStyle: {
       type: String,
       enum: ['default', 'card', 'minimal'],
@@ -308,6 +334,12 @@ const UserSchema = new Schema<IUser>({
       effect: { type: String, enum: ['solid', 'gradient', 'neon', 'toon', 'pop'], default: 'solid' },
       color: { type: String, default: null },
       gradient: [{ type: String }],
+    },
+    nameplate: {
+      type: { type: String, enum: ['none', 'color', 'gradient', 'preset'], default: 'none' },
+      color: { type: String, default: null },
+      gradient: [{ type: String }],
+      presetId: { type: String, default: null },
     },
     theme: {
       type: String,

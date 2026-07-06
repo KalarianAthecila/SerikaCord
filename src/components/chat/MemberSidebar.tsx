@@ -9,6 +9,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
+import { getNameplateBackground } from "@/lib/constants/nameplates";
 
 interface MemberRole {
   id: string;
@@ -46,6 +47,12 @@ interface Member {
       effect?: 'solid' | 'gradient' | 'neon' | 'toon' | 'pop';
       color?: string;
       gradient?: string[];
+    };
+    nameplate?: {
+      type?: 'none' | 'color' | 'gradient' | 'preset';
+      color?: string;
+      gradient?: string[];
+      presetId?: string;
     };
   } | null;
 }
@@ -162,16 +169,24 @@ function MemberItem({ member, serverId }: MemberItemProps) {
   const moeActivity = userActivity?.activity ?? null;
   const musicActivity = userActivity?.music ?? null;
   const subtitle = (!isOffline && member.customStatus) || null;
+  const nameplateBg = getNameplateBackground(member.customization);
 
   return (
     <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
       <button
         className={cn(
-          "w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",
+          "relative overflow-hidden w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",
           isOffline && "opacity-50"
         )}
         style={{ width: "calc(100% - 16px)" }}
       >
+        {nameplateBg && (
+          <span
+            aria-hidden
+            className="absolute inset-0 pointer-events-none"
+            style={{ background: nameplateBg, opacity: 0.45, WebkitMaskImage: "linear-gradient(90deg, #000 40%, transparent 100%)", maskImage: "linear-gradient(90deg, #000 40%, transparent 100%)" }}
+          />
+        )}
         <div className="relative flex-shrink-0">
           <Avatar className="w-8 h-8">
             <AvatarImage src={member.avatar || undefined} alt={member.displayName || member.username} />
@@ -189,7 +204,7 @@ function MemberItem({ member, serverId }: MemberItemProps) {
             )}
           />
         </div>
-        <div className="flex-1 min-w-0 text-left">
+        <div className="relative flex-1 min-w-0 text-left">
           {(() => {
             const styleClasses = getDisplayNameStyleClasses(member.customization?.displayNameStyle);
             const styleInline = getDisplayNameStyleInline(member.customization?.displayNameStyle);
