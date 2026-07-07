@@ -71,6 +71,34 @@ jobs:
         working-directory: desktop-tauri
         run: bun run build
 
+      - name: Sign AppImage
+        if: matrix.name == 'linux'
+        env:
+          APPIMAGE_GPG_KEY: ${{ secrets.APPIMAGE_GPG_KEY }}
+          APPIMAGE_GPG_PASSPHRASE: ${{ secrets.APPIMAGE_GPG_PASSPHRASE }}
+        run: |
+          if [ -z "$APPIMAGE_GPG_KEY" ]; then
+            echo "APPIMAGE_GPG_KEY secret not set — skipping AppImage signing"
+            exit 0
+          fi
+
+          # Import GPG private key
+          echo "$APPIMAGE_GPG_KEY" | gpg --batch --import --pinentry-mode loopback --passphrase "$APPIMAGE_GPG_PASSPHRASE" 2>/dev/null
+
+          # Find the AppImage
+          APPIMAGE=$(find desktop-tauri/src-tauri/target/release/bundle/appimage -name '*.AppImage' | head -1)
+          if [ -z "$APPIMAGE" ]; then
+            echo "No AppImage found — skipping signing"
+            exit 0
+          fi
+
+          echo "Signing: $APPIMAGE"
+          gpg --batch --yes --pinentry-mode loopback --passphrase "$APPIMAGE_GPG_PASSPHRASE" \
+            --detach-sign --armor "$APPIMAGE"
+
+          echo "Signature created: ${APPIMAGE}.asc"
+          gpg --verify "${APPIMAGE}.asc" "$APPIMAGE" && echo "Signature verified OK"
+
       - name: Upload Linux artifacts
         if: matrix.name == 'linux'
         uses: actions/upload-artifact@v4
@@ -78,6 +106,7 @@ jobs:
           name: desktop-linux
           path: |
             desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage
+            desktop-tauri/src-tauri/target/release/bundle/appimage/*.AppImage.asc
             desktop-tauri/src-tauri/target/release/bundle/deb/*.deb
             desktop-tauri/src-tauri/target/release/bundle/rpm/*.rpm
           if-no-files-found: warn
