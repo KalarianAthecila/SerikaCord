@@ -9,7 +9,7 @@
 use std::{thread, time::Duration};
 
 use serde::Serialize;
-use sysinfo::{ProcessExt, System, SystemExt};
+use sysinfo::System;
 use tauri::{AppHandle, Emitter, Manager};
 
 #[derive(Serialize, Clone, Debug, PartialEq)]
