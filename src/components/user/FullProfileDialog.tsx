@@ -290,6 +290,9 @@ export function FullProfileDialog({
                     <Copy className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                   )}
                 </button>
+                {fullUser.pronouns && (
+                  <div className="text-xs text-[#9a9aad] mt-0.5">{fullUser.pronouns}</div>
+                )}
                 {fullUser.customStatus && (
                   <div className="text-sm text-[#c8c8d8] mt-1.5 italic"><MarkdownRenderer content={fullUser.customStatus} /></div>
                 )}

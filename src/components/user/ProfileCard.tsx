@@ -42,6 +42,7 @@ export interface ProfileCardUser {
   avatar?: string | null;
   banner?: string | null;
   bio?: string | null;
+  pronouns?: string | null;
   status?: "online" | "idle" | "dnd" | "offline";
   customStatus?: string | null;
   timezone?: string | null;
@@ -384,6 +385,9 @@ export function ProfileCard({
               <Copy className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
             )}
           </button>
+          {user.pronouns && (
+            <div className="text-xs text-[#9a9aad] mt-0.5">{user.pronouns}</div>
+          )}
           {user.customStatus && (
             <div className="text-sm text-[#c8c8d8] mt-1.5 italic"><MarkdownRenderer content={user.customStatus} /></div>
           )}

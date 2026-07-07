@@ -611,7 +611,34 @@ const userRoutes = new Elysia({ prefix: '/users' })
         });
       }
 
-      return { success: true, user };
+      // Return the same hand-built shape as GET /@me so the client's
+      // updateUser() receives every profile field. Returning the raw Mongoose
+      // document serialized inconsistently and dropped fields (bio/pronouns/
+      // timezone), which made the settings form appear to reset after saving.
+      const freshUser = {
+        id: user._id,
+        username: user.username,
+        displayName: user.displayName,
+        email: user.email,
+        avatar: user.avatar,
+        banner: user.banner,
+        bio: user.bio,
+        pronouns: user.pronouns,
+        timezone: user.timezone,
+        showTimezone: user.showTimezone,
+        status: user.status,
+        customStatus: user.customStatus,
+        isPremium: user.isPremium,
+        premiumSince: user.premiumSince,
+        premiumTier: user.premiumTier,
+        badges: user.badges || [],
+        isVerified: user.isVerified,
+        settings: user.settings,
+        customization: user.customization || {},
+        gifFavorites: user.gifFavorites || [],
+        createdAt: user.createdAt,
+      };
+      return { success: true, user: freshUser };
     } catch (error) {
       console.error('Error updating user:', error);
       set.status = 500;

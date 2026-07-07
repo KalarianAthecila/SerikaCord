@@ -163,6 +163,9 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                 {user.displayName || user.username}
               </h3>
               <span className="text-sm text-[#888888]">{user.username}</span>
+              {user.pronouns && (
+                <div className="text-xs text-[#888888] mt-0.5">{user.pronouns}</div>
+              )}
               {user.settings?.advanced?.developerMode && user.id && (
                 <p className="mt-1 text-[10px] font-mono text-[#666666]">ID: {user.id}</p>
               )}

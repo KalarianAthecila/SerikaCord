@@ -198,12 +198,20 @@ export default function MobileSettingsSectionPage() {
   const fetchAll = async () => {
     setIsLoading(true);
     try {
-      const [settingsRes, appsRes, devicesRes, connectionsRes] = await Promise.all([
+      const [meRes, settingsRes, appsRes, devicesRes, connectionsRes] = await Promise.all([
+        fetch("/api/users/@me"),
         fetch("/api/users/me/settings"),
         fetch("/api/users/me/authorized-apps"),
         fetch("/api/users/me/devices"),
         fetch("/api/users/me/connections"),
       ]);
+
+      // Refresh the auth context with the latest profile from the DB so the
+      // profile form seeds from live data instead of a stale in-memory copy.
+      if (meRes.ok) {
+        const me = await meRes.json();
+        if (me && !me.error) updateUser(me);
+      }
 
       if (settingsRes.ok) {
         const data = await settingsRes.json();

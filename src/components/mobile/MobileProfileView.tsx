@@ -167,6 +167,9 @@ export function MobileProfileView() {
                 {user?.isPremium && <Crown className="w-6 h-6 text-[#F59E0B] shrink-0" />}
               </div>
               <p className="text-[var(--text-muted)] font-medium mt-0.5">@{user?.username}</p>
+              {user?.pronouns && (
+                <p className="text-sm text-[var(--text-muted)] mt-0.5">{user.pronouns}</p>
+              )}
 
               {/* Online status pill */}
               <div className="mt-3 inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[var(--bg-card)]/80 backdrop-blur-sm border border-[var(--border-subtle)]">
