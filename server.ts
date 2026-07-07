@@ -8,11 +8,13 @@
  *
  * Start:  bun server.ts   (package.json "start")
  */
-import { createServer } from 'node:http';
+import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
 import next from 'next';
 import { WebSocketServer, type WebSocket } from 'ws';
 import { connectDB } from '@/lib/db';
 import { initializeAPI } from '@/lib/api';
+import { authenticateRequest } from '@/lib/services/auth';
+import { isValidObjectId } from '@/lib/security';
 import {
   GatewayHub,
   subscribeHubToRedis,
@@ -27,6 +29,14 @@ const dev = process.env.NODE_ENV !== 'production';
 const app = next({ dev });
 const handle = app.getRequestHandler();
 
+// ─── SSE lazy imports (set after initializeAPI) ──────────
+// These are populated inside main() once the Elysia routes are wired up.
+// handleSSE references them — they're null only before the server starts.
+let registerChannelSSE: ((channelId: string, write: (data: string) => void) => () => void) | null = null;
+let registerDmSSE: ((channelId: string, write: (data: string) => void) => () => void) | null = null;
+let checkChannelAccess: ((userId: string, channelId: string) => Promise<{ hasAccess: boolean; error?: string }>) | null = null;
+let getOrCreateDMChannel: ((userId: string, recipientId: string) => Promise<{ _id: { toString(): string } }>) | null = null;
+
 async function main() {
   await app.prepare();
 
@@ -39,6 +49,28 @@ async function main() {
   }
 
   const server = createServer((req, res) => {
+    // ─── SSE fast-path ───────────────────────────────────────
+    // Intercept SSE stream endpoints BEFORE Next.js so events are written
+    // directly to the raw socket. Next.js route handlers buffer ReadableStream
+    // bodies, which delays/batches SSE events — making chat feel laggy or
+    // breaking delivery entirely for background tabs.
+    let pathname = '/';
+    try { pathname = new URL(req.url || '/', 'http://localhost').pathname; } catch {}
+
+    const channelMatch = pathname.match(/^\/api\/channels\/([^/]+)\/stream$/);
+    const dmMatch = pathname.match(/^\/api\/dms\/([^/]+)\/stream$/);
+
+    if (channelMatch || dmMatch) {
+      handleSSE(req, res, channelMatch?.[1], dmMatch?.[1]).catch((err) => {
+        console.error('SSE handler error:', err);
+        if (!res.headersSent) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'SSE handler error' }));
+        }
+      });
+      return;
+    }
+
     handle(req, res);
   });
 
@@ -50,14 +82,20 @@ async function main() {
   // Re-broadcast channel/DM events published to Redis onto THIS instance's SSE
   // connections, so users on every app instance receive messages simultaneously.
   try {
-    const [{ startChannelSSEBridge }, { startDmSSEBridge }, { startVoiceBridge }] = await Promise.all([
+    const [channelMod, dmMod] = await Promise.all([
       import('@/lib/api/channels'),
       import('@/lib/api/dms'),
-      import('@/lib/api/voice'),
     ]);
-    await startChannelSSEBridge();
-    await startDmSSEBridge();
-    await startVoiceBridge();
+    registerChannelSSE = channelMod.registerRawSSEConnection;
+    registerDmSSE = dmMod.registerRawDmSSEConnection;
+    checkChannelAccess = channelMod.checkChannelAccess;
+    getOrCreateDMChannel = dmMod.getOrCreateDMChannel;
+    await channelMod.startChannelSSEBridge();
+    await dmMod.startDmSSEBridge();
+    // Voice bridge is optional — don't block startup if it fails.
+    import('@/lib/api/voice').then(({ startVoiceBridge }) => {
+      startVoiceBridge().catch(() => {});
+    }).catch(() => {});
   } catch (err) {
     console.error('SSE bridge init failed (realtime cross-instance disabled):', err);
   }
@@ -90,10 +128,111 @@ async function main() {
   server.listen(port, () => {
     console.log(`🚀 SerikaCord ready on http://0.0.0.0:${port}`);
     console.log(`🔌 Gateway on ws://0.0.0.0:${port}${GATEWAY_PATH}`);
+    console.log(`📡 SSE fast-path active for /api/channels/*/stream and /api/dms/*/stream`);
   });
 }
 
-main().catch((err) => {
+main().catch((err: unknown) => {
   console.error('Fatal server error:', err);
   process.exit(1);
 });
+
+// ─── SSE handler ──────────────────────────────────────────
+// Writes events directly to the raw HTTP socket instead of going through
+// Next.js route handlers (which buffer ReadableStream bodies and delay/batch
+// SSE events). This is what makes chat messages arrive instantly on every
+// client — including background tabs and the sender's own other devices.
+
+const SSE_HEADERS = {
+  'Content-Type': 'text/event-stream',
+  'Cache-Control': 'no-cache, no-store, must-revalidate',
+  'Connection': 'keep-alive',
+  'X-Accel-Buffering': 'no',
+};
+
+const SSE_PING_MS = 15_000;
+
+function parseCookies(cookieHeader: string | undefined): Record<string, string> {
+  const cookies: Record<string, string> = {};
+  if (!cookieHeader) return cookies;
+  for (const part of cookieHeader.split(';')) {
+    const [key, ...rest] = part.trim().split('=');
+    if (key) cookies[key] = decodeURIComponent(rest.join('='));
+  }
+  return cookies;
+}
+
+async function handleSSE(
+  req: IncomingMessage,
+  res: ServerResponse,
+  channelId: string | undefined,
+  recipientId: string | undefined,
+) {
+  // Auth
+  const cookies = parseCookies(req.headers.cookie);
+  const authHeader = req.headers.authorization ?? null;
+  const { user, error: authError } = await authenticateRequest(
+    typeof authHeader === 'string' ? authHeader : null,
+    cookies,
+  );
+  if (!user) {
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: authError || 'Unauthorized' }));
+    return;
+  }
+
+  // Determine the channel key for SSE registration
+  let channelKey: string;
+  if (channelId) {
+    if (!isValidObjectId(channelId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid channel ID' }));
+      return;
+    }
+    const { hasAccess, error } = await checkChannelAccess!(user._id.toString(), channelId);
+    if (!hasAccess) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: error || 'Access denied' }));
+      return;
+    }
+    channelKey = channelId;
+  } else if (recipientId) {
+    if (!isValidObjectId(recipientId)) {
+      res.writeHead(400, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Invalid recipient ID' }));
+      return;
+    }
+    const dmChannel = await getOrCreateDMChannel!(user._id.toString(), recipientId);
+    channelKey = dmChannel._id.toString();
+  } else {
+    res.writeHead(400, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Missing channel or recipient ID' }));
+    return;
+  }
+
+  // Write SSE headers — flush immediately so the client's EventSource fires onopen
+  res.writeHead(200, SSE_HEADERS);
+  res.write('data: {"type":"connected"}\n\n');
+
+  // Register a raw write callback into the shared activeConnections set.
+  // publishToChannel / publishToDm will call this whenever a new event arrives.
+  const register = channelId ? registerChannelSSE! : registerDmSSE!;
+  const unregister = register(channelKey, (data: string) => {
+    try { res.write(data); } catch { /* socket closed */ }
+  });
+
+  // Keep-alive ping — prevents proxies/load balancers from closing idle connections
+  const pingInterval = setInterval(() => {
+    try { res.write('data: {"type":"ping"}\n\n'); } catch { /* closed */ }
+  }, SSE_PING_MS);
+
+  // Cleanup on client disconnect
+  const cleanup = () => {
+    clearInterval(pingInterval);
+    unregister();
+  };
+  req.on('close', cleanup);
+  req.on('error', cleanup);
+  res.on('close', cleanup);
+  res.on('error', cleanup);
+}

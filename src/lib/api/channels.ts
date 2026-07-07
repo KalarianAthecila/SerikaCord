@@ -86,7 +86,13 @@ function sanitizeMessageContent(content: string): string {
     return key;
   });
 
-  let sanitized = sanitizeInput(withPlaceholders);
+  // Escape stray '<' characters that aren't part of preserved tokens.
+  // The xss library (stripIgnoreTag) treats "< CPU" as a malformed tag and
+  // strips it entirely. Escaping to &lt; here preserves the literal character;
+  // decodeHtmlEntities() at the end restores it back to '<'.
+  const escaped = withPlaceholders.replace(/</g, '&lt;');
+
+  let sanitized = sanitizeInput(escaped);
   for (const [placeholder, token] of preservedTokens) {
     sanitized = sanitized.split(placeholder).join(token);
   }
@@ -198,6 +204,25 @@ function deliverToLocalChannel(channelId: string, data: object) {
   }
 }
 
+// Register a raw SSE write callback into the channel's active connection set.
+// Used by server.ts to bypass Next.js response buffering — the raw HTTP response
+// writes go directly to the socket, so events are flushed immediately.
+export function registerRawSSEConnection(
+  channelId: string,
+  write: (data: string) => void,
+): () => void {
+  const controller = {
+    enqueue: (data: Uint8Array) => { try { write(new TextDecoder().decode(data)); } catch { /* closed */ } },
+  } as unknown as ReadableStreamDefaultController;
+
+  if (!activeConnections.has(channelId)) {
+    activeConnections.set(channelId, new Set());
+  }
+  activeConnections.get(channelId)!.add(controller);
+
+  return () => { activeConnections.get(channelId)?.delete(controller); };
+}
+
 // Publish a channel event: deliver locally AND fan out over Redis so every
 // other app instance delivers it to its own SSE connections at the same time.
 // This is what makes chat realtime for all users regardless of which instance
@@ -255,7 +280,7 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
 // channel (e.g. PATCH /:channelId) must omit it to get a live document.
 //
 // The resolved `membership` doc is returned so callers don't re-query it.
-async function checkChannelAccess(userId: string, channelId: string, opts: { lean?: boolean } = {}): Promise<{
+export async function checkChannelAccess(userId: string, channelId: string, opts: { lean?: boolean } = {}): Promise<{
   hasAccess: boolean;
   channel?: ReturnType<typeof Channel.prototype.toObject>;
   membership?: { roles?: Types.ObjectId[]; nickname?: string | null } | null;
@@ -1948,7 +1973,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         // Send initial ping
         controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
 
-        // Keep-alive ping every 30 seconds
+        // Keep-alive ping every 15 seconds
         pingInterval = setInterval(() => {
           try {
             controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
@@ -1958,7 +1983,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
             }
             activeConnections.get(channelKey)?.delete(controller);
           }
-        }, 30000);
+        }, 15000);
       },
       cancel() {
         // Connection closed - cleanup

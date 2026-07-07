@@ -51,7 +51,7 @@ class VoiceService {
   private isScreenSharing = false;
   private screenStream: MediaStream | null = null;
   private reconnectTimeout: NodeJS.Timeout | null = null;
-  private speakingAnalyser: { userId: string; analyser: AnalyserNode; ctx: AudioContext } | null = null;
+  private speakingAnalysers: Map<string, { analyser: AnalyserNode; ctx: AudioContext }> = new Map();
   private speakingInterval: NodeJS.Timeout | null = null;
   private speakingState: Map<string, boolean> = new Map();
 
@@ -76,14 +76,17 @@ class VoiceService {
   }
 
   private emitParticipants() {
-    const list = Array.from(this.participants.values()).map((p) => ({
-      ...p,
-      stream: this.remoteStreams.get(p.userId),
-      screenStream: this.remoteScreenStreams.get(p.userId),
-      // Reflect an actually-received screen stream so the UI renders the tile
-      // even if the state_update flag hasn't arrived yet.
-      screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
-    }));
+    const myId = this.getMyUserId();
+    const list = Array.from(this.participants.values())
+      .filter((p) => p.userId !== myId)
+      .map((p) => ({
+        ...p,
+        stream: this.remoteStreams.get(p.userId),
+        screenStream: this.remoteScreenStreams.get(p.userId),
+        // Reflect an actually-received screen stream so the UI renders the tile
+        // even if the state_update flag hasn't arrived yet.
+        screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
+      }));
     this.emit({ type: "participants_changed", participants: list });
   }
 
@@ -338,6 +341,36 @@ class VoiceService {
       this.emitParticipants();
     });
 
+    // Handle individual tracks that arrive via addTrack (screen share).
+    // simple-peer's addTrack may fire a 'track' event WITHOUT a corresponding
+    // 'stream' event, depending on browser/WebRTC implementation. Without this
+    // listener, screen share tracks are silently dropped on the remote side.
+    peer.on("track", (track: MediaStreamTrack, stream: MediaStream) => {
+      if (track.kind === "video") {
+        // Screen share video track — store it in a MediaStream for the UI.
+        if (!this.remoteScreenStreams.has(targetUserId)) {
+          const screenStream = new MediaStream([track]);
+          this.remoteScreenStreams.set(targetUserId, screenStream);
+          track.addEventListener("ended", () => {
+            this.remoteScreenStreams.delete(targetUserId);
+            this.emitParticipants();
+          });
+          this.emitParticipants();
+        }
+      } else if (track.kind === "audio") {
+        // Audio track arriving outside a stream event — add to existing or
+        // create a new primary stream.
+        if (this.remoteStreams.has(targetUserId)) {
+          this.remoteStreams.get(targetUserId)!.addTrack(track);
+        } else {
+          const newStream = new MediaStream([track]);
+          track.enabled = !this.isDeafened;
+          this.remoteStreams.set(targetUserId, newStream);
+        }
+        this.emitParticipants();
+      }
+    });
+
     peer.on("error", () => {
       this.destroyPeer(targetUserId);
     });
@@ -411,16 +444,17 @@ class VoiceService {
         const audioTracks = this.localStream.getAudioTracks();
         if (audioTracks.length > 0 && audioTracks[0].enabled) {
           try {
-            if (!this.speakingAnalyser || this.speakingAnalyser.userId !== "local") {
+            if (!this.speakingAnalysers.has("local")) {
               const ctx = new AudioContext();
               const source = ctx.createMediaStreamSource(this.localStream);
               const analyser = ctx.createAnalyser();
               analyser.fftSize = 256;
               source.connect(analyser);
-              this.speakingAnalyser = { userId: "local", analyser, ctx };
+              this.speakingAnalysers.set("local", { analyser, ctx });
             }
-            const data = new Uint8Array(this.speakingAnalyser.analyser.frequencyBinCount);
-            this.speakingAnalyser.analyser.getByteFrequencyData(data);
+            const entry = this.speakingAnalysers.get("local")!;
+            const data = new Uint8Array(entry.analyser.frequencyBinCount);
+            entry.analyser.getByteFrequencyData(data);
             const avg = data.reduce((a, b) => a + b, 0) / data.length;
             const isSpeaking = avg > 20;
             const wasSpeaking = this.speakingState.get("local") || false;
@@ -442,32 +476,44 @@ class VoiceService {
         }
       }
 
-      // Check remote streams
+      // Check remote streams using persistent analysers
       this.remoteStreams.forEach((stream, userId) => {
         const audioTracks = stream.getAudioTracks();
-        if (audioTracks.length > 0 && audioTracks[0].enabled) {
-          try {
-            // Create a fresh analyser for each remote stream
+        if (audioTracks.length === 0 || !audioTracks[0].enabled) return;
+        try {
+          if (!this.speakingAnalysers.has(userId)) {
             const ctx = new AudioContext();
             const source = ctx.createMediaStreamSource(stream);
             const analyser = ctx.createAnalyser();
             analyser.fftSize = 256;
             source.connect(analyser);
-            const data = new Uint8Array(analyser.frequencyBinCount);
-            analyser.getByteFrequencyData(data);
-            const avg = data.reduce((a, b) => a + b, 0) / data.length;
-            const isSpeaking = avg > 20;
-            const wasSpeaking = this.speakingState.get(userId) || false;
-            if (isSpeaking !== wasSpeaking) {
-              this.speakingState.set(userId, isSpeaking);
-              this.emit({ type: "speaking", userId, speaking: isSpeaking });
-            }
-            ctx.close();
-          } catch {
-            // ignore
+            this.speakingAnalysers.set(userId, { analyser, ctx });
           }
+          const entry = this.speakingAnalysers.get(userId)!;
+          const data = new Uint8Array(entry.analyser.frequencyBinCount);
+          entry.analyser.getByteFrequencyData(data);
+          const avg = data.reduce((a, b) => a + b, 0) / data.length;
+          const isSpeaking = avg > 20;
+          const wasSpeaking = this.speakingState.get(userId) || false;
+          if (isSpeaking !== wasSpeaking) {
+            this.speakingState.set(userId, isSpeaking);
+            this.emit({ type: "speaking", userId, speaking: isSpeaking });
+          }
+        } catch {
+          // ignore
         }
       });
+
+      // Clean up analysers for streams that no longer exist
+      for (const key of this.speakingAnalysers.keys()) {
+        if (key === "local") continue;
+        if (!this.remoteStreams.has(key)) {
+          const entry = this.speakingAnalysers.get(key);
+          try { entry?.ctx.close(); } catch { /* ignore */ }
+          this.speakingAnalysers.delete(key);
+          this.speakingState.delete(key);
+        }
+      }
     }, 100);
   }
 
@@ -476,10 +522,10 @@ class VoiceService {
       clearInterval(this.speakingInterval);
       this.speakingInterval = null;
     }
-    if (this.speakingAnalyser) {
-      try { this.speakingAnalyser.ctx.close(); } catch { /* ignore */ }
-      this.speakingAnalyser = null;
-    }
+    this.speakingAnalysers.forEach((entry) => {
+      try { entry.ctx.close(); } catch { /* ignore */ }
+    });
+    this.speakingAnalysers.clear();
     this.speakingState.clear();
   }
 
@@ -681,12 +727,15 @@ class VoiceService {
   isConnectedTo(roomId: string) { return this.roomId === roomId; }
   get currentRoomId() { return this.roomId; }
   get currentParticipants(): VoiceParticipant[] {
-    return Array.from(this.participants.values()).map((p) => ({
-      ...p,
-      stream: this.remoteStreams.get(p.userId),
-      screenStream: this.remoteScreenStreams.get(p.userId),
-      screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
-    }));
+    const myId = this.getMyUserId();
+    return Array.from(this.participants.values())
+      .filter((p) => p.userId !== myId)
+      .map((p) => ({
+        ...p,
+        stream: this.remoteStreams.get(p.userId),
+        screenStream: this.remoteScreenStreams.get(p.userId),
+        screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
+      }));
   }
   get localAudioStream() { return this.localStream; }
   get localStream_() { return this.localStream; }

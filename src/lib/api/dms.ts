@@ -28,7 +28,13 @@ function sanitizeMessageContent(content: string): string {
     preservedTokens.set(key, token);
     return key;
   });
-  let sanitized = sanitizeInput(withPlaceholders);
+  // Escape stray '<' characters that aren't part of preserved tokens.
+  // The xss library (stripIgnoreTag) treats "< CPU" as a malformed tag and
+  // strips it entirely. Escaping to &lt; here preserves the literal character;
+  // decodeHtmlEntities() at the end restores it back to '<'.
+  const escaped = withPlaceholders.replace(/</g, '&lt;');
+
+  let sanitized = sanitizeInput(escaped);
   for (const [placeholder, token] of preservedTokens) {
     sanitized = sanitized.split(placeholder).join(token);
   }
@@ -107,6 +113,24 @@ function deliverToLocalDm(channelId: string, data: object) {
   }
 }
 
+// Register a raw SSE write callback into the DM's active connection set.
+// Used by server.ts to bypass Next.js response buffering.
+export function registerRawDmSSEConnection(
+  channelId: string,
+  write: (data: string) => void,
+): () => void {
+  const controller = {
+    enqueue: (data: Uint8Array) => { try { write(new TextDecoder().decode(data)); } catch { /* closed */ } },
+  } as unknown as ReadableStreamDefaultController;
+
+  if (!activeConnections.has(channelId)) {
+    activeConnections.set(channelId, new Set());
+  }
+  activeConnections.get(channelId)!.add(controller);
+
+  return () => { activeConnections.get(channelId)?.delete(controller); };
+}
+
 // Publish a DM event: local + cross-instance fan-out over Redis.
 function publishToDm(channelId: string, data: object) {
   deliverToLocalDm(channelId, data);
@@ -144,7 +168,7 @@ export async function startDmSSEBridge(): Promise<() => void> {
 }
 
 // Helper to get or create DM channel
-async function getOrCreateDMChannel(userId: string, recipientId: string) {
+export async function getOrCreateDMChannel(userId: string, recipientId: string) {
   // Find existing DM channel between users
   let channel = await Channel.findOne({
     type: 'dm',
@@ -710,7 +734,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         // Send initial ping
         controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
 
-        // Keep-alive ping every 30 seconds
+        // Keep-alive ping every 15 seconds
         pingInterval = setInterval(() => {
           try {
             controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
@@ -720,7 +744,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
             }
             activeConnections.get(channelKey)?.delete(controller);
           }
-        }, 30000);
+        }, 15000);
       },
       cancel() {
         if (pingInterval) {
