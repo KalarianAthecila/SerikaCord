@@ -142,7 +142,7 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
               />
               <span className="text-[10px] text-[#8d97ad] max-w-[56px] truncate">You</span>
             </div>
-            {participants.map((p) => (
+            {participants.filter(p => p.userId !== voiceService.myId).map((p) => (
               <div key={p.userId} className="flex flex-col items-center gap-1">
                 <VoiceParticipantAvatar
                   participant={p}
@@ -197,18 +197,20 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
               {isVideoOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
             </button>
 
-            <button
-              onClick={handleScreenShare}
-              title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
-              className={cn(
-                "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
-                isScreenSharing
-                  ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
-                  : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
-              )}
-            >
-              {isScreenSharing ? <MonitorOff className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
-            </button>
+            {/* Screen share — hidden on mobile (getDisplayMedia not supported) */}
+            {!isScreenSharing && null}
+            {isScreenSharing && (
+              <button
+                onClick={handleScreenShare}
+                title="Stop Sharing"
+                className={cn(
+                  "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
+                  "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                )}
+              >
+                <MonitorOff className="w-4 h-4" />
+              </button>
+            )}
 
             <div className="flex-1" />
 

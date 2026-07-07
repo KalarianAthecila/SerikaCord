@@ -55,6 +55,15 @@ class VoiceService {
   private speakingInterval: NodeJS.Timeout | null = null;
   private speakingState: Map<string, boolean> = new Map();
 
+  // Noise suppression chain
+  private noiseSuppressionOn = false;
+  private noiseCtx: AudioContext | null = null;
+  private noiseHighPass: BiquadFilterNode | null = null;
+  private noiseGate: GainNode | null = null;
+  private noiseAnalyser: AnalyserNode | null = null;
+  private noiseInterval: NodeJS.Timeout | null = null;
+  private processedStream: MediaStream | null = null;
+
   private myUserId: string = "";
 
   setUserId(userId: string) {
@@ -76,9 +85,7 @@ class VoiceService {
   }
 
   private emitParticipants() {
-    const myId = this.getMyUserId();
     const list = Array.from(this.participants.values())
-      .filter((p) => p.userId !== myId)
       .map((p) => ({
         ...p,
         stream: this.remoteStreams.get(p.userId),
@@ -347,7 +354,13 @@ class VoiceService {
     // listener, screen share tracks are silently dropped on the remote side.
     peer.on("track", (track: MediaStreamTrack, stream: MediaStream) => {
       if (track.kind === "video") {
-        // Screen share video track — store it in a MediaStream for the UI.
+        // If this track is part of the primary stream, it's the camera — not a screen share.
+        const primary = this.remoteStreams.get(targetUserId);
+        if (primary && stream.id === primary.id) return;
+        // Also skip if the track is already in the primary stream
+        if (primary && primary.getTracks().includes(track)) return;
+
+        // This is a screen share video track — store it in a MediaStream for the UI.
         if (!this.remoteScreenStreams.has(targetUserId)) {
           const screenStream = new MediaStream([track]);
           this.remoteScreenStreams.set(targetUserId, screenStream);
@@ -359,7 +372,11 @@ class VoiceService {
         }
       } else if (track.kind === "audio") {
         // Audio track arriving outside a stream event — add to existing or
-        // create a new primary stream.
+        // create a new primary stream. Skip if it's part of the primary stream.
+        const primary = this.remoteStreams.get(targetUserId);
+        if (primary && stream.id === primary.id) return;
+        if (primary && primary.getTracks().includes(track)) return;
+
         if (this.remoteStreams.has(targetUserId)) {
           this.remoteStreams.get(targetUserId)!.addTrack(track);
         } else {
@@ -399,6 +416,7 @@ class VoiceService {
     // Stop screen share
     this.stopScreenShare();
     this.stopSpeakingDetection();
+    this.cleanupNoiseSuppression();
 
     // Stop local stream
     if (this.localStream) {
@@ -576,6 +594,170 @@ class VoiceService {
     return this.isDeafened;
   }
 
+  get noiseSuppressionEnabled(): boolean {
+    return this.noiseSuppressionOn;
+  }
+
+  toggleNoiseSuppression(): boolean {
+    if (this.noiseSuppressionOn) {
+      this.disableNoiseSuppression();
+    } else {
+      this.enableNoiseSuppression();
+    }
+    return this.noiseSuppressionOn;
+  }
+
+  private enableNoiseSuppression() {
+    if (!this.localStream || this.noiseSuppressionOn) return;
+    try {
+      const audioTracks = this.localStream.getAudioTracks();
+      if (audioTracks.length === 0) return;
+
+      this.noiseCtx = new AudioContext();
+      const source = this.noiseCtx.createMediaStreamSource(this.localStream);
+
+      // High-pass filter at 85Hz — removes low-frequency hum/rumble
+      this.noiseHighPass = this.noiseCtx.createBiquadFilter();
+      this.noiseHighPass.type = "highpass";
+      this.noiseHighPass.frequency.value = 85;
+
+      // Noise gate — a GainNode that we dynamically control based on input level
+      this.noiseGate = this.noiseCtx.createGain();
+      this.noiseGate.gain.value = 0;
+
+      // Analyser to measure input level for the noise gate
+      this.noiseAnalyser = this.noiseCtx.createAnalyser();
+      this.noiseAnalyser.fftSize = 512;
+
+      // Chain: source -> highpass -> analyser -> gate -> destination
+      source.connect(this.noiseHighPass);
+      this.noiseHighPass.connect(this.noiseAnalyser);
+      this.noiseAnalyser.connect(this.noiseGate);
+      this.noiseGate.connect(this.noiseCtx.destination);
+
+      // Noise gate loop: open gate when signal above threshold, close when below
+      const GATE_OPEN = 1.0;
+      const GATE_CLOSED = 0.0;
+      const OPEN_THRESHOLD = 8;
+      const CLOSE_THRESHOLD = 3;
+      let gateOpen = false;
+
+      this.noiseInterval = setInterval(() => {
+        if (!this.noiseAnalyser || !this.noiseGate || !this.noiseCtx) return;
+        const data = new Uint8Array(this.noiseAnalyser.frequencyBinCount);
+        this.noiseAnalyser.getByteFrequencyData(data);
+        const avg = data.reduce((a, b) => a + b, 0) / data.length;
+
+        if (!gateOpen && avg > OPEN_THRESHOLD) {
+          gateOpen = true;
+          this.noiseGate.gain.setTargetAtTime(GATE_OPEN, this.noiseCtx.currentTime, 0.01);
+        } else if (gateOpen && avg < CLOSE_THRESHOLD) {
+          gateOpen = false;
+          this.noiseGate.gain.setTargetAtTime(GATE_CLOSED, this.noiseCtx.currentTime, 0.05);
+        }
+      }, 30);
+
+      // Create a processed stream from the AudioContext destination
+      const dest = this.noiseCtx.createMediaStreamDestination();
+      this.noiseGate.connect(dest);
+      this.processedStream = dest.stream;
+
+      // Replace the audio track in localStream with the processed one
+      const processedTrack = this.processedStream.getAudioTracks()[0];
+      if (processedTrack) {
+        const oldTrack = audioTracks[0];
+        this.localStream.removeTrack(oldTrack);
+        this.localStream.addTrack(processedTrack);
+
+        // Update all peers with the new track
+        this.peers.forEach((peer) => {
+          try {
+            (peer as unknown as { replaceTrack: (oldT: MediaStreamTrack, newT: MediaStreamTrack, stream: MediaStream) => void })
+              .replaceTrack(oldTrack, processedTrack, this.localStream!);
+          } catch {
+            // Fallback: addTrack/removeTrack
+            try { peer.addTrack(processedTrack, this.localStream!); } catch { /* ignore */ }
+          }
+        });
+
+        // Keep old track alive but muted (don't stop it — we may need to revert)
+        oldTrack.enabled = false;
+      }
+
+      this.noiseSuppressionOn = true;
+    } catch {
+      // AudioContext or Web Audio API not available
+      this.cleanupNoiseSuppression();
+    }
+  }
+
+  private disableNoiseSuppression() {
+    if (!this.noiseSuppressionOn || !this.localStream) {
+      this.cleanupNoiseSuppression();
+      return;
+    }
+
+    try {
+      // Restore the original audio track
+      const processedTracks = this.localStream.getAudioTracks();
+      const processedTrack = processedTracks.find(t => t.label === "" || t.id !== this.localStream?.getAudioTracks()[0]?.id);
+
+      // We need the original track back — re-acquire it from getUserMedia
+      // since we can't easily reverse the Web Audio processing
+      navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true,
+        },
+        video: false,
+      }).then((origStream) => {
+        const origTrack = origStream.getAudioTracks()[0];
+        if (origTrack && this.localStream) {
+          // Remove all current audio tracks
+          this.localStream.getAudioTracks().forEach((t) => {
+            this.localStream?.removeTrack(t);
+            t.stop();
+          });
+          this.localStream.addTrack(origTrack);
+
+          // Update peers
+          this.peers.forEach((peer) => {
+            try {
+              this.localStream?.getAudioTracks().forEach((newT) => {
+                peer.addTrack(newT, this.localStream!);
+              });
+            } catch { /* ignore */ }
+          });
+
+          // Apply current mute state
+          origTrack.enabled = !this.isMuted;
+        }
+        this.cleanupNoiseSuppression();
+      }).catch(() => {
+        this.cleanupNoiseSuppression();
+      });
+    } catch {
+      this.cleanupNoiseSuppression();
+    }
+  }
+
+  private cleanupNoiseSuppression() {
+    if (this.noiseInterval) {
+      clearInterval(this.noiseInterval);
+      this.noiseInterval = null;
+    }
+    if (this.noiseCtx) {
+      try { this.noiseCtx.close(); } catch { /* ignore */ }
+      this.noiseCtx = null;
+    }
+    this.noiseHighPass = null;
+    this.noiseGate = null;
+    this.noiseAnalyser = null;
+    this.processedStream = null;
+    this.noiseSuppressionOn = false;
+  }
+
   async toggleVideo(): Promise<boolean> {
     if (!this.localStream || !this.roomId) return false;
 
@@ -727,15 +909,12 @@ class VoiceService {
   isConnectedTo(roomId: string) { return this.roomId === roomId; }
   get currentRoomId() { return this.roomId; }
   get currentParticipants(): VoiceParticipant[] {
-    const myId = this.getMyUserId();
-    return Array.from(this.participants.values())
-      .filter((p) => p.userId !== myId)
-      .map((p) => ({
-        ...p,
-        stream: this.remoteStreams.get(p.userId),
-        screenStream: this.remoteScreenStreams.get(p.userId),
-        screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
-      }));
+    return Array.from(this.participants.values()).map((p) => ({
+      ...p,
+      stream: this.remoteStreams.get(p.userId),
+      screenStream: this.remoteScreenStreams.get(p.userId),
+      screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
+    }));
   }
   get localAudioStream() { return this.localStream; }
   get localStream_() { return this.localStream; }

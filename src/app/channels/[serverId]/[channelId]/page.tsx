@@ -9,11 +9,12 @@ import { ForumChannelView } from "@/components/chat/ForumChannelView";
 import { MemberSidebar } from "@/components/chat/MemberSidebar";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
-import { Loader2, Mic, MicOff, Video, VideoOff, Volume2, PhoneOff, Users, Monitor, MonitorOff, Headphones, ScreenShare, Maximize2, Music, X } from "lucide-react";
+import { Loader2, Mic, MicOff, Video, VideoOff, Volume2, PhoneOff, Users, Monitor, MonitorOff, Headphones, HeadphoneOff, ScreenShare, Maximize2, Music, X, Sparkles, ArrowLeft } from "lucide-react";
 import { toast } from "sonner";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
 import { cn } from "@/lib/utils";
 import { usePolling } from "@/hooks/usePolling";
+import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface SoundboardSound {
   _id: string;
@@ -24,6 +25,7 @@ interface SoundboardSound {
 
 function VoiceChannelView({ channelId, channelName, serverId }: { channelId: string; channelName: string; serverId?: string }) {
   const { user } = useAuth();
+  const router = useRouter();
   const [participants, setParticipants] = useState<VoiceParticipant[]>([]);
   const [isJoining, setIsJoining] = useState(false);
   const [isConnected, setIsConnected] = useState(false);
@@ -38,6 +40,8 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
   const [playingSoundId, setPlayingSoundId] = useState<string | null>(null);
   const localVideoRef = useRef<HTMLVideoElement>(null);
   const screenVideoRef = useRef<HTMLVideoElement>(null);
+  const isMobile = useIsMobile();
+  const [noiseSuppression, setNoiseSuppression] = useState(voiceService.noiseSuppressionEnabled);
 
   const roomId = `channel-${channelId}`;
 
@@ -201,6 +205,11 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
     }
   }, [isScreenSharing]);
 
+  const handleToggleNoiseSuppression = useCallback(() => {
+    const enabled = voiceService.toggleNoiseSuppression();
+    setNoiseSuppression(enabled);
+  }, []);
+
   const handlePlaySound = useCallback(async (sound: SoundboardSound) => {
     if (!isConnected) return;
     setPlayingSoundId(sound._id);
@@ -214,15 +223,25 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
   // No auto-leave on unmount — voice persists across channel navigation.
   // The sidebar VoiceBar leave button or the call controls leave button handles disconnect.
 
-  const videoParticipants = participants.filter(p => p.video || p.screenShare);
-  const audioOnlyParticipants = participants.filter(p => !p.video && !p.screenShare);
+  const myId = voiceService.myId;
+  const videoParticipants = participants.filter(p => p.userId !== myId && (p.video || (p.screenShare && p.screenStream)));
+  const audioOnlyParticipants = participants.filter(p => p.userId !== myId && !p.video && !(p.screenShare && p.screenStream));
 
   return (
     <div className="flex-1 flex flex-col bg-[#0a0d15] min-w-0 min-h-0 overflow-hidden">
       {/* Header */}
       <div className="h-12 px-4 flex items-center justify-between border-b border-[#1e2637] bg-[#0a0d15]">
         <div className="flex items-center gap-2 min-w-0">
-          <Volume2 className="w-5 h-5 text-[#8B5CF6]" />
+          {isMobile && serverId && (
+            <button
+              onClick={() => router.push(`/channels/${serverId}`)}
+              className="flex items-center justify-center w-8 h-8 -ml-2 rounded-lg text-[#8d97ad] hover:text-white hover:bg-[#1e2637] transition-colors"
+              title="Back"
+            >
+              <ArrowLeft className="w-5 h-5" />
+            </button>
+          )}
+          <Volume2 className="w-5 h-5 text-[#8B5CF6] flex-shrink-0" />
           <span className="font-semibold text-white truncate">{channelName}</span>
         </div>
         <div className="text-xs text-[#6b7387]">
@@ -301,18 +320,24 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
 
               {/* Video grid */}
               <div className={cn(
-                "grid gap-3",
-                videoParticipants.filter(p => !p.screenShare).length === 0 && !isVideoOn
-                  ? "grid-cols-1"
-                  : videoParticipants.filter(p => !p.screenShare).length <= 1 && !isVideoOn
-                    ? "grid-cols-1 max-w-md mx-auto"
-                    : videoParticipants.filter(p => !p.screenShare).length <= 3 && !isVideoOn
-                      ? "grid-cols-2"
-                      : "grid-cols-3"
+                "grid gap-2 sm:gap-3",
+                isMobile
+                  ? videoParticipants.filter(p => !p.screenShare).length === 0 && !isVideoOn
+                    ? "grid-cols-1"
+                    : videoParticipants.filter(p => !p.screenShare).length <= 1 && !isVideoOn
+                      ? "grid-cols-1"
+                      : "grid-cols-2"
+                  : videoParticipants.filter(p => !p.screenShare).length === 0 && !isVideoOn
+                    ? "grid-cols-1"
+                    : videoParticipants.filter(p => !p.screenShare).length <= 1 && !isVideoOn
+                      ? "grid-cols-1 max-w-md mx-auto"
+                      : videoParticipants.filter(p => !p.screenShare).length <= 3 && !isVideoOn
+                        ? "grid-cols-2"
+                        : "grid-cols-3"
               )}>
                 {/* Local video tile */}
                 {isVideoOn && (
-                  <div className="relative rounded-xl overflow-hidden bg-[#131a28] aspect-video min-h-[140px]">
+                  <div className="relative rounded-lg sm:rounded-xl overflow-hidden bg-[#131a28] aspect-video min-h-[100px] sm:min-h-[140px]">
                     <video
                       ref={localVideoRef}
                       autoPlay
@@ -320,7 +345,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                       playsInline
                       className="w-full h-full object-cover video-mirror"
                     />
-                    <div className="absolute bottom-2 left-2 px-2 py-1 rounded bg-black/60 text-xs text-white">
+                    <div className="absolute bottom-1.5 left-1.5 sm:bottom-2 sm:left-2 px-1.5 py-0.5 sm:px-2 sm:py-1 rounded bg-black/60 text-[10px] sm:text-xs text-white">
                       You
                     </div>
                   </div>
@@ -343,7 +368,9 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                   ) : null}
                   <div className={cn(
                     "grid gap-2",
-                    audioOnlyParticipants.length <= 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3 sm:grid-cols-6"
+                    isMobile
+                      ? audioOnlyParticipants.length <= 4 ? "grid-cols-2" : "grid-cols-3"
+                      : audioOnlyParticipants.length <= 4 ? "grid-cols-2 sm:grid-cols-4" : "grid-cols-3 sm:grid-cols-6"
                   )}>
                     {audioOnlyParticipants.map((p) => {
                       const isSpeaking = speakingUsers.get(p.userId);
@@ -391,59 +418,80 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
             </div>
 
             {/* Call controls bar */}
-            <div className="border-t border-[#1e2637] bg-[#0a0d15] px-4 py-3">
-              <div className="flex items-center justify-center gap-2">
+            <div className="border-t border-[#1e2637] bg-[#0a0d15] px-3 sm:px-4 py-2 sm:py-3">
+              <div className="flex items-center justify-center gap-1.5 sm:gap-2">
                 <button
                   onClick={handleMute}
                   title={isMuted ? "Unmute" : "Mute"}
                   className={cn(
-                    "flex items-center justify-center w-10 h-10 rounded-lg transition-all active:scale-95",
+                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    isMobile ? "w-9 h-9" : "w-10 h-10",
                     isMuted
                       ? "bg-[#ef4444]/20 text-[#ef4444] hover:bg-[#ef4444]/30"
                       : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
                   )}
                 >
-                  {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+                  {isMuted ? <MicOff className={isMobile ? "w-4 h-4" : "w-5 h-5"} /> : <Mic className={isMobile ? "w-4 h-4" : "w-5 h-5"} />}
                 </button>
 
                 <button
                   onClick={handleDeafen}
                   title={isDeafened ? "Undeafen" : "Deafen"}
                   className={cn(
-                    "flex items-center justify-center w-10 h-10 rounded-lg transition-all active:scale-95",
+                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    isMobile ? "w-9 h-9" : "w-10 h-10",
                     isDeafened
                       ? "bg-[#ef4444]/20 text-[#ef4444] hover:bg-[#ef4444]/30"
                       : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
                   )}
                 >
-                  <Headphones className="w-5 h-5" />
+                  {isDeafened ? <HeadphoneOff className={isMobile ? "w-4 h-4" : "w-5 h-5"} /> : <Headphones className={isMobile ? "w-4 h-4" : "w-5 h-5"} />}
                 </button>
 
                 <button
                   onClick={handleVideo}
                   title={isVideoOn ? "Turn Off Camera" : "Turn On Camera"}
                   className={cn(
-                    "flex items-center justify-center w-10 h-10 rounded-lg transition-all active:scale-95",
+                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    isMobile ? "w-9 h-9" : "w-10 h-10",
                     isVideoOn
                       ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
                       : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
                   )}
                 >
-                  {isVideoOn ? <Video className="w-5 h-5" /> : <VideoOff className="w-5 h-5" />}
+                  {isVideoOn ? <Video className={isMobile ? "w-4 h-4" : "w-5 h-5"} /> : <VideoOff className={isMobile ? "w-4 h-4" : "w-5 h-5"} />}
                 </button>
 
+                {/* Noise suppression toggle */}
                 <button
-                  onClick={handleScreenShare}
-                  title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
+                  onClick={handleToggleNoiseSuppression}
+                  title={noiseSuppression ? "Disable Noise Suppression" : "Enable Noise Suppression"}
                   className={cn(
-                    "flex items-center justify-center w-10 h-10 rounded-lg transition-all active:scale-95",
-                    isScreenSharing
+                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    isMobile ? "w-9 h-9" : "w-10 h-10",
+                    noiseSuppression
                       ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
                       : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
                   )}
                 >
-                  {isScreenSharing ? <MonitorOff className="w-5 h-5" /> : <ScreenShare className="w-5 h-5" />}
+                  <Sparkles className={isMobile ? "w-4 h-4" : "w-5 h-5"} />
                 </button>
+
+                {/* Screen share — hidden on mobile (getDisplayMedia not supported) */}
+                {!isMobile && (
+                  <button
+                    onClick={handleScreenShare}
+                    title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
+                    className={cn(
+                      "flex items-center justify-center w-10 h-10 rounded-lg transition-all active:scale-95",
+                      isScreenSharing
+                        ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                        : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
+                    )}
+                  >
+                    {isScreenSharing ? <MonitorOff className="w-5 h-5" /> : <ScreenShare className="w-5 h-5" />}
+                  </button>
+                )}
 
                 {/* Soundboard toggle */}
                 {soundboardSounds.length > 0 && (
@@ -451,13 +499,14 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                     onClick={() => setShowSoundboard(!showSoundboard)}
                     title="Soundboard"
                     className={cn(
-                      "flex items-center justify-center w-10 h-10 rounded-lg transition-all active:scale-95",
+                      "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                      isMobile ? "w-9 h-9" : "w-10 h-10",
                       showSoundboard
                         ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
                         : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
                     )}
                   >
-                    <Music className="w-5 h-5" />
+                    <Music className={isMobile ? "w-4 h-4" : "w-5 h-5"} />
                   </button>
                 )}
 
@@ -466,9 +515,12 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                 <button
                   onClick={leaveVoice}
                   title="Leave Voice Channel"
-                  className="flex items-center justify-center w-10 h-10 rounded-lg bg-[#ef4444]/15 text-[#ef4444] hover:bg-[#ef4444]/25 transition-all active:scale-95"
+                  className={cn(
+                    "flex items-center justify-center rounded-lg bg-[#ef4444]/15 text-[#ef4444] hover:bg-[#ef4444]/25 transition-all active:scale-95",
+                    isMobile ? "w-9 h-9" : "w-10 h-10"
+                  )}
                 >
-                  <PhoneOff className="w-5 h-5" />
+                  <PhoneOff className={isMobile ? "w-4 h-4" : "w-5 h-5"} />
                 </button>
               </div>
 
@@ -506,6 +558,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
 
 function RemoteVideoTile({ participant, speaking }: { participant: VoiceParticipant; speaking?: boolean }) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
     if (videoRef.current && participant.stream) {
@@ -515,7 +568,8 @@ function RemoteVideoTile({ participant, speaking }: { participant: VoiceParticip
 
   return (
     <div className={cn(
-      "relative rounded-xl overflow-hidden bg-[#131a28] aspect-video min-h-[140px] transition-all",
+      "relative rounded-lg sm:rounded-xl overflow-hidden bg-[#131a28] aspect-video transition-all",
+      isMobile ? "min-h-[100px]" : "min-h-[140px]",
       speaking && "ring-2 ring-green-500"
     )}>
       <video
@@ -525,7 +579,7 @@ function RemoteVideoTile({ participant, speaking }: { participant: VoiceParticip
         playsInline
         className="w-full h-full object-cover"
       />
-      <div className="absolute bottom-2 left-2 px-2 py-1 rounded bg-black/60 text-xs text-white flex items-center gap-1.5">
+      <div className="absolute bottom-1.5 left-1.5 sm:bottom-2 sm:left-2 px-1.5 py-0.5 sm:px-2 sm:py-1 rounded bg-black/60 text-[10px] sm:text-xs text-white flex items-center gap-1.5">
         {participant.displayName || participant.username}
         {!participant.audio && <MicOff className="w-3 h-3 text-red-400" />}
       </div>
@@ -538,10 +592,10 @@ function RemoteScreenShare({ participant }: { participant: VoiceParticipant }) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (videoRef.current && participant.stream) {
-      videoRef.current.srcObject = participant.stream;
+    if (videoRef.current && participant.screenStream) {
+      videoRef.current.srcObject = participant.screenStream;
     }
-  }, [participant.stream]);
+  }, [participant.screenStream]);
 
   const toggleFullscreen = () => {
     if (document.fullscreenElement) {
@@ -554,7 +608,7 @@ function RemoteScreenShare({ participant }: { participant: VoiceParticipant }) {
   return (
     <div
       ref={containerRef}
-      className="group relative rounded-xl overflow-hidden bg-[#131a28] mb-3 aspect-video"
+      className="group relative rounded-lg sm:rounded-xl overflow-hidden bg-[#131a28] mb-3 aspect-video"
       onDoubleClick={toggleFullscreen}
     >
       <video

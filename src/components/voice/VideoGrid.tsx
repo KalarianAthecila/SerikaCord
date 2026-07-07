@@ -60,8 +60,9 @@ export function VideoGrid() {
 
   // Camera tiles and screen-share tiles come from DIFFERENT streams, so a
   // participant sharing their screen while on camera produces two tiles.
-  const cameraParticipants = participants.filter((p) => p.video && p.stream);
-  const screenParticipants = participants.filter((p) => p.screenStream);
+  const myId = voiceService.myId;
+  const cameraParticipants = participants.filter((p) => p.userId !== myId && p.video && p.stream);
+  const screenParticipants = participants.filter((p) => p.userId !== myId && p.screenStream);
   const remoteTileCount = cameraParticipants.length + screenParticipants.length;
   const hasVideo = isVideoOn || remoteTileCount > 0 || isScreenSharing;
 
