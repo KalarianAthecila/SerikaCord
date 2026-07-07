@@ -172,7 +172,7 @@ function MemberItem({ member, serverId }: MemberItemProps) {
   const nameplateBg = getNameplateBackground(member.customization);
 
   return (
-    <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
+    <MemberProfilePopup member={member} serverId={serverId} side="left" align="start" fullHeight>
       <button
         className={cn(
           "relative overflow-hidden w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",

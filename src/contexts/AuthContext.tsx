@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from "react";
+import { upsertSavedAccount } from "@/lib/services/savedAccounts";
 
 export type BadgeId = 
   | 'staff' | 'admin' | 'moderator' 
@@ -110,6 +111,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       if (response.ok) {
         const data = await response.json();
         setUser(data);
+        upsertSavedAccount(data);
 
         // Set user online when refreshing auth. Fire-and-forget so the app shell
         // paints as soon as we know who the user is, rather than blocking first

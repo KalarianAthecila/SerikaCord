@@ -5,34 +5,12 @@ import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { X, Plus, Check, ChevronLeft, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
-
-interface SavedAccount {
-  email: string;
-  username: string;
-  displayName?: string;
-  avatar?: string;
-  savedAt: number;
-}
-
-const STORAGE_KEY = "serika:savedAccounts";
-
-function loadSavedAccounts(): SavedAccount[] {
-  if (typeof window === "undefined") return [];
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : [];
-  } catch {
-    return [];
-  }
-}
-
-function saveAccounts(accounts: SavedAccount[]) {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(accounts));
-  } catch {
-    // ignore
-  }
-}
+import {
+  type SavedAccount,
+  loadSavedAccounts,
+  saveAccounts,
+  upsertSavedAccount,
+} from "@/lib/services/savedAccounts";
 
 export function SwitchAccountsDialog({
   open,
@@ -61,21 +39,8 @@ export function SwitchAccountsDialog({
   }, [open]);
 
   const saveCurrentAccount = useCallback(() => {
-    if (!user?.email) return;
-    const accounts = loadSavedAccounts();
-    const existing = accounts.find((a) => a.email === user.email);
-    if (!existing) {
-      const newAccount: SavedAccount = {
-        email: user.email,
-        username: user.username,
-        displayName: user.displayName,
-        avatar: user.avatar,
-        savedAt: Date.now(),
-      };
-      accounts.push(newAccount);
-      saveAccounts(accounts);
-      setAccounts(accounts);
-    }
+    upsertSavedAccount(user);
+    setAccounts(loadSavedAccounts());
   }, [user]);
 
   const handleSelectAccount = (account: SavedAccount) => {

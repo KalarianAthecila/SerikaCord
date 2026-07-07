@@ -245,7 +245,9 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
           ) : mobileView === "notifications" ? (
             <MobileNotificationsView />
           ) : mobileView === "profile" ? (
-            <MobileProfileView />
+            <div className="flex-1 flex min-w-0 min-h-0 overflow-hidden">
+              <MobileProfileView />
+            </div>
           ) : (
             // Show channel content or DMs when in servers view without a selected server
             <AnimatePresence mode="wait" initial={false}>

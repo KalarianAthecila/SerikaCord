@@ -10,6 +10,7 @@ import {
 import { ProfileCard, type ProfileCardUser } from "@/components/user/ProfileCard";
 import { FullProfileDialog } from "@/components/user/FullProfileDialog";
 import { useIsMobile } from "@/hooks/useIsMobile";
+import { cn } from "@/lib/utils";
 
 interface MemberProfilePopupProps {
   children: React.ReactNode;
@@ -17,6 +18,7 @@ interface MemberProfilePopupProps {
   serverId?: string;
   side?: "left" | "right" | "top" | "bottom";
   align?: "start" | "center" | "end";
+  fullHeight?: boolean;
 }
 
 /**
@@ -29,6 +31,7 @@ export function MemberProfilePopup({
   serverId,
   side = "left",
   align = "start",
+  fullHeight = false,
 }: MemberProfilePopupProps) {
   const { user: currentUser } = useAuth();
   const isMobile = useIsMobile();
@@ -121,8 +124,11 @@ export function MemberProfilePopup({
         side={side}
         align={align}
         sideOffset={8}
-        collisionPadding={12}
-        className="w-auto p-0 border-none bg-transparent shadow-none"
+        collisionPadding={fullHeight ? 0 : 12}
+        className={cn(
+          "w-auto p-0 border-none bg-transparent shadow-none",
+          fullHeight && "h-screen max-h-screen overflow-hidden"
+        )}
       >
         <ProfileCard
           user={fullProfile}
@@ -135,6 +141,7 @@ export function MemberProfilePopup({
             setOpen(false);
             setFullProfileOpen(true);
           }}
+          className={cn(fullHeight && "h-full overflow-y-auto")}
         />
       </PopoverContent>
     </Popover>

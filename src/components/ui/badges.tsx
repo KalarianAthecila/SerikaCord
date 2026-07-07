@@ -227,7 +227,7 @@ export function BadgeList({ badges, size = 'md', maxDisplay, className, expandab
   
   return (
     <TooltipProvider delayDuration={0}>
-      <div className={cn("flex items-center gap-1", className)}>
+      <div className={cn("flex items-center flex-wrap gap-1", className)}>
         {displayBadges.map((badgeId) => (
           <Badge key={badgeId} id={badgeId} size={size} />
         ))}

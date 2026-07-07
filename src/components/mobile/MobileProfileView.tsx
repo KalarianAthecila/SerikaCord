@@ -121,12 +121,12 @@ export function MobileProfileView() {
   ];
 
   return (
-    <div className="relative flex flex-col h-full bg-[var(--bg-app)]" style={getProfileBackgroundStyle(customization)}>
+    <div className="relative flex flex-col w-full h-full min-w-0 overflow-x-hidden bg-[var(--bg-app)]" style={getProfileBackgroundStyle(customization)}>
       {/* Themed wash so the whole page picks up the profile colours */}
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-transparent via-[var(--bg-app)]/70 to-[var(--bg-app)]" />
 
-      <ScrollArea className="relative flex-1">
-        <div className="pb-24">
+      <ScrollArea className="profile-scroll-area relative flex-1 w-full overflow-x-hidden">
+        <div className="w-full max-w-full pb-24 overflow-x-hidden">
           {/* ── Fullscreen profile hero ── */}
           <div className="relative">
             {/* Banner */}
@@ -270,7 +270,6 @@ export function MobileProfileView() {
             {/* App Info */}
             <div className="text-center py-6">
               <p className="text-xs font-medium text-[var(--text-muted)]">SerikaCord v1.0.1 (Beta)</p>
-              <p className="text-xs font-medium text-[var(--text-muted)] mt-1">Made with 💜 in Tokyo</p>
             </div>
           </div>
         </div>
