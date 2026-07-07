@@ -1801,6 +1801,27 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
     return { success: true };
   });
 
+// IGDB proxy — resolves a running app/executable name to game metadata without
+// ever exposing the Twitch credentials to the client (desktop rich presence).
+const igdbRoutes = new Elysia({ prefix: '/igdb' })
+  .get('/game', async ({ headers, cookie, query, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+    const name = (query as Record<string, string | undefined>).name?.trim();
+    if (!name) {
+      set.status = 400;
+      return { error: 'Missing "name" query parameter' };
+    }
+    const { lookupGame } = await import('@/lib/services/igdbService');
+    const game = await lookupGame(name);
+    return { game };
+  }, {
+    query: t.Object({ name: t.String({ minLength: 1, maxLength: 128 }) }),
+  });
+
 // Main API app
 export const api = new Elysia({ prefix: '/api' })
   .onError(({ code, error, set, request }) => {
@@ -1888,6 +1909,7 @@ export const api = new Elysia({ prefix: '/api' })
   .use(experimentRoutes)
   .use(instanceRoutes)
   .use(developerRoutes)
+  .use(igdbRoutes)
   .use(botApiRoutes);
 
 // Initialize database connection

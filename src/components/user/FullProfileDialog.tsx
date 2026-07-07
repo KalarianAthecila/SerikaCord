@@ -186,6 +186,7 @@ export function FullProfileDialog({
           // Desktop: centered card
           "sm:!top-1/2 sm:!bottom-auto sm:!-translate-y-1/2 sm:!w-[min(1000px,95vw)] sm:!max-w-[1000px] sm:h-[85vh] sm:!max-h-[720px] sm:rounded-2xl sm:border"
         )}
+        style={getProfileBackgroundStyle(fullUser.customization)}
       >
         <DialogTitle className="sr-only">{displayName}&apos;s Profile</DialogTitle>
         {/* Grab handle (mobile sheet affordance) */}
@@ -193,8 +194,8 @@ export function FullProfileDialog({
           <span className="h-1 w-10 rounded-full bg-white/40" />
         </div>
         <div className="flex flex-col md:flex-row h-full min-h-0 overflow-y-auto md:overflow-hidden">
-          {/* Left panel — profile summary */}
-          <div className="w-full md:w-[360px] shrink-0 md:overflow-y-auto" style={getProfileBackgroundStyle(fullUser.customization)}>
+          {/* Left panel — profile summary (transparent; the sheet root carries the theme) */}
+          <div className="w-full md:w-[360px] shrink-0 md:overflow-y-auto">
             {/* Banner */}
             <div className="relative h-[140px]">
               {fullUser.banner ? (
@@ -369,7 +370,7 @@ export function FullProfileDialog({
           </div>
 
           {/* Right panel — tabs */}
-          <div className="flex-1 flex flex-col min-w-0 md:min-h-0 bg-[#111114]">
+          <div className="flex-1 flex flex-col min-w-0 md:min-h-0 bg-transparent md:bg-[#111114]">
             {/* Tab bar */}
             <div className="flex items-center gap-1 px-4 pt-4 pb-0 border-b border-white/[0.06] shrink-0 overflow-x-auto scrollbar-hide">
               {tabs.map((tab) => (

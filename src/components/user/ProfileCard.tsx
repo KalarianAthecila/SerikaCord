@@ -114,6 +114,8 @@ interface ProfileCardProps {
    *  managing a dialog internally. Used by popover wrappers that need to
    *  render the dialog outside the popover to avoid unmount issues. */
   onViewFullProfile?: () => void;
+  /** Hide the "Message" action (e.g. inside the DM view where it's redundant) */
+  hideMessageButton?: boolean;
 }
 
 /**
@@ -129,6 +131,7 @@ export function ProfileCard({
   isFriend = false,
   serverId,
   onViewFullProfile,
+  hideMessageButton = false,
 }: ProfileCardProps) {
   const router = useRouter();
   const { user: currentUser } = useAuth();
@@ -307,13 +310,15 @@ export function ProfileCard({
         <div className="flex justify-end gap-2 pt-3 min-h-[44px]">
           {!isSelf && user.id && (
             <>
-              <button
-                onClick={handleSendMessage}
-                className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all"
-              >
-                <MessageSquare className="w-4 h-4" />
-                Message
-              </button>
+              {!hideMessageButton && (
+                <button
+                  onClick={handleSendMessage}
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all"
+                >
+                  <MessageSquare className="w-4 h-4" />
+                  Message
+                </button>
+              )}
               {!isFriend && (
                 friendRequestSent ? (
                   <button

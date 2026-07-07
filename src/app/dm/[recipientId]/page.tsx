@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield, UserPlus, Clock, StickyNote } from "lucide-react";
+import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield, UserPlus, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 import Link from "next/link";
@@ -381,32 +381,18 @@ export default function DMConversationPage() {
 
       {/* User profile sidebar */}
       {showUserProfile && (
-        <div className="w-[340px] bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col animate-slide-in-right overflow-y-auto">
+        <div className="w-[340px] shrink-0 bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col animate-slide-in-right overflow-y-auto overflow-x-hidden">
           {recipientLoading ? (
             <UserProfileSkeleton />
           ) : recipient ? (
-            <>
-              <div className="p-3">
-                <ProfileCard
-                  user={recipient as ProfileCardUser}
-                  isFriend={recipient.isFriend}
-                />
-              </div>
-
-              <div className="px-3 pb-4">
-                <div className="bg-[var(--bg-card)] rounded-lg p-4">
-                  <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2 flex items-center gap-1.5">
-                    <StickyNote className="w-3.5 h-3.5" />
-                    Note
-                  </h4>
-                  <textarea
-                    placeholder="Click to add a note"
-                    className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] resize-none focus:outline-none transition-colors duration-150"
-                    rows={2}
-                  />
-                </div>
-              </div>
-            </>
+            <div className="p-3">
+              <ProfileCard
+                user={recipient as ProfileCardUser}
+                isFriend={recipient.isFriend}
+                hideMessageButton
+                className="w-full max-w-none"
+              />
+            </div>
           ) : null}
         </div>
       )}

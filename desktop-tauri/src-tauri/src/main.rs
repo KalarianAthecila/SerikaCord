@@ -5,6 +5,8 @@
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod presence;
+
 use tauri::{
     menu::{Menu, MenuItem},
     tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent},
@@ -15,6 +17,72 @@ use tauri_plugin_opener::OpenerExt;
 const APP_URL: &str = "https://waifu.ws";
 const START_PATH: &str = "/channels/me";
 
+// Injected into the web app. Receives detected activity from Rust via
+// `window.__serikaSetActivity`, resolves games through the IGDB proxy, and
+// reports to the rich-presence API using the page's (authenticated) session.
+const PRESENCE_REPORTER_JS: &str = r#"
+(function () {
+  if (window.__serikaPresenceInit) return;
+  window.__serikaPresenceInit = true;
+
+  var current = null;      // last DetectedActivity from Rust
+  var reported = null;     // last payload we POSTed (to avoid spam)
+  var startedAt = null;
+
+  function api(path, opts) {
+    return fetch(path, Object.assign({ credentials: 'include' }, opts || {}));
+  }
+
+  async function resolveAndReport(activity) {
+    if (!activity) {
+      if (reported !== null) {
+        reported = null; startedAt = null;
+        try { await api('/api/users/me/rich-presence', { method: 'DELETE' }); } catch (e) {}
+      }
+      return;
+    }
+
+    var name = activity.name;
+    var largeImageUrl = null;
+
+    if (activity.kind === 'game') {
+      try {
+        var res = await api('/api/igdb/game?name=' + encodeURIComponent(activity.name));
+        if (res.ok) {
+          var data = await res.json();
+          if (data && data.game) {
+            name = data.game.name || name;
+            largeImageUrl = data.game.coverUrl || null;
+          }
+        }
+      } catch (e) {}
+    }
+
+    if (!startedAt || !reported || reported.name !== name) {
+      startedAt = new Date().toISOString();
+    }
+
+    var payload = {
+      type: activity.kind === 'game' ? 'game' : (activity.kind === 'vscode' ? 'vscode' : 'other'),
+      name: name,
+      largeImageUrl: largeImageUrl || undefined,
+      largeImageText: name,
+      startedAt: startedAt,
+    };
+    reported = payload;
+    try { await api('/api/users/me/rich-presence', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }); } catch (e) {}
+  }
+
+  window.__serikaSetActivity = function (activity) {
+    current = activity;
+    resolveAndReport(activity);
+  };
+
+  // Heartbeat so presence doesn't expire (server TTL ~60s) while unchanged.
+  setInterval(function () { if (current) resolveAndReport(current); }, 45000);
+})();
+"#;
+
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
         let _ = window.show();
@@ -24,6 +92,19 @@ fn show_main_window(app: &tauri::AppHandle) {
 }
 
 fn main() {
+    // Work around `EGL_BAD_PARAMETER` / blank-window crashes on Linux caused by
+    // newer webkit2gtk's DMABUF renderer (common on Arch, Nvidia, and some
+    // Wayland setups). Must be set before the webview initialises.
+    #[cfg(target_os = "linux")]
+    {
+        if std::env::var_os("WEBKIT_DISABLE_DMABUF_RENDERER").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_DMABUF_RENDERER", "1");
+        }
+        if std::env::var_os("WEBKIT_DISABLE_COMPOSITING_MODE").is_none() {
+            std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+        }
+    }
+
     tauri::Builder::default()
         .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
             show_main_window(app);
@@ -43,6 +124,7 @@ fn main() {
                 .title("SerikaCord")
                 .inner_size(1280.0, 800.0)
                 .min_inner_size(940.0, 500.0)
+                .initialization_script(PRESENCE_REPORTER_JS)
                 .on_navigation(move |url| {
                     let target = url.as_str();
                     let allowed =
@@ -86,6 +168,9 @@ fn main() {
                     }
                 })
                 .build(app)?;
+
+            // Start background game/app detection → reports via the web app.
+            presence::spawn_detection_loop(app.handle().clone());
 
             Ok(())
         })

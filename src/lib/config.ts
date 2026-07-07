@@ -18,6 +18,10 @@ export const config = {
   LASTFM_API_KEY: process.env.LASTFM_API_KEY || '',
   LASTFM_API_SECRET: process.env.LASTFM_API_SECRET || '',
 
+  // Twitch — used for IGDB game metadata (IGDB auths via Twitch app tokens).
+  TWITCH_CLIENT_ID: process.env.TWITCH_CLIENT_ID || '',
+  TWITCH_CLIENT_SECRET: process.env.TWITCH_CLIENT_SECRET || '',
+
   // Public frontend base URL (used for OAuth redirects back to the UI)
   FRONTEND_URL: process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || '',
   
