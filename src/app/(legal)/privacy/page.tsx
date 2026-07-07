@@ -1,9 +1,20 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/Logo";
+import { buildMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Privacy Policy — SerikaCord",
-};
+export const metadata = buildMetadata({
+  title: "Privacy Policy",
+  description:
+    "Learn how SerikaCord and Serika Company collect, use, store, and protect your personal data. Read our full privacy policy for account, message, and cookie practices.",
+  path: "/privacy",
+  keywords: [
+    "SerikaCord privacy policy",
+    "Serika privacy",
+    "data protection",
+    "cookies",
+    "user data",
+  ],
+});
 
 export default function PrivacyPage() {
   return (

@@ -1,6 +1,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/Logo";
 import { PartnerSection } from "@/components/home/PartnerSection";
+import { buildMetadata } from "@/lib/seo";
 import { 
   MessageSquare,
   Users, 
@@ -10,6 +11,22 @@ import {
   Megaphone,
   Zap,
 } from "lucide-react";
+
+export const metadata = buildMetadata({
+  title: "SerikaCord",
+  description: "A modern Discord-like chat application",
+  path: "/",
+  keywords: [
+    "SerikaCord",
+    "Discord alternative",
+    "community chat",
+    "voice chat",
+    "messaging app",
+    "group chat",
+    "online communities",
+    "free chat platform",
+  ],
+});
 
 export default function HomePage() {
   return (

@@ -1,4 +1,19 @@
 import { DocPage, P, H2, H3, CodeBlock, Callout, Strong, InlineCode, Link2, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Bot Interactions",
+  description:
+    "Handle SerikaCord bot interactions via gateway or HTTP webhooks. Learn about interaction payloads, signatures, response types, and verified delivery.",
+  path: "/developers/docs/bots/interactions",
+  keywords: [
+    "SerikaCord interactions",
+    "bot webhooks",
+    "interaction payload",
+    "Ed25519 signature",
+    "gateway interactions",
+  ],
+});
 
 export default function InteractionsDoc() {
   return (

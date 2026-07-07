@@ -18,7 +18,6 @@ interface MemberProfilePopupProps {
   serverId?: string;
   side?: "left" | "right" | "top" | "bottom";
   align?: "start" | "center" | "end";
-  fullHeight?: boolean;
 }
 
 /**
@@ -31,7 +30,6 @@ export function MemberProfilePopup({
   serverId,
   side = "left",
   align = "start",
-  fullHeight = false,
 }: MemberProfilePopupProps) {
   const { user: currentUser } = useAuth();
   const isMobile = useIsMobile();
@@ -124,11 +122,8 @@ export function MemberProfilePopup({
         side={side}
         align={align}
         sideOffset={8}
-        collisionPadding={fullHeight ? 0 : 12}
-        className={cn(
-          "w-auto p-0 border-none bg-transparent shadow-none",
-          fullHeight && "h-screen max-h-screen overflow-hidden"
-        )}
+        collisionPadding={12}
+        className="w-auto p-0 border-none bg-transparent shadow-none"
       >
         <ProfileCard
           user={fullProfile}
@@ -141,7 +136,6 @@ export function MemberProfilePopup({
             setOpen(false);
             setFullProfileOpen(true);
           }}
-          className={cn(fullHeight && "h-full overflow-y-auto")}
         />
       </PopoverContent>
     </Popover>

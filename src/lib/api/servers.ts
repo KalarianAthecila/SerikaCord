@@ -2737,10 +2737,35 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
       }
 
       const servers = await Server.find(filter)
-        .select('name icon banner description memberCount onlineCount isPartnered discoveryCategories vanityUrlCode')
+        .select('name icon banner description memberCount isPartnered discoveryCategories vanityUrlCode')
         .sort({ memberCount: -1 })
         .limit(50)
         .lean();
+
+      // Calculate online counts dynamically for each server
+      const serverIds = servers.map(s => s._id);
+      const onlineCounts = await ServerMember.aggregate([
+        { $match: { serverId: { $in: serverIds } } },
+        { $lookup: {
+          from: 'users',
+          localField: 'userId',
+          foreignField: '_id',
+          as: 'user'
+        }},
+        { $unwind: '$user' },
+        { $match: {
+          'user.status': { $ne: 'offline' },
+          'user.presenceLastHeartbeatAt': { $gte: new Date(Date.now() - 90000) }
+        }},
+        { $group: {
+          _id: '$serverId',
+          count: { $sum: 1 }
+        }}
+      ]);
+
+      const onlineCountMap = new Map(
+        onlineCounts.map((item: any) => [item._id.toString(), item.count])
+      );
 
       return {
         servers: servers.map((s: any) => ({
@@ -2750,7 +2775,7 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
           banner: s.banner ?? null,
           description: s.description ?? s.discoveryDescription ?? null,
           memberCount: s.memberCount ?? 0,
-          onlineCount: s.onlineCount ?? 0,
+          onlineCount: onlineCountMap.get(s._id.toString()) ?? 0,
           isPartnered: s.isPartnered ?? false,
           category: s.discoveryCategories?.[0] ?? null,
           tags: s.discoveryCategories ?? [],

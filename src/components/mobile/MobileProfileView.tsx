@@ -187,14 +187,14 @@ export function MobileProfileView() {
           <div className="px-6 mt-6 mb-8 grid grid-cols-2 gap-3">
             <button
               onClick={() => router.push("/channels/settings/profiles")}
-              className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-[var(--app-accent)] text-white text-sm font-semibold shadow-lg shadow-[var(--app-accent)]/20 active:scale-[0.98] transition-transform"
+              className="flex items-center justify-center gap-2 py-2.5 sm:py-3.5 rounded-2xl bg-[var(--app-accent)] text-white text-sm font-semibold shadow-lg shadow-[var(--app-accent)]/20 active:scale-[0.98] transition-transform"
             >
               <Palette className="w-4 h-4" />
               Customize Profile
             </button>
             <button
               onClick={() => router.push("/channels/settings/status")}
-              className="flex items-center justify-center gap-2 py-3.5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-sm font-semibold active:scale-[0.98] transition-transform"
+              className="flex items-center justify-center gap-2 py-2.5 sm:py-3.5 rounded-2xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-sm font-semibold active:scale-[0.98] transition-transform"
             >
               <User className="w-4 h-4" />
               Set Status

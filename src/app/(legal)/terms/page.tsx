@@ -1,9 +1,20 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/Logo";
+import { buildMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Terms of Service — SerikaCord",
-};
+export const metadata = buildMetadata({
+  title: "Terms of Service",
+  description:
+    "Read the SerikaCord Terms of Service. Understand the rules for using our messaging platform, accounts, subscriptions, content, and intellectual property.",
+  path: "/terms",
+  keywords: [
+    "SerikaCord terms of service",
+    "Serika terms",
+    "user agreement",
+    "Serika+ subscription",
+    "acceptable use",
+  ],
+});
 
 export default function TermsPage() {
   return (

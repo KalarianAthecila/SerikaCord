@@ -282,16 +282,21 @@ export async function authenticateRequest(
       if (existingByUsername) {
         // The username exists but with a different _id — use the existing user
         dbUser = existingByUsername;
-        // Update their fields from accounts
+        // Update their fields from accounts, preserving displayName unless accounts has one,
+        // and fill in email if the local account has none.
+        const updateFields: Record<string, any> = {
+          isPremium: accountsUser.isPremium || false,
+          isVerified: accountsUser.isVerified || true,
+        };
+        if (accountsUser.displayName) {
+          updateFields.displayName = accountsUser.displayName;
+        }
+        if (accountsUser.email && !dbUser.email) {
+          updateFields.email = accountsUser.email;
+        }
         await User.updateOne(
           { _id: dbUser._id },
-          {
-            $set: {
-              displayName: accountsUser.displayName || accountsUser.username,
-              isPremium: accountsUser.isPremium || false,
-              isVerified: accountsUser.isVerified || true,
-            },
-          }
+          { $set: updateFields }
         );
         dbUser = await User.findById(dbUser._id);
       } else {
@@ -319,15 +324,17 @@ export async function authenticateRequest(
     } else if (dbUser && verification.accountsUser) {
       // User exists locally - only update non-media fields from accounts API
       const accountsUser = verification.accountsUser;
+      const updateFields: Record<string, any> = {
+        isPremium: accountsUser.isPremium || false,
+        isVerified: accountsUser.isVerified || true,
+      };
+      // Only update displayName if accounts actually provides one
+      if (accountsUser.displayName) {
+        updateFields.displayName = accountsUser.displayName;
+      }
       await User.updateOne(
         { _id: userId },
-        {
-          $set: {
-            displayName: accountsUser.displayName || accountsUser.username,
-            isPremium: accountsUser.isPremium || false,
-            isVerified: accountsUser.isVerified || true,
-          },
-        }
+        { $set: updateFields }
       );
       // Refresh dbUser after update
       dbUser = await User.findById(userId);

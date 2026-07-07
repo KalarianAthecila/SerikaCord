@@ -1,4 +1,19 @@
 import { DocPage, P, H2, CodeBlock, Callout, Strong, InlineCode, Link2, Steps, Step } from "../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Getting Started with the SerikaCord API",
+  description:
+    "Create your first SerikaCord bot in minutes. Set up an application, enable a bot user, get your token, and send your first message with discord.js or any Discord-compatible library.",
+  path: "/developers/docs/getting-started",
+  keywords: [
+    "SerikaCord bot tutorial",
+    "create bot",
+    "bot token",
+    "discord.js SerikaCord",
+    "API getting started",
+  ],
+});
 
 export default function GettingStartedDoc() {
   return (

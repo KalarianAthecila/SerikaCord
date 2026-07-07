@@ -381,16 +381,17 @@ export default function DMConversationPage() {
 
       {/* User profile sidebar */}
       {showUserProfile && (
-        <div className="w-[340px] shrink-0 bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col animate-slide-in-right overflow-y-auto overflow-x-hidden">
+        <div className="w-[340px] shrink-0 bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col h-full overflow-hidden">
           {recipientLoading ? (
             <UserProfileSkeleton />
           ) : recipient ? (
-            <div className="p-3">
+            <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
               <ProfileCard
                 user={recipient as ProfileCardUser}
                 isFriend={recipient.isFriend}
                 hideMessageButton
-                className="w-full max-w-none"
+                noRoundedCorners
+                className="w-full max-w-none flex-1 flex flex-col"
               />
             </div>
           ) : null}

@@ -1,9 +1,20 @@
 import Link from "next/link";
 import { Logo } from "@/components/ui/Logo";
+import { buildMetadata } from "@/lib/seo";
 
-export const metadata = {
-  title: "Community Guidelines — SerikaCord",
-};
+export const metadata = buildMetadata({
+  title: "Community Guidelines",
+  description:
+    "Read the SerikaCord Community Guidelines. Learn the rules for respectful, safe, and positive interactions across servers, DMs, and public spaces.",
+  path: "/guidelines",
+  keywords: [
+    "SerikaCord community guidelines",
+    "SerikaCord rules",
+    "community standards",
+    "acceptable use",
+    "safety",
+  ],
+});
 
 export default function GuidelinesPage() {
   return (

@@ -1,5 +1,21 @@
 import { DocPage, P, H2, CodeBlock, Callout, Strong, InlineCode, Link2, CardGrid, Card } from "../DocPage";
 import { Bot, Zap, Cable, KeyRound, Webhook, TerminalSquare, ShieldCheck, Users } from "lucide-react";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Developer Documentation",
+  description:
+    "Get started with the SerikaCord API. Build Discord-compatible bots, apps, and integrations. Learn authentication, gateway events, webhooks, and slash commands.",
+  path: "/developers/docs/intro",
+  keywords: [
+    "SerikaCord API docs",
+    "bot documentation",
+    "Discord-compatible API",
+    "gateway",
+    "webhooks",
+    "OAuth2",
+  ],
+});
 
 export default function IntroDoc() {
   return (

@@ -21,6 +21,50 @@ import {
   accountsResetPassword,
 } from '../services/accountsClient';
 
+interface SavedAccountEntry {
+  email: string;
+  username: string;
+  displayName?: string;
+  avatar?: string;
+  token?: string;
+  refreshToken?: string;
+  savedAt: number;
+}
+
+function parseSavedAccounts(cookieValue: unknown): SavedAccountEntry[] {
+  if (Array.isArray(cookieValue)) return cookieValue as SavedAccountEntry[];
+  if (!cookieValue || typeof cookieValue !== 'string') return [];
+  try {
+    return JSON.parse(decodeURIComponent(cookieValue));
+  } catch {
+    return [];
+  }
+}
+
+function encodeSavedAccountsCookie(accounts: SavedAccountEntry[]): string {
+  const expires = new Date();
+  expires.setFullYear(expires.getFullYear() + 1);
+  return `saved_accounts=${encodeURIComponent(JSON.stringify(accounts))}; Path=/; SameSite=Lax; Expires=${expires.toUTCString()}`;
+}
+
+function getAccountEmail(user: { email?: string; username: string }): string {
+  return user.email || `${user.username}@serika.dev`;
+}
+
+function upsertSavedAccount(
+  accounts: SavedAccountEntry[],
+  entry: SavedAccountEntry
+): SavedAccountEntry[] {
+  const filtered = accounts.filter((a) => a.email.toLowerCase() !== entry.email.toLowerCase());
+  filtered.push(entry);
+  return filtered;
+}
+
+async function getLocalUserFromToken(token: string) {
+  const result = await authenticateRequest(`Bearer ${token}`, { auth_token: token });
+  return result.user;
+}
+
 // Raw 302 redirect. Elysia's `redirect()` helper mutates an immutable Response
 // header map under the Next.js adapter ("TypeError: immutable"), so we return a
 // plain Response with an explicit Location header (and optional Set-Cookie).
@@ -223,7 +267,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
   })
 
   // Login - proxies to accounts.serika.dev
-  .post('/login', async ({ body, set, headers }) => {
+  .post('/login', async ({ body, set, headers, cookie }) => {
     const { email, password } = body;
 
     try {
@@ -240,12 +284,49 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         return { error: data.error || 'Authentication failed' };
       }
 
+      // Start from current saved_accounts cookie and preserve currently logged-in account
+      let savedAccounts = parseSavedAccounts(cookie.saved_accounts?.value as unknown);
+      const currentToken = cookie.auth_token?.value;
+      if (typeof currentToken === 'string' && currentToken) {
+        const currentUser = await getLocalUserFromToken(currentToken);
+        if (currentUser) {
+          const email = getAccountEmail(currentUser);
+          savedAccounts = upsertSavedAccount(savedAccounts, {
+            email,
+            username: currentUser.username,
+            displayName: currentUser.displayName,
+            avatar: currentUser.avatar,
+            token: currentToken,
+            refreshToken: typeof cookie.refresh_token?.value === 'string' ? cookie.refresh_token.value : undefined,
+            savedAt: Date.now(),
+          });
+        }
+      }
+
+      // Add newly logged-in account only if it maps to a local SerikaCord user
+      if (data.token) {
+        const newUser = await getLocalUserFromToken(data.token);
+        if (newUser) {
+          const email = getAccountEmail(newUser);
+          savedAccounts = upsertSavedAccount(savedAccounts, {
+            email,
+            username: newUser.username || email.split('@')[0],
+            displayName: newUser.displayName,
+            avatar: newUser.avatar,
+            token: data.token,
+            refreshToken: data.refreshToken,
+            savedAt: Date.now(),
+          });
+        }
+      }
+
       // Set cookies from accounts response (accounts returns token/refreshToken directly)
       if (data.token) {
-        set.headers['Set-Cookie'] = [
+        (set.headers as any)['Set-Cookie'] = [
           `auth_token=${data.token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
           `refresh_token=${data.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${90 * 24 * 60 * 60}`,
-        ].join(', ');
+          encodeSavedAccountsCookie(savedAccounts),
+        ];
       }
 
       return {
@@ -265,6 +346,88 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     body: t.Object({
       email: t.String({ format: 'email' }),
       password: t.String(),
+    }),
+  })
+
+  // Save current account to saved_accounts cookie
+  .post('/save-account', async ({ headers, cookie, set }) => {
+    const authHeader = headers.authorization;
+    const cookieToken = cookie.auth_token?.value;
+    const token = authHeader?.startsWith('Bearer ')
+      ? authHeader.slice(7)
+      : (typeof cookieToken === 'string' ? cookieToken : undefined);
+
+    if (!token) {
+      set.status = 401;
+      return { error: 'Not authenticated' };
+    }
+
+    const user = await getLocalUserFromToken(token);
+    if (!user) {
+      set.status = 404;
+      return { error: 'SerikaCord user not found' };
+    }
+
+    const email = getAccountEmail(user);
+
+    // Parse existing saved_accounts cookie and upsert current account
+    const savedAccounts = upsertSavedAccount(parseSavedAccounts(cookie.saved_accounts?.value as unknown), {
+      email,
+      username: user.username,
+      displayName: user.displayName,
+      avatar: user.avatar,
+      token,
+      refreshToken: typeof cookie.refresh_token?.value === 'string' ? cookie.refresh_token.value : undefined,
+      savedAt: Date.now(),
+    });
+
+    set.headers['Set-Cookie'] = encodeSavedAccountsCookie(savedAccounts);
+
+    return { success: true };
+  })
+
+  // Switch account - use saved token from saved_accounts cookie
+  .post('/switch', async ({ body, cookie, set }) => {
+    const { email } = body;
+
+    // Preserve currently logged-in account first
+    let savedAccounts = parseSavedAccounts(cookie.saved_accounts?.value as unknown);
+    const currentToken = cookie.auth_token?.value;
+    if (typeof currentToken === 'string' && currentToken) {
+      const currentUser = await getLocalUserFromToken(currentToken);
+      if (currentUser) {
+        const email = getAccountEmail(currentUser);
+        savedAccounts = upsertSavedAccount(savedAccounts, {
+          email,
+          username: currentUser.username,
+          displayName: currentUser.displayName,
+          avatar: currentUser.avatar,
+          token: currentToken,
+          refreshToken: typeof cookie.refresh_token?.value === 'string' ? cookie.refresh_token.value : undefined,
+          savedAt: Date.now(),
+        });
+      }
+    }
+
+    const targetAccount = savedAccounts.find((a) => a.email.toLowerCase() === email.toLowerCase());
+    if (!targetAccount || !targetAccount.token) {
+      set.status = 404;
+      return { error: 'Account not found or no saved token' };
+    }
+
+    // Set the new auth_token cookie and update saved_accounts
+    (set.headers as any)['Set-Cookie'] = [
+      `auth_token=${targetAccount.token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${30 * 24 * 60 * 60}`,
+      targetAccount.refreshToken
+        ? `refresh_token=${targetAccount.refreshToken}; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=${90 * 24 * 60 * 60}`
+        : 'refresh_token=; HttpOnly; Secure; SameSite=Lax; Path=/api/auth/refresh; Max-Age=0',
+      encodeSavedAccountsCookie(savedAccounts),
+    ];
+
+    return { success: true };
+  }, {
+    body: t.Object({
+      email: t.String({ format: 'email' }),
     }),
   })
 

@@ -1,4 +1,13 @@
 import Link from "next/link";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Page Not Found",
+  description:
+    "The page you were looking for could not be found. Return to SerikaCord home or explore communities and conversations.",
+  path: "/404",
+  keywords: ["404", "not found", "SerikaCord"],
+});
 
 export default function NotFound() {
   return (

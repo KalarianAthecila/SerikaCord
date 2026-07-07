@@ -1,16 +1,15 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { X, Plus, Check, ChevronLeft, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import {
-  type SavedAccount,
-  loadSavedAccounts,
-  saveAccounts,
-  upsertSavedAccount,
-} from "@/lib/services/savedAccounts";
+  type SavedAccountToken,
+  parseSavedAccountsCookie,
+  removeSavedAccountToken,
+} from "@/lib/services/savedAccountsCookie";
 
 export function SwitchAccountsDialog({
   open,
@@ -19,10 +18,10 @@ export function SwitchAccountsDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const { user, login, logout, refresh } = useAuth();
-  const [accounts, setAccounts] = useState<SavedAccount[]>([]);
+  const { user, login, logout } = useAuth();
+  const [accounts, setAccounts] = useState<SavedAccountToken[]>([]);
   const [mode, setMode] = useState<"list" | "login">("list");
-  const [selectedAccount, setSelectedAccount] = useState<SavedAccount | null>(null);
+  const [selectedAccount, setSelectedAccount] = useState<SavedAccountToken | null>(null);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
@@ -30,7 +29,8 @@ export function SwitchAccountsDialog({
 
   useEffect(() => {
     if (open) {
-      setAccounts(loadSavedAccounts());
+      // Only show accounts that have a saved token (switchable) and dedupe by email
+      setAccounts(parseSavedAccountsCookie().filter((a) => a.token));
       setMode("list");
       setSelectedAccount(null);
       setError("");
@@ -38,17 +38,41 @@ export function SwitchAccountsDialog({
     }
   }, [open]);
 
-  const saveCurrentAccount = useCallback(() => {
-    upsertSavedAccount(user);
-    setAccounts(loadSavedAccounts());
-  }, [user]);
-
-  const handleSelectAccount = (account: SavedAccount) => {
-    setSelectedAccount(account);
-    setEmail(account.email);
-    setPassword("");
+  const handleSelectAccount = async (account: SavedAccountToken) => {
+    setIsLoading(true);
     setError("");
-    setMode("login");
+    try {
+      // Server handles saving current account before switching
+
+      // Use server endpoint to switch accounts
+      if (account.token) {
+        const response = await fetch("/api/auth/switch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: account.email }),
+        });
+
+        if (!response.ok) {
+          const data = await response.json();
+          throw new Error(data.error || "Failed to switch account");
+        }
+
+        onOpenChange(false);
+        // Full reload to refresh all context (servers, DMs, etc.)
+        window.location.reload();
+      } else {
+        // Fallback to password login if no token
+        setSelectedAccount(account);
+        setEmail(account.email);
+        setPassword("");
+        setError("");
+        setMode("login");
+      }
+    } catch (err: any) {
+      setError(err.message || "Failed to switch account");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleLogin = async () => {
@@ -61,15 +85,12 @@ export function SwitchAccountsDialog({
     setError("");
 
     try {
-      // Save current account before switching
-      saveCurrentAccount();
-
+      // Server handles saving current account before login
       await login(email.trim(), password.trim());
 
-      // Update saved account info after successful login
-      await refresh();
-
       onOpenChange(false);
+      // Full reload to refresh all context (servers, DMs, etc.)
+      window.location.reload();
     } catch (err: any) {
       setError(err.message || "Failed to login");
     } finally {
@@ -79,15 +100,13 @@ export function SwitchAccountsDialog({
 
   const handleRemoveAccount = (accountEmail: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    const updated = accounts.filter((a) => a.email !== accountEmail);
-    saveAccounts(updated);
-    setAccounts(updated);
+    removeSavedAccountToken(accountEmail);
+    setAccounts(parseSavedAccountsCookie().filter((a) => a.token));
   };
 
   const handleLogoutAndSwitch = async () => {
     setIsLoading(true);
     try {
-      saveCurrentAccount();
       await logout();
       onOpenChange(false);
       window.location.href = "/login";
@@ -161,33 +180,45 @@ export function SwitchAccountsDialog({
                 </div>
               )}
 
+              {error && (
+                <div className="text-sm text-red-400 bg-red-500/10 rounded p-2">{error}</div>
+              )}
+
               {/* Saved accounts */}
               {accounts
-                .filter((a) => a.email !== user?.email)
+                .filter((a) => {
+                  const currentEmail = user?.email || `${user?.username}@serika.dev`;
+                  return a.email.toLowerCase() !== currentEmail.toLowerCase() && a.username.toLowerCase() !== user?.username?.toLowerCase();
+                })
                 .map((account) => (
-                  <button
+                  <div
                     key={account.email}
-                    onClick={() => handleSelectAccount(account)}
-                    className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-[#1a1a1a] transition-colors text-left group"
+                    className="group relative"
                   >
-                    <Avatar className="w-10 h-10">
-                      <AvatarImage src={account.avatar} />
-                      <AvatarFallback className="bg-[#5865F2] text-white text-sm">
-                        {account.displayName?.charAt(0).toUpperCase() || account.username.charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-sm font-semibold text-white truncate">{account.displayName || account.username}</div>
-                      <div className="text-xs text-[#888] truncate">{account.email}</div>
-                    </div>
+                    <button
+                      onClick={() => void handleSelectAccount(account)}
+                      disabled={isLoading}
+                      className="w-full flex items-center gap-3 p-3 rounded-lg hover:bg-[#1a1a1a] transition-colors text-left disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      <Avatar className="w-10 h-10">
+                        <AvatarImage src={account.avatar} />
+                        <AvatarFallback className="bg-[#5865F2] text-white text-sm">
+                          {account.displayName?.charAt(0).toUpperCase() || account.username.charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-sm font-semibold text-white truncate">{account.displayName || account.username}</div>
+                        <div className="text-xs text-[#888] truncate">@{account.username}</div>
+                      </div>
+                    </button>
                     <button
                       onClick={(e) => handleRemoveAccount(account.email, e)}
-                      className="p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[#2a2a2a] transition-all"
+                      className="absolute right-3 top-1/2 -translate-y-1/2 p-1.5 rounded opacity-0 group-hover:opacity-100 hover:bg-[#2a2a2a] transition-all"
                       title="Remove account"
                     >
                       <X className="w-4 h-4 text-[#888] hover:text-red-400" />
                     </button>
-                  </button>
+                  </div>
                 ))}
 
               {/* Add new account */}

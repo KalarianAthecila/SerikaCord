@@ -116,6 +116,8 @@ interface ProfileCardProps {
   onViewFullProfile?: () => void;
   /** Hide the "Message" action (e.g. inside the DM view where it's redundant) */
   hideMessageButton?: boolean;
+  /** Remove rounded corners (e.g. for DM sidebar full-height view) */
+  noRoundedCorners?: boolean;
 }
 
 /**
@@ -132,6 +134,7 @@ export function ProfileCard({
   serverId,
   onViewFullProfile,
   hideMessageButton = false,
+  noRoundedCorners = false,
 }: ProfileCardProps) {
   const router = useRouter();
   const { user: currentUser } = useAuth();
@@ -263,7 +266,8 @@ export function ProfileCard({
   return (
     <div
       className={cn(
-        "w-[min(340px,calc(100vw-1.5rem))] rounded-xl overflow-hidden border border-white/[0.06] shadow-2xl transition-all duration-300",
+        "w-[min(340px,calc(100vw-1.5rem))] overflow-hidden border border-white/[0.06] shadow-2xl transition-all duration-300",
+        !noRoundedCorners && "rounded-xl",
         !hasBgOverride && !isHolographic && "bg-[#0c0c10]",
         isHolographic && "holographic-animation",
         className

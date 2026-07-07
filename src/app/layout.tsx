@@ -3,6 +3,7 @@ import { Inter } from "next/font/google";
 import { ThemeProvider } from "@/contexts/ThemeContext";
 import { NetworkStatus } from "@/components/ui/network-status";
 import { ToasterWrapper } from "@/components/ui/ToasterWrapper";
+import { buildRootMetadata } from "@/lib/seo";
 import "./globals.css";
 
 const inter = Inter({
@@ -10,21 +11,8 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "SerikaCord",
-  description: "A modern Discord-like chat application",
-  manifest: "/manifest.json",
-  icons: {
-    icon: "/favicon.ico",
-    apple: "/icons/icon-192x192.png",
-  },
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "SerikaCord",
-  },
-  applicationName: "SerikaCord",
-};
+export const metadata: Metadata = buildRootMetadata();
+
 
 export const viewport: Viewport = {
   width: "device-width",

@@ -1,5 +1,20 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, CardGrid, Card } from "../../DocPage";
 import { Zap, TerminalSquare, Cable, KeyRound } from "lucide-react";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Bots Overview",
+  description:
+    "Learn how SerikaCord bots work: applications, bot users, tokens, intents, public keys, and the gateway. A Discord-compatible bot guide for SerikaCord developers.",
+  path: "/developers/docs/bots/overview",
+  keywords: [
+    "SerikaCord bots",
+    "bot user",
+    "bot token",
+    "gateway intents",
+    "Discord bot compatibility",
+  ],
+});
 
 export default function BotsOverviewDoc() {
   return (

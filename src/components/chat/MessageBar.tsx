@@ -216,7 +216,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
         if (e.ctrlKey || e.metaKey || e.altKey) return;
 
         // 3. Only capture single character keys (printable characters)
-        if (e.key.length !== 1) return;
+        if (!e.key || e.key.length !== 1) return;
 
         // 4. Ignore if user is already focused on an editable element
         const active = document.activeElement;
@@ -538,7 +538,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                   <p className="text-xs text-[var(--app-muted)] mb-0.5">
                     Replying to {replyTo.author?.displayName || replyTo.author?.username || "message"}
                   </p>
-                  <p className="text-sm text-[var(--text-primary)] truncate">{replyTo.content || "(attachment)"}</p>
+                  <p className="text-sm text-[var(--text-primary)] truncate" dangerouslySetInnerHTML={{ __html: replyTo.content || "(attachment)" }} />
                 </div>
               </div>
               {onCancelReply && (
