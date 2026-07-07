@@ -713,6 +713,7 @@ export default function ChannelPage() {
           serverId: (ch.serverId || serverId)?.toString?.() || serverId,
           position: ch.position ?? 0,
           parentId: ch.parentId?.toString?.() || ch.parentId || null,
+          parentName: ch.parentName,
           isNsfw: ch.nsfw || ch.isNsfw,
           topic: ch.topic,
           rateLimitPerUser: ch.rateLimitPerUser || 0,
@@ -875,6 +876,23 @@ export default function ChannelPage() {
         />
         {renderMembers(isMobile)}
       </>
+    );
+  }
+
+  // Forum thread experience — show the parent forum post list + thread chat
+  const isForumThread =
+    currentChannel &&
+    (currentChannel.type === "public_thread" || currentChannel.type === "private_thread") &&
+    currentChannel.parentId;
+
+  if (isForumThread) {
+    return (
+      <ForumChannelView
+        serverId={serverId}
+        channelId={currentChannel.parentId!}
+        channelName={currentChannel.parentName || ""}
+        selectedThreadId={currentChannel.id}
+      />
     );
   }
 

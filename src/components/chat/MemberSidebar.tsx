@@ -239,7 +239,7 @@ function MemberItem({ member, serverId }: MemberItemProps) {
             <div className="flex items-center gap-1 text-xs text-[var(--text-secondary)] min-w-0">
               {gameActivity.type === "vscode" ? (
                 <Code2 className="w-2.5 h-2.5 shrink-0" />
-              ) : gameActivity.type === "windsurf" || gameActivity.type === "cursor" || gameActivity.type === "zed" ? (
+              ) : gameActivity.type === "windsurf" || gameActivity.type === "devin" || gameActivity.type === "cursor" || gameActivity.type === "zed" ? (
                 <Code2 className="w-2.5 h-2.5 shrink-0" />
               ) : gameActivity.type === "claude" ? (
                 <Bot className="w-2.5 h-2.5 shrink-0" />

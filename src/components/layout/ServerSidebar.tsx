@@ -6,10 +6,18 @@ import { useServer } from "@/contexts/ServerContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
-import { Plus, Compass, Download, MessageSquare } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Plus, Compass, Download, MessageSquare, Check, BellOff, Bell, Copy, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
 import { useMentions } from "@/hooks/useMentions";
+import { useServerMutes } from "@/hooks/useServerMutes";
 
 interface ServerSidebarProps {
   onCreateServer: () => void;
@@ -35,9 +43,10 @@ function isNativeApp(): boolean {
 
 export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
   const router = useRouter();
-  const { servers, currentServer, setCurrentServer } = useServer();
+  const { servers, currentServer, setCurrentServer, leaveServer } = useServer();
   const [isNative, setIsNative] = useState(isNativeApp);
-  const { serverMentionCounts } = useMentions();
+  const { serverMentionCounts, markServerRead } = useMentions();
+  const { isMuted, toggleMute } = useServerMutes();
 
   useEffect(() => {
     setIsNative(isNativeApp());
@@ -57,9 +66,28 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
     return out;
   })();
 
+  const [menuServerId, setMenuServerId] = useState<string | null>(null);
+
   const handleServerClick = (server: typeof servers[0]) => {
     setCurrentServer(server);
     router.push(`/channels/${server.id}`);
+  };
+
+  const handleCopyServerId = (serverId: string) => {
+    void navigator.clipboard?.writeText(serverId);
+  };
+
+  const handleLeaveServer = async (server: typeof servers[0]) => {
+    if (!window.confirm(`Leave "${server.name}"? You'll need a new invite to rejoin.`)) return;
+    try {
+      await leaveServer(server.id);
+      if (currentServer?.id === server.id) {
+        setCurrentServer(null);
+        router.push("/channels/me");
+      }
+    } catch {
+      /* leaveServer surfaces its own errors */
+    }
   };
 
   const handleHomeClick = () => {
@@ -102,10 +130,19 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
           <div className="flex flex-col items-center gap-2">
             {uniqueServers.map((server) => {
               const mentionCount = serverMentionCounts.get(server.id) || 0;
-              const hasMention = mentionCount > 0;
+              const muted = isMuted(server.id);
+              const hasMention = mentionCount > 0 && !muted;
               const isActive = currentServer?.id === server.id;
               return (
-              <Tooltip key={server.id}>
+              <div
+                key={server.id}
+                className="relative"
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  setMenuServerId(server.id);
+                }}
+              >
+              <Tooltip>
                 <TooltipTrigger asChild>
                   <motion.button
                     onClick={() => handleServerClick(server)}
@@ -113,7 +150,8 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                     transition={{ type: "spring", stiffness: 500, damping: 30 }}
                     className={cn(
                       "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[var(--bg-sidebar-elevated)] transition-[border-radius] duration-200 hover:rounded-[16px] group overflow-hidden",
-                      isActive && "rounded-[16px]"
+                      isActive && "rounded-[16px]",
+                      muted && "opacity-60"
                     )}
                   >
                     {server.icon ? (
@@ -147,6 +185,44 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                   {server.name}
                 </TooltipContent>
               </Tooltip>
+
+              {/* Right-click options. The trigger is an invisible anchor
+                  overlaying the icon so left-click still navigates and the
+                  menu positions correctly beside the icon. */}
+              <DropdownMenu
+                open={menuServerId === server.id}
+                onOpenChange={(o) => setMenuServerId(o ? server.id : null)}
+              >
+                <DropdownMenuTrigger asChild>
+                  <span className="absolute inset-0 pointer-events-none" aria-hidden />
+                </DropdownMenuTrigger>
+                <DropdownMenuContent side="right" align="start" className="w-52">
+                  <DropdownMenuItem
+                    disabled={mentionCount === 0}
+                    onClick={() => markServerRead(server.id)}
+                  >
+                    <Check className="w-4 h-4" />
+                    Mark As Read
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => toggleMute(server.id)}>
+                    {muted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+                    {muted ? "Unmute Server" : "Mute Server"}
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onClick={() => handleCopyServerId(server.id)}>
+                    <Copy className="w-4 h-4" />
+                    Copy Server ID
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onClick={() => void handleLeaveServer(server)}
+                  >
+                    <LogOut className="w-4 h-4" />
+                    Leave Server
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+              </div>
               );
             })}
           </div>

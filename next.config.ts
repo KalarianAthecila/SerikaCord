@@ -7,11 +7,21 @@ const nextConfig: NextConfig = {
   // custom server (server.ts) which also hosts the bot gateway on the same port.
   output: isMobileBuild ? 'export' : undefined,
 
+  // NOTE: keep Next's built-in gzip OFF. It buffers streaming responses, which
+  // breaks our realtime transport — chat/voice use Server-Sent Events, and
+  // compressing an SSE stream batches/delays events (laggy chat, and the WebRTC
+  // offer/answer/ICE handshake never completes → no voice/screen-share).
+  // Do compression at the reverse proxy (nginx/Cloudflare) instead, where SSE
+  // (text/event-stream) is excluded automatically.
+  compress: false,
+  poweredByHeader: false,
+  productionBrowserSourceMaps: false,
+
   // Skip type checking during build for faster builds
   typescript: {
     ignoreBuildErrors: false,
   },
-  
+
   // Experimental optimizations
   experimental: {
     optimizePackageImports: ['lucide-react', '@radix-ui/react-icons', 'date-fns', 'framer-motion', 'emoji-picker-react'],

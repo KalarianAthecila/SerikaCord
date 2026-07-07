@@ -46,6 +46,22 @@ async function main() {
   const hub = new GatewayHub();
   await subscribeHubToRedis(hub);
 
+  // ─── Realtime SSE fan-out bridge ─────────────────────────
+  // Re-broadcast channel/DM events published to Redis onto THIS instance's SSE
+  // connections, so users on every app instance receive messages simultaneously.
+  try {
+    const [{ startChannelSSEBridge }, { startDmSSEBridge }, { startVoiceBridge }] = await Promise.all([
+      import('@/lib/api/channels'),
+      import('@/lib/api/dms'),
+      import('@/lib/api/voice'),
+    ]);
+    await startChannelSSEBridge();
+    await startDmSSEBridge();
+    await startVoiceBridge();
+  } catch (err) {
+    console.error('SSE bridge init failed (realtime cross-instance disabled):', err);
+  }
+
   const wss = new WebSocketServer({ noServer: true });
 
   wss.on('connection', (ws: WebSocket) => {

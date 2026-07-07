@@ -7,6 +7,7 @@ import { decodeHtmlEntities } from '@/lib/chat/messages';
 import { cache, getPublisher } from '@/lib/db';
 import { config } from '@/lib/config';
 import { Types } from 'mongoose';
+import { randomUUID } from 'crypto';
 
 // Helper to safely compare IDs (handles both ObjectId and string)
 function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
@@ -176,8 +177,14 @@ async function extractMentionsFromContent(
 // Store active SSE connections for server channels
 const activeConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
-// Export for use in message publishing
-export function publishToChannel(channelId: string, data: object) {
+// Unique id for THIS process, so the Redis→SSE bridge can skip re-delivering
+// events this instance already delivered locally (prevents duplicates).
+const INSTANCE_ID = randomUUID();
+// Single Redis channel carrying all channel SSE events (payload names the channel).
+const SSE_BUS = 'sse:channel';
+
+// Deliver an event to SSE connections held by THIS process only.
+function deliverToLocalChannel(channelId: string, data: object) {
   const connections = activeConnections.get(channelId);
   if (connections) {
     const encodedData = `data: ${JSON.stringify(data)}\n\n`;
@@ -191,6 +198,45 @@ export function publishToChannel(channelId: string, data: object) {
   }
 }
 
+// Publish a channel event: deliver locally AND fan out over Redis so every
+// other app instance delivers it to its own SSE connections at the same time.
+// This is what makes chat realtime for all users regardless of which instance
+// they're connected to. Redis (not Postgres) is the right tool here — the
+// bottleneck was never the datastore, it was the missing pub/sub fan-out.
+export function publishToChannel(channelId: string, data: object) {
+  deliverToLocalChannel(channelId, data);
+  const pub = getPublisher();
+  if (pub) {
+    pub
+      .publish(SSE_BUS, JSON.stringify({ originId: INSTANCE_ID, channelId, data }))
+      .catch(() => { /* best-effort cross-instance fan-out */ });
+  }
+}
+
+// Subscribe this process to the channel SSE bus. Call once at startup with a
+// DEDICATED ioredis connection (a subscriber can't issue normal commands).
+export async function startChannelSSEBridge(): Promise<() => void> {
+  const Redis = (await import('ioredis')).default;
+  const sub = new Redis(config.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
+  sub.on('error', (err: Error) => console.error('SSE bridge Redis error:', err.message));
+  await sub.connect().catch((err: Error) => console.error('SSE bridge connect failed:', err.message));
+  await sub.subscribe(SSE_BUS);
+  sub.on('message', (_ch: string, payload: string) => {
+    try {
+      const { originId, channelId, data } = JSON.parse(payload) as {
+        originId: string; channelId: string; data: object;
+      };
+      // Skip events this instance already delivered locally.
+      if (originId === INSTANCE_ID) return;
+      deliverToLocalChannel(channelId, data);
+    } catch (err) {
+      console.error('SSE bridge: bad payload', err);
+    }
+  });
+  console.log(`✅ Channel SSE bridge subscribed to ${SSE_BUS}`);
+  return () => { void sub.quit().catch(() => {}); };
+}
+
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
   const authHeader = headers.authorization ?? null;
@@ -202,14 +248,22 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
   return authenticateRequest(authHeader, cookies);
 }
 
-// Helper to check channel access
-async function checkChannelAccess(userId: string, channelId: string): Promise<{
+// Helper to check channel access.
+//
+// `opts.lean` returns a plain (non-hydrated) channel object — much cheaper and
+// correct for the many read-only callers. Callers that mutate + `.save()` the
+// channel (e.g. PATCH /:channelId) must omit it to get a live document.
+//
+// The resolved `membership` doc is returned so callers don't re-query it.
+async function checkChannelAccess(userId: string, channelId: string, opts: { lean?: boolean } = {}): Promise<{
   hasAccess: boolean;
   channel?: ReturnType<typeof Channel.prototype.toObject>;
+  membership?: { roles?: Types.ObjectId[]; nickname?: string | null } | null;
   error?: string;
 }> {
-  const channel = await Channel.findById(channelId);
-  
+  const channelQuery = Channel.findById(channelId);
+  const channel = opts.lean ? await channelQuery.lean() : await channelQuery;
+
   if (!channel) {
     return { hasAccess: false, error: 'Channel not found' };
   }
@@ -227,7 +281,7 @@ async function checkChannelAccess(userId: string, channelId: string): Promise<{
     const membership = await ServerMember.findOne({
       serverId: channel.serverId,
       userId,
-    });
+    }).select('roles nickname').lean();
 
     if (!membership) {
       return { hasAccess: false, error: 'You are not a member of this server' };
@@ -256,7 +310,7 @@ async function checkChannelAccess(userId: string, channelId: string): Promise<{
       }
     }
 
-    return { hasAccess: true, channel };
+    return { hasAccess: true, channel, membership };
   }
 
   return { hasAccess: false, error: 'Invalid channel' };
@@ -303,6 +357,17 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     if (!hasAccess) {
       set.status = 403;
       return { error };
+    }
+
+    // Expose the parent forum name for thread channels so the client can
+    // render the forum post list alongside the open thread.
+    if (channel && (channel.type === 'public_thread' || channel.type === 'private_thread') && channel.parentId) {
+      const parent = await Channel.findById(channel.parentId).select('name').lean();
+      const channelObj = channel.toObject();
+      const enriched = channelObj as typeof channelObj & { parentName?: string; parentId?: string };
+      enriched.parentName = parent?.name;
+      enriched.parentId = channel.parentId.toString?.() || channel.parentId;
+      return { channel: enriched };
     }
 
     return { channel };
@@ -569,11 +634,41 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const owners = await User.find({ _id: { $in: ownerIds } }).select('username displayName avatar').lean();
     const ownerMap = new Map(owners.map((o) => [o._id.toString(), o]));
 
+    // Load the first message of each thread for preview / reaction metadata.
+    const threadIds = threads.map((t) => t._id);
+    const firstMessages = threadIds.length
+      ? await Message.aggregate([
+          { $match: { channelId: { $in: threadIds }, isDeleted: false } },
+          { $sort: { createdAt: 1 } },
+          {
+            $group: {
+              _id: '$channelId',
+              message: { $first: '$$ROOT' },
+            },
+          },
+        ])
+      : [];
+    const firstMessageMap = new Map(
+      await Promise.all(
+        firstMessages.map(async (row) => {
+          const rawContent = row.message.content || '';
+          const content = rawContent ? await decryptFromStorage(rawContent) : '';
+          const reactions = row.message.reactions || [];
+          const reactionCount = reactions.reduce((sum: number, r: { count?: number }) => sum + (r.count || 0), 0);
+          return [
+            row._id.toString(),
+            { content, reactionCount, createdAt: row.message.createdAt },
+          ] as const;
+        })
+      )
+    );
+
     return {
       forumMode: channel.forumMode,
       availableTags: channel.availableTags || [],
       threads: threads.map((t) => {
         const owner = t.ownerId ? ownerMap.get(t.ownerId.toString()) : null;
+        const first = firstMessageMap.get(t._id.toString());
         return {
           id: t._id.toString(),
           name: t.name,
@@ -584,6 +679,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           messageCount: t.messageCount || 0,
           lastMessageId: t.lastMessageId?.toString() || null,
           createdAt: t.createdAt,
+          firstMessagePreview: first?.content || '',
+          reactionCount: first?.reactionCount || 0,
           owner: owner ? {
             id: owner._id.toString(),
             username: owner.username,
@@ -709,7 +806,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     const { hasAccess, channel, error } = await checkChannelAccess(
       user._id.toString(),
-      params.channelId
+      params.channelId,
+      { lean: true }
     );
 
     if (!hasAccess) {
@@ -957,9 +1055,10 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const { hasAccess, channel, error } = await checkChannelAccess(
+    const { hasAccess, channel, membership, error } = await checkChannelAccess(
       user._id.toString(),
-      params.channelId
+      params.channelId,
+      { lean: true }
     );
 
     if (!hasAccess || !channel) {
@@ -967,16 +1066,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: error || 'Access denied' };
     }
 
-    // Fetch server ownerId for isOwner flag and sender nickname
+    // ownerId for the isOwner flag; the sender's nickname is reused from the
+    // membership already resolved by checkChannelAccess (one fewer query).
     let serverOwnerId: Types.ObjectId | null = null;
-    let senderNickname: string | null = null;
+    const senderNickname: string | null = membership?.nickname || null;
     if (channel.serverId) {
-      const [server, member] = await Promise.all([
-        Server.findById(channel.serverId).select('ownerId').lean(),
-        ServerMember.findOne({ serverId: channel.serverId, userId: user._id }).select('nickname').lean(),
-      ]);
+      const server = await Server.findById(channel.serverId).select('ownerId').lean();
       serverOwnerId = server?.ownerId ?? null;
-      senderNickname = member?.nickname || null;
     }
 
     // Rate limit messages
@@ -1056,7 +1152,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     // Get user's servers for emoji validation
-    const userServerMemberships = await ServerMember.find({ userId: user._id }).select('serverId');
+    const userServerMemberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
     const userServerIds = userServerMemberships.map(m => m.serverId);
 
     // Parse and validate custom emojis
@@ -1093,9 +1189,9 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     await message.save();
 
-    // Update channel's last message
-    channel.lastMessageId = message._id;
-    await channel.save();
+    // Update channel's last message with a targeted write instead of
+    // re-saving the whole (hydrated) channel document.
+    await Channel.updateOne({ _id: channel._id }, { $set: { lastMessageId: message._id } });
 
     // Populate author for response
     await message.populate('authorId', 'username displayName avatar status badges isSystem customization');
@@ -1176,33 +1272,28 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       sticker: message.sticker || undefined,
     };
 
-    // Publish message event
-    const publisher = getPublisher();
-    if (publisher) {
-      await publisher.publish('message:create', JSON.stringify({
-        channelId: params.channelId,
-        serverId: channel.serverId,
-        message: messageResponse,
-      }));
-    }
-
-    // Send to SSE connections
+    // Deliver to SSE connections everywhere: locally in-process AND, via the
+    // Redis SSE bus, to every other app instance — so all viewers receive the
+    // message at the same time.
     publishToChannel(params.channelId, {
       type: 'message',
       message: messageResponse,
     });
 
-    // Fan out to connected bots via the gateway bus.
-    try {
-      const { emitMessageCreate } = await import('@/lib/services/gatewayEvents');
-      await emitMessageCreate(messageResponse as never);
-    } catch {}
+    // Bot gateway dispatch and slash-command HTTP round-trips must NOT block the
+    // sender's response (a slow/unreachable bot endpoint previously stalled
+    // sends by tens of seconds). Fire-and-forget instead.
+    void (async () => {
+      try {
+        const { emitMessageCreate } = await import('@/lib/services/gatewayEvents');
+        await emitMessageCreate(messageResponse as never);
+      } catch {}
 
-    // If the message invokes a registered slash command, dispatch an interaction.
-    try {
-      const { maybeDispatchSlashInteraction } = await import('@/lib/services/interactions');
-      await maybeDispatchSlashInteraction(messageResponse as never);
-    } catch {}
+      try {
+        const { maybeDispatchSlashInteraction } = await import('@/lib/services/interactions');
+        await maybeDispatchSlashInteraction(messageResponse as never);
+      } catch {}
+    })();
 
     return { message: messageResponse };
   }, {

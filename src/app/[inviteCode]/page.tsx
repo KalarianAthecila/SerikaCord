@@ -31,6 +31,7 @@ interface InviteInfo {
     onlineCount?: number;
     description?: string;
     isPartnered?: boolean;
+    joinMode?: string;
   };
   expiresAt?: string;
 }
@@ -61,6 +62,9 @@ export default function InvitePage() {
   const [isJoining, setIsJoining] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const [showApplyDialog, setShowApplyDialog] = useState(false);
+  const [applyAnswer, setApplyAnswer] = useState("");
+  const [isSubmittingApply, setIsSubmittingApply] = useState(false);
 
   const fetchInvite = useCallback(async () => {
     try {
@@ -104,6 +108,12 @@ export default function InvitePage() {
       return;
     }
 
+    if (invite?.server.joinMode === "apply_to_join") {
+      setShowApplyDialog(true);
+      setApplyAnswer("");
+      return;
+    }
+
     setIsJoining(true);
     setError(null);
 
@@ -135,6 +145,34 @@ export default function InvitePage() {
       setError("Something went wrong. Please try again.");
     } finally {
       setIsJoining(false);
+    }
+  };
+
+  const handleSubmitApplication = async () => {
+    if (!invite) return;
+    setIsSubmittingApply(true);
+    try {
+      const res = await fetch(`/api/servers/${invite.server._id}/applications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          answers: [
+            { question: "Why would you like to join?", answer: applyAnswer.trim() },
+          ],
+        }),
+      });
+      if (res.ok) {
+        setShowApplyDialog(false);
+        setApplyAnswer("");
+        setError("Application submitted! You will be notified when it is reviewed.");
+      } else {
+        const data = await res.json();
+        setError(data.error || "Failed to submit application.");
+      }
+    } catch {
+      setError("Failed to submit application.");
+    } finally {
+      setIsSubmittingApply(false);
     }
   };
 
@@ -394,6 +432,11 @@ export default function InvitePage() {
                         Sign in to Join
                         <ArrowRight className="w-4 h-4" />
                       </>
+                    ) : invite.server.joinMode === "apply_to_join" ? (
+                      <>
+                        Apply to Join
+                        <ArrowRight className="w-4 h-4" />
+                      </>
                     ) : (
                       <>
                         Accept Invite
@@ -443,6 +486,41 @@ export default function InvitePage() {
           </motion.div>
         ) : null}
       </AnimatePresence>
+
+      {showApplyDialog && invite && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md bg-[#111214] rounded-xl border border-[#1f1f22] p-6 space-y-4">
+            <div>
+              <h3 className="text-xl font-bold text-white">Apply to join {invite.server.name}</h3>
+              <p className="text-sm text-[#949ba4] mt-1">
+                This server requires an application. Tell them a bit about yourself.
+              </p>
+            </div>
+            <textarea
+              value={applyAnswer}
+              onChange={(e) => setApplyAnswer(e.target.value)}
+              placeholder="Why would you like to join?"
+              rows={4}
+              className="w-full p-3 rounded-lg bg-[#1f1f22] border border-[#2b2d31] text-white placeholder:text-[#949ba4] focus:outline-none focus:border-[#5865F2] resize-none"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setShowApplyDialog(false)}
+                className="px-4 py-2 text-white hover:bg-[#2b2d31] rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleSubmitApplication()}
+                disabled={!applyAnswer.trim() || isSubmittingApply}
+                className="px-4 py-2 bg-[#5865F2] hover:bg-[#4752c4] disabled:opacity-60 text-white rounded-lg transition-colors"
+              >
+                {isSubmittingApply ? "Submitting..." : "Submit Application"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

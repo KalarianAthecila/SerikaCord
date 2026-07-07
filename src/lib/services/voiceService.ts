@@ -11,6 +11,10 @@ export interface VoiceParticipant {
   joinedAt: string;
   stream?: MediaStream;
   screenShare?: boolean;
+  // Screen share arrives as a SEPARATE MediaStream from the mic/camera stream,
+  // so it's tracked independently and never clobbers `stream` (which carries
+  // the audio the AudioSink plays).
+  screenStream?: MediaStream;
 }
 
 export type VoiceEvent =
@@ -32,9 +36,15 @@ class VoiceService {
   private localStream: MediaStream | null = null;
   private peers: Map<string, SimplePeer.Instance> = new Map();
   private remoteStreams: Map<string, MediaStream> = new Map();
+  private remoteScreenStreams: Map<string, MediaStream> = new Map();
   private participants: Map<string, VoiceParticipant> = new Map();
   private signalingEs: EventSource | null = null;
   private listeners: Set<VoiceListener> = new Set();
+  // ICE servers (STUN + any server-configured TURN). Overwritten from
+  // /api/voice/token on join; falls back to public STUN if the fetch fails.
+  private iceServers: RTCIceServer[] = [
+    { urls: ["stun:stun.l.google.com:19302", "stun:stun1.l.google.com:19302"] },
+  ];
   private isMuted = false;
   private isDeafened = false;
   private isVideoOn = false;
@@ -69,6 +79,10 @@ class VoiceService {
     const list = Array.from(this.participants.values()).map((p) => ({
       ...p,
       stream: this.remoteStreams.get(p.userId),
+      screenStream: this.remoteScreenStreams.get(p.userId),
+      // Reflect an actually-received screen stream so the UI renders the tile
+      // even if the state_update flag hasn't arrived yet.
+      screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
     }));
     this.emit({ type: "participants_changed", participants: list });
   }
@@ -117,6 +131,24 @@ class VoiceService {
       this.roomId = null;
       this.emit({ type: "error", message: "Could not connect to voice. Please try again." });
       return;
+    }
+
+    // Fetch ICE servers (STUN + any configured TURN relay) before we start
+    // creating peers, so the WebRTC connections can actually traverse NAT.
+    try {
+      const tokenRes = await fetch(`/api/voice/token`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ roomId: channelId }),
+      });
+      if (tokenRes.ok) {
+        const data = await tokenRes.json();
+        if (Array.isArray(data.iceServers) && data.iceServers.length) {
+          this.iceServers = data.iceServers as RTCIceServer[];
+        }
+      }
+    } catch {
+      // Keep the STUN fallback already set.
     }
 
     // Connect SSE signaling
@@ -181,6 +213,7 @@ class VoiceService {
         this.participants.delete(userId);
         this.destroyPeer(userId);
         this.remoteStreams.delete(userId);
+        this.remoteScreenStreams.delete(userId);
         this.emitParticipants();
         break;
       }
@@ -223,7 +256,13 @@ class VoiceService {
           if (msg.audio !== undefined) participant.audio = msg.audio as boolean;
           if (msg.deafened !== undefined) participant.deafened = msg.deafened as boolean;
           if (msg.video !== undefined) participant.video = msg.video as boolean;
-          if (msg.screenShare !== undefined) participant.screenShare = msg.screenShare as boolean;
+          if (msg.screenShare !== undefined) {
+            participant.screenShare = msg.screenShare as boolean;
+            // Sharer stopped: drop their screen stream so the tile disappears.
+            if (msg.screenShare === false) {
+              this.remoteScreenStreams.delete(userId);
+            }
+          }
           this.emitParticipants();
         }
         break;
@@ -257,10 +296,12 @@ class VoiceService {
       stream: this.localStream,
       trickle: true,
       config: {
-        iceServers: [
-          { urls: "stun:stun.l.google.com:19302" },
-          { urls: "stun:stun1.l.google.com:19302" },
-        ],
+        // Use the ICE servers fetched from /api/voice/token — this includes the
+        // configured TURN relay, which is REQUIRED for two peers that can't reach
+        // each other directly (different NATs/firewalls). Previously this was
+        // hardcoded to public STUN only, so cross-network calls never connected
+        // and the two clients couldn't hear or see each other.
+        iceServers: this.iceServers,
       },
     });
 
@@ -278,7 +319,22 @@ class VoiceService {
       stream.getAudioTracks().forEach((t) => {
         t.enabled = !this.isDeafened;
       });
-      this.remoteStreams.set(targetUserId, stream);
+      // The first stream from a peer is their primary mic/camera. Any later
+      // stream is a screen share (getDisplayMedia produces a distinct stream),
+      // so it must NOT overwrite the primary stream — otherwise remote audio
+      // breaks and the camera tile disappears.
+      if (!this.remoteStreams.has(targetUserId)) {
+        this.remoteStreams.set(targetUserId, stream);
+      } else {
+        this.remoteScreenStreams.set(targetUserId, stream);
+        // When the screen stream's track ends (sharer stopped), drop it.
+        stream.getVideoTracks().forEach((t) => {
+          t.addEventListener("ended", () => {
+            this.remoteScreenStreams.delete(targetUserId);
+            this.emitParticipants();
+          });
+        });
+      }
       this.emitParticipants();
     });
 
@@ -322,6 +378,7 @@ class VoiceService {
     this.peers.forEach((_, userId) => this.destroyPeer(userId));
     this.peers.clear();
     this.remoteStreams.clear();
+    this.remoteScreenStreams.clear();
     this.participants.clear();
 
     // Close SSE
@@ -627,6 +684,8 @@ class VoiceService {
     return Array.from(this.participants.values()).map((p) => ({
       ...p,
       stream: this.remoteStreams.get(p.userId),
+      screenStream: this.remoteScreenStreams.get(p.userId),
+      screenShare: p.screenShare || this.remoteScreenStreams.has(p.userId),
     }));
   }
   get localAudioStream() { return this.localStream; }

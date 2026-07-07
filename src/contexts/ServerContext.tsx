@@ -45,7 +45,8 @@ interface Channel {
   type: ChannelType;
   serverId: string;
   position: number;
-  parentId?: string; // Category parent
+  parentId?: string; // Category parent, or parent forum for threads
+  parentName?: string; // Parent forum name for threads
   isNsfw?: boolean;
   topic?: string;
   rateLimitPerUser?: number;
@@ -77,8 +78,34 @@ interface ServerContextType {
 
 const ServerContext = createContext<ServerContextType | undefined>(undefined);
 
+// ── localStorage stale-while-revalidate ────────────────────────────────────
+// Persist the servers list and per-server channels so a reload paints instantly
+// from cache while the network refetch happens in the background. Purely a
+// perceived-performance win; the fetch still runs and overwrites with fresh data.
+const LS_SERVERS = "sc:servers";
+const LS_CHANNELS_PREFIX = "sc:channels:";
+
+function lsGet<T>(key: string): T | null {
+  if (typeof localStorage === "undefined") return null;
+  try {
+    const raw = localStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : null;
+  } catch {
+    return null;
+  }
+}
+
+function lsSet(key: string, value: unknown) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {
+    /* quota / disabled — ignore */
+  }
+}
+
 export function ServerProvider({ children }: { children: ReactNode }) {
-  const [servers, setServers] = useState<Server[]>([]);
+  const [servers, setServers] = useState<Server[]>(() => lsGet<Server[]>(LS_SERVERS) || []);
   const [currentServer, setCurrentServerState] = useState<Server | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
@@ -117,8 +144,13 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       activeServerIdRef.current = server.id;
       setCurrentServerState(server);
 
-      const cached = channelCacheRef.current.get(server.id);
+      const cached =
+        channelCacheRef.current.get(server.id) ||
+        lsGet<Channel[]>(LS_CHANNELS_PREFIX + server.id) ||
+        undefined;
       if (cached) {
+        // Warm the in-memory cache from localStorage on first access.
+        channelCacheRef.current.set(server.id, cached);
         setChannels(cached);
       } else if (isSwitch) {
         // Switching to a server whose channels aren't cached yet: clear the
@@ -144,6 +176,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
           ...s,
         }));
         setServers(transformedServers);
+        lsSet(LS_SERVERS, transformedServers);
         // Also update currentServer if it exists in the new list (keeps banner, icon, etc. in sync)
         setCurrentServerState((prev) => {
           if (!prev) return prev;
@@ -177,8 +210,10 @@ export function ServerProvider({ children }: { children: ReactNode }) {
           rateLimitPerUser: c.rateLimitPerUser || 0,
           permissionOverwrites: c.permissionOverwrites || [],
         }));
-        // Cache channels for faster switching
+        // Cache channels for faster switching (in-memory + localStorage for
+        // instant paint on reload).
         channelCacheRef.current.set(serverId, transformedChannels);
+        lsSet(LS_CHANNELS_PREFIX + serverId, transformedChannels);
         setChannels(transformedChannels);
       }
     } catch (error) {

@@ -109,6 +109,16 @@ export function useMentions(serverId?: string) {
     setReadVersion((v) => v + 1);
   }, []);
 
+  const markServerRead = useCallback((sid: string) => {
+    const channelIds = new Set(
+      mentions.filter((m) => m.serverId === sid).map((m) => m.channelId)
+    );
+    for (const chId of channelIds) {
+      setChannelReadTimestamp(chId, Date.now());
+    }
+    setReadVersion((v) => v + 1);
+  }, [mentions]);
+
   const markAllRead = useCallback(() => {
     const channelIds = new Set(mentions.map((m) => m.channelId));
     for (const chId of channelIds) {
@@ -140,6 +150,7 @@ export function useMentions(serverId?: string) {
     getChannelCount,
     getServerCount,
     markChannelRead,
+    markServerRead,
     markAllRead,
     refresh: fetchMentions,
   };

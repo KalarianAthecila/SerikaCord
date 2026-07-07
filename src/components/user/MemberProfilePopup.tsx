@@ -37,8 +37,15 @@ export function MemberProfilePopup({
   const [fullProfileOpen, setFullProfileOpen] = useState(false);
   const [fullProfile, setFullProfile] = useState<ProfileCardUser>(member);
 
+  // Seed from the `member` prop, but do NOT throw away the fuller profile we
+  // already fetched (banner, bio, badges) just because the parent re-rendered
+  // and handed us a new `member` object reference. Only fully reset when this
+  // is actually a different user; otherwise keep the enriched fields on top of
+  // any refreshed base fields.
   useEffect(() => {
-    setFullProfile(member);
+    setFullProfile((prev) =>
+      prev.id === member.id ? { ...member, ...prev } : member
+    );
   }, [member]);
 
   useEffect(() => {

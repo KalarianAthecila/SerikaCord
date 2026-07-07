@@ -286,6 +286,8 @@ MessageSchema.index({ serverId: 1, createdAt: -1 });
 MessageSchema.index({ authorId: 1, createdAt: -1 });
 MessageSchema.index({ channelId: 1, pinned: 1 });
 MessageSchema.index({ channelId: 1, isDeleted: 1, createdAt: -1 });
+// Slowmode / "last message by this author in this channel" lookups.
+MessageSchema.index({ channelId: 1, authorId: 1, createdAt: -1 });
 
 // Text search index
 MessageSchema.index({ content: 'text' });

@@ -310,7 +310,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       .populate({
         path: 'serverId',
         select: 'name icon banner description memberCount isOfficial isVerified isPartnered vanityUrlCode ownerId systemChannelId rulesChannelId afkChannelId afkTimeout isAgeGated',
-      });
+      })
+      .lean();
 
     const servers = memberships
       .filter(m => m.serverId) // Filter out any null references
@@ -1170,38 +1171,63 @@ const userRoutes = new Elysia({ prefix: '/users' })
     const expiresAt = new Date(Date.now() + 60_000);
     const activeKeys = new Set<string>();
 
-    for (const item of incoming) {
+    const ops = incoming.map((item: any) => {
       const type = item.type || 'other';
       const name = item.name;
       activeKeys.add(`${type}:${name}`);
-      await RichPresence.findOneAndUpdate(
-        { userId: authUser._id, type, name },
-        {
-          $set: {
-            type,
-            name,
-            details: item.details ?? null,
-            state: item.state ?? null,
-            largeImageUrl: item.largeImageUrl ?? null,
-            largeImageText: item.largeImageText ?? null,
-            smallImageUrl: item.smallImageUrl ?? null,
-            smallImageText: item.smallImageText ?? null,
-            startedAt: item.startedAt ? new Date(item.startedAt) : null,
-            endsAt: item.endsAt ? new Date(item.endsAt) : null,
-            expiresAt,
+      return {
+        updateOne: {
+          filter: { userId: authUser._id, type, name },
+          update: {
+            $set: {
+              type,
+              name,
+              details: item.details ?? null,
+              state: item.state ?? null,
+              largeImageUrl: item.largeImageUrl ?? null,
+              largeImageText: item.largeImageText ?? null,
+              smallImageUrl: item.smallImageUrl ?? null,
+              smallImageText: item.smallImageText ?? null,
+              startedAt: item.startedAt ? new Date(item.startedAt) : null,
+              endsAt: item.endsAt ? new Date(item.endsAt) : null,
+              expiresAt,
+            },
           },
+          upsert: true,
         },
-        { upsert: true, new: true }
-      );
+      };
+    });
+
+    // One round-trip for all activities. `ordered: false` lets the rest apply
+    // even if one op conflicts.
+    if (ops.length) {
+      try {
+        await RichPresence.bulkWrite(ops, { ordered: false });
+      } catch (err: any) {
+        // A stale legacy unique index on `userId` alone (from when only one
+        // presence per user was allowed) rejects a user's 2nd+ activity with
+        // E11000. Drop it once and retry; multi-activity is intentional now.
+        if (err?.code === 11000) {
+          try {
+            await RichPresence.collection.dropIndex('userId_1');
+          } catch { /* already gone or different name */ }
+          try {
+            await RichPresence.bulkWrite(ops, { ordered: false });
+          } catch { /* best-effort */ }
+        } else {
+          throw err;
+        }
+      }
     }
 
     // Anything not reported in this batch is no longer active.
-    const existing = await RichPresence.find({ userId: authUser._id }).lean();
-    const staleIds = (existing as any[])
-      .filter((doc) => !activeKeys.has(`${doc.type}:${doc.name}`))
-      .map((doc) => doc._id);
-    if (staleIds.length) {
-      await RichPresence.deleteMany({ _id: { $in: staleIds } });
+    if (incoming.length) {
+      await RichPresence.deleteMany({
+        userId: authUser._id,
+        $nor: incoming.map((item: any) => ({ type: item.type || 'other', name: item.name })),
+      });
+    } else {
+      await RichPresence.deleteMany({ userId: authUser._id });
     }
 
     return { ok: true };

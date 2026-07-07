@@ -1,6 +1,8 @@
 import { Elysia, t } from 'elysia';
 import { authenticateRequest } from '@/lib/services/auth';
 import { config } from '@/lib/config';
+import { getPublisher } from '@/lib/db';
+import { randomUUID } from 'crypto';
 
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
   const authHeader = headers.authorization ?? null;
@@ -23,10 +25,20 @@ type VoiceParticipant = {
   joinedAt: string;
 };
 
+// Local mirror of every voice room's membership. Kept in sync across instances
+// via the Redis `voice:members` bus, so a client connecting to ANY instance
+// sees everyone in the room (WebRTC media stays fully P2P — only this small bit
+// of signaling/presence goes through the server).
 const roomState = new Map<string, Map<string, VoiceParticipant>>();
 
-// SSE connections per voice room: roomId -> userId -> controller set
+// SSE connections per voice room: roomId -> userId -> controller set (per process)
 const voiceSignalingConnections = new Map<string, Map<string, Set<ReadableStreamDefaultController>>>();
+
+// Cross-instance buses. `originId` lets an instance skip echoes of its own
+// publishes (it already delivered/applied them locally).
+const INSTANCE_ID = randomUUID();
+const VOICE_SSE_BUS = 'voice:sse';       // client-bound SSE payloads
+const VOICE_MEMBERS_BUS = 'voice:members'; // room membership sync
 
 function getRoom(roomId: string) {
   if (!roomState.has(roomId)) {
@@ -35,7 +47,8 @@ function getRoom(roomId: string) {
   return roomState.get(roomId)!;
 }
 
-function broadcastToRoom(roomId: string, payload: object, excludeUserId?: string) {
+// ── Local-only delivery ─────────────────────────────────────────────────────
+function deliverToRoomLocal(roomId: string, payload: object, excludeUserId?: string) {
   const encoded = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
   const roomConnections = voiceSignalingConnections.get(roomId);
   if (!roomConnections) return;
@@ -51,7 +64,7 @@ function broadcastToRoom(roomId: string, payload: object, excludeUserId?: string
   }
 }
 
-function sendToUser(roomId: string, targetUserId: string, payload: object) {
+function deliverToUserLocal(roomId: string, targetUserId: string, payload: object) {
   const encoded = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
   const roomConnections = voiceSignalingConnections.get(roomId);
   if (!roomConnections) return;
@@ -64,6 +77,68 @@ function sendToUser(roomId: string, targetUserId: string, payload: object) {
       controllers.delete(controller);
     }
   }
+}
+
+// ── Cross-instance delivery (local + Redis fan-out) ─────────────────────────
+function broadcastToRoom(roomId: string, payload: object, excludeUserId?: string) {
+  deliverToRoomLocal(roomId, payload, excludeUserId);
+  const pub = getPublisher();
+  if (pub) {
+    pub.publish(VOICE_SSE_BUS, JSON.stringify({ originId: INSTANCE_ID, roomId, excludeUserId, payload })).catch(() => {});
+  }
+}
+
+function sendToUser(roomId: string, targetUserId: string, payload: object) {
+  deliverToUserLocal(roomId, targetUserId, payload);
+  const pub = getPublisher();
+  if (pub) {
+    pub.publish(VOICE_SSE_BUS, JSON.stringify({ originId: INSTANCE_ID, roomId, targetUserId, payload })).catch(() => {});
+  }
+}
+
+// Propagate a membership change to other instances' room mirrors.
+function publishMembership(roomId: string, action: 'join' | 'leave', data: object) {
+  const pub = getPublisher();
+  if (pub) {
+    pub.publish(VOICE_MEMBERS_BUS, JSON.stringify({ originId: INSTANCE_ID, roomId, action, ...data })).catch(() => {});
+  }
+}
+
+// Subscribe this process to the voice buses. Call once at startup with a
+// dedicated ioredis connection.
+export async function startVoiceBridge(): Promise<() => void> {
+  const Redis = (await import('ioredis')).default;
+  const sub = new Redis(config.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
+  sub.on('error', (err: Error) => console.error('Voice bridge Redis error:', err.message));
+  await sub.connect().catch((err: Error) => console.error('Voice bridge connect failed:', err.message));
+  await sub.subscribe(VOICE_SSE_BUS, VOICE_MEMBERS_BUS);
+  sub.on('message', (ch: string, raw: string) => {
+    try {
+      const msg = JSON.parse(raw);
+      if (msg.originId === INSTANCE_ID) return; // already handled locally
+      if (ch === VOICE_SSE_BUS) {
+        if (msg.targetUserId) {
+          deliverToUserLocal(msg.roomId, msg.targetUserId, msg.payload);
+        } else {
+          deliverToRoomLocal(msg.roomId, msg.payload, msg.excludeUserId);
+        }
+      } else if (ch === VOICE_MEMBERS_BUS) {
+        // Keep this instance's room mirror in sync so its own SSE clients get a
+        // complete participant snapshot on connect.
+        const room = getRoom(msg.roomId);
+        if (msg.action === 'join' && msg.participant) {
+          room.set((msg.participant as VoiceParticipant).userId, msg.participant as VoiceParticipant);
+        } else if (msg.action === 'leave' && msg.userId) {
+          room.delete(msg.userId as string);
+          if (room.size === 0) roomState.delete(msg.roomId);
+        }
+      }
+    } catch (err) {
+      console.error('Voice bridge: bad payload', err);
+    }
+  });
+  console.log(`✅ Voice bridge subscribed to ${VOICE_SSE_BUS}, ${VOICE_MEMBERS_BUS}`);
+  return () => { void sub.quit().catch(() => {}); };
 }
 
 export const voiceRoutes = new Elysia({ prefix: '/voice' })
@@ -82,11 +157,47 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     const roomId = body.roomId;
     const expiresAt = Date.now() + 5 * 60 * 1000;
 
+    // Build the ICE server list the client feeds into its WebRTC peers.
+    // Priority: Cloudflare Worker (fresh creds per join) > env TURN > STUN only.
+    const iceServers: Array<{ urls: string | string[]; username?: string; credential?: string }> = [];
+
+    if (config.TURN_WORKER_URL) {
+      try {
+        const workerRes = await fetch(config.TURN_WORKER_URL, {
+          method: 'GET',
+          headers: { 'Accept': 'application/json' },
+          signal: AbortSignal.timeout(5000),
+        });
+        if (workerRes.ok) {
+          const data = await workerRes.json() as { iceServers?: Array<{ urls: string | string[]; username?: string; credential?: string }> };
+          if (Array.isArray(data.iceServers) && data.iceServers.length) {
+            iceServers.push(...data.iceServers);
+          }
+        }
+      } catch {
+        // Worker unreachable — fall through to env TURN / STUN below
+      }
+    }
+
+    if (iceServers.length === 0) {
+      const stunUrls = config.STUN_URLS.split(',').map((u) => u.trim()).filter(Boolean);
+      if (stunUrls.length) iceServers.push({ urls: stunUrls });
+      if (config.TURN_URL) {
+        const turnUrls = config.TURN_URL.split(',').map((u) => u.trim()).filter(Boolean);
+        iceServers.push({
+          urls: turnUrls,
+          username: config.TURN_USERNAME || undefined,
+          credential: config.TURN_PASSWORD || undefined,
+        });
+      }
+    }
+
     return {
       token: `local-${user._id}-${roomId}-${expiresAt}`,
       roomId,
       expiresAt,
       provider: 'local',
+      iceServers,
     };
   }, {
     body: t.Object({
@@ -114,7 +225,8 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
       joinedAt: new Date().toISOString(),
     });
 
-    // Notify other participants in the room
+    // Sync membership to other instances' mirrors, then notify participants.
+    publishMembership(body.roomId, 'join', { participant: room.get(userId) });
     broadcastToRoom(body.roomId, {
       type: 'voice:participant_joined',
       participant: room.get(userId),
@@ -151,7 +263,8 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
       roomState.delete(body.roomId);
     }
 
-    // Notify remaining participants
+    // Sync membership to other instances, then notify remaining participants.
+    publishMembership(body.roomId, 'leave', { userId });
     broadcastToRoom(body.roomId, {
       type: 'voice:participant_left',
       userId,

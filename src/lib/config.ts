@@ -28,10 +28,27 @@ export const config = {
   // Database
   MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/serikacord',
   MONGO_DB_NAME: process.env.MONGO_DB_NAME || 'serikacord',
-  
+  MONGO_MAX_POOL_SIZE: process.env.MONGO_MAX_POOL_SIZE ? parseInt(process.env.MONGO_MAX_POOL_SIZE, 10) : undefined,
+
   // Redis
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',
-  
+
+  // WebRTC ICE servers for voice/video. STUN alone only works when at least one
+  // peer has a permissive NAT; a TURN relay is required for the common case of
+  // two peers on different networks / symmetric NATs.
+  //
+  // Two ways to provide TURN:
+  //  1. Self-hosted coturn: set TURN_URL / TURN_USERNAME / TURN_PASSWORD.
+  //  2. Cloudflare Realtime TURN: set TURN_WORKER_URL to a Worker that mints
+  //     short-lived credentials from the Cloudflare TURN API. The Worker returns
+  //     { iceServers: [{ urls, username, credential }] } which we pass through.
+  // If both are set, the Worker takes priority (it generates fresh creds per join).
+  TURN_WORKER_URL: process.env.TURN_WORKER_URL || '',
+  TURN_URL: process.env.TURN_URL || '',
+  TURN_USERNAME: process.env.TURN_USERNAME || '',
+  TURN_PASSWORD: process.env.TURN_PASSWORD || '',
+  STUN_URLS: process.env.STUN_URLS || 'stun:stun.l.google.com:19302,stun:stun1.l.google.com:19302',
+
   // JWT
   JWT_SECRET: process.env.JWT_SECRET || 'serikacord-super-secret-jwt-key-change-in-production',
   JWT_EXPIRES_IN: '30d',

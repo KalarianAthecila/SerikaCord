@@ -6,7 +6,9 @@ import { resolveEffectiveStatus } from '@/lib/services/presence';
 import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage, rejectInvalidObjectIdParams } from '@/lib/security';
 import { decodeHtmlEntities } from '@/lib/chat/messages';
 import { cache, getPublisher } from '@/lib/db';
+import { config } from '@/lib/config';
 import { Types } from 'mongoose';
+import { randomUUID } from 'crypto';
 
 // Helper to safely compare IDs (handles both ObjectId and string)
 function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
@@ -56,7 +58,14 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
 const activeConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 const activeDmListConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
-export function emitDmListUpdate(userIds: string[], payload: Record<string, unknown>) {
+// Cross-instance realtime: see channels.ts for the rationale. DMs use two Redis
+// buses — one keyed by DM channel (message events) and one keyed by user id (DM
+// list updates). `originId` prevents the publishing instance double-delivering.
+const INSTANCE_ID = randomUUID();
+const SSE_DM_BUS = 'sse:dm';
+const SSE_DMLIST_BUS = 'sse:dmlist';
+
+function deliverToLocalDmList(userIds: string[], payload: Record<string, unknown>) {
   const data = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
   userIds.forEach((userId) => {
     const streams = activeDmListConnections.get(userId);
@@ -74,8 +83,17 @@ export function emitDmListUpdate(userIds: string[], payload: Record<string, unkn
   });
 }
 
-// Helper to publish events to DM SSE connections
-function publishToDm(channelId: string, data: object) {
+export function emitDmListUpdate(userIds: string[], payload: Record<string, unknown>) {
+  deliverToLocalDmList(userIds, payload);
+  const pub = getPublisher();
+  if (pub) {
+    pub
+      .publish(SSE_DMLIST_BUS, JSON.stringify({ originId: INSTANCE_ID, userIds, payload }))
+      .catch(() => {});
+  }
+}
+
+function deliverToLocalDm(channelId: string, data: object) {
   const connections = activeConnections.get(channelId);
   if (connections) {
     const encodedData = `data: ${JSON.stringify(data)}\n\n`;
@@ -87,6 +105,42 @@ function publishToDm(channelId: string, data: object) {
       }
     });
   }
+}
+
+// Publish a DM event: local + cross-instance fan-out over Redis.
+function publishToDm(channelId: string, data: object) {
+  deliverToLocalDm(channelId, data);
+  const pub = getPublisher();
+  if (pub) {
+    pub
+      .publish(SSE_DM_BUS, JSON.stringify({ originId: INSTANCE_ID, channelId, data }))
+      .catch(() => {});
+  }
+}
+
+// Subscribe this process to the DM SSE buses. Call once at startup with a
+// dedicated ioredis connection.
+export async function startDmSSEBridge(): Promise<() => void> {
+  const Redis = (await import('ioredis')).default;
+  const sub = new Redis(config.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
+  sub.on('error', (err: Error) => console.error('DM SSE bridge Redis error:', err.message));
+  await sub.connect().catch((err: Error) => console.error('DM SSE bridge connect failed:', err.message));
+  await sub.subscribe(SSE_DM_BUS, SSE_DMLIST_BUS);
+  sub.on('message', (ch: string, payload: string) => {
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed.originId === INSTANCE_ID) return;
+      if (ch === SSE_DM_BUS) {
+        deliverToLocalDm(parsed.channelId, parsed.data);
+      } else if (ch === SSE_DMLIST_BUS) {
+        deliverToLocalDmList(parsed.userIds, parsed.payload);
+      }
+    } catch (err) {
+      console.error('DM SSE bridge: bad payload', err);
+    }
+  });
+  console.log(`✅ DM SSE bridge subscribed to ${SSE_DM_BUS}, ${SSE_DMLIST_BUS}`);
+  return () => { void sub.quit().catch(() => {}); };
 }
 
 // Helper to get or create DM channel
@@ -531,10 +585,12 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     });
     await message.save();
 
-    // Update channel's last message
-    channel.lastMessageId = message._id;
-    channel.updatedAt = new Date();
-    await channel.save();
+    // Update channel's last message with a targeted write instead of re-saving
+    // the whole hydrated channel document.
+    await Channel.updateOne(
+      { _id: channel._id },
+      { $set: { lastMessageId: message._id, updatedAt: new Date() } }
+    );
 
     const messageData = {
       id: message._id.toString(),
@@ -576,32 +632,8 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       }
     );
 
-    // Publish to Redis for real-time
-    try {
-      const publisher = getPublisher();
-      if (publisher) {
-        await publisher.publish(`dm:${channel._id}`, JSON.stringify({
-          type: 'message',
-          message: messageData,
-        }));
-      }
-    } catch (error) {
-      console.error('Failed to publish message:', error);
-    }
-
-    // Send to SSE connections
-    const channelKey = channel._id.toString();
-    const connections = activeConnections.get(channelKey);
-    if (connections) {
-      const data = `data: ${JSON.stringify({ type: 'message', message: messageData })}\n\n`;
-      connections.forEach((controller) => {
-        try {
-          controller.enqueue(new TextEncoder().encode(data));
-        } catch {
-          // Connection closed
-        }
-      });
-    }
+    // Deliver everywhere: local SSE + cross-instance Redis fan-out (non-blocking).
+    publishToDm(channel._id.toString(), { type: 'message', message: messageData });
 
     return messageData;
   }, {
@@ -724,36 +756,12 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     // Set typing in Redis
     await cache.setTyping(channel._id.toString(), user._id.toString());
 
-    // Publish typing event
-    try {
-      const publisher = getPublisher();
-      if (publisher) {
-        await publisher.publish(`dm:${channel._id}`, JSON.stringify({
-          type: 'typing',
-          userId: user._id,
-          username: user.username,
-        }));
-      }
-    } catch (error) {
-      console.error('Failed to publish typing:', error);
-    }
-
-    const channelKey = channel._id.toString();
-    const connections = activeConnections.get(channelKey);
-    if (connections) {
-      const data = `data: ${JSON.stringify({
-        type: 'typing',
-        userId: user._id,
-        username: user.username,
-      })}\n\n`;
-      connections.forEach((controller) => {
-        try {
-          controller.enqueue(new TextEncoder().encode(data));
-        } catch {
-          // Connection closed and cleaned up during next heartbeat/cancel.
-        }
-      });
-    }
+    // Publish typing event (local + cross-instance).
+    publishToDm(channel._id.toString(), {
+      type: 'typing',
+      userId: user._id,
+      username: user.username,
+    });
 
     emitDmListUpdate(
       [user._id.toString(), params.recipientId],

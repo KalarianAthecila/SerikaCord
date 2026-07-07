@@ -23,32 +23,41 @@ pub struct DetectedActivity {
 }
 
 /// Common non-game apps we recognise directly (no IGDB lookup).
-/// key = lowercased executable basename (without extension when helpful).
+///
+/// Matching is on the EXACT executable basename (lowercased, `.exe` stripped),
+/// not a substring. Substring matching produced false positives — e.g. the old
+/// `"code"` needle matched any process whose name merely contained "code"
+/// (background helpers, language servers, etc.), so "VS Code" was reported even
+/// when the editor was closed. Each entry lists every exact name that app is
+/// known to launch as.
 fn match_known_app(exe_lower: &str) -> Option<DetectedActivity> {
-    let table: &[(&str, &str, &str)] = &[
-        // exe contains, display name, kind
-        ("code", "Visual Studio Code", "vscode"),
-        ("code-insiders", "VS Code Insiders", "vscode"),
-        ("rider64", "JetBrains Rider", "vscode"),
-        ("idea64", "IntelliJ IDEA", "vscode"),
-        ("pycharm64", "PyCharm", "vscode"),
-        ("webstorm64", "WebStorm", "vscode"),
-        ("clion64", "CLion", "vscode"),
-        ("windsurf", "Windsurf", "windsurf"),
-        ("cursor", "Cursor", "cursor"),
-        ("zed", "Zed", "zed"),
-        ("claude", "Claude Code", "claude"),
-        ("sublime_text", "Sublime Text", "other"),
-        ("blender", "Blender", "other"),
-        ("obs", "OBS Studio", "other"),
-        ("photoshop", "Adobe Photoshop", "other"),
-        ("figma", "Figma", "other"),
-        ("unity", "Unity", "other"),
-        ("unrealeditor", "Unreal Engine", "other"),
-        ("godot", "Godot Engine", "other"),
+    // (exact executable names, display name, kind)
+    let table: &[(&[&str], &str, &str)] = &[
+        (&["code", "code-oss", "vscodium"], "Visual Studio Code", "vscode"),
+        (&["code-insiders"], "VS Code Insiders", "vscode"),
+        (&["rider64", "rider"], "JetBrains Rider", "vscode"),
+        (&["idea64", "idea"], "IntelliJ IDEA", "vscode"),
+        (&["pycharm64", "pycharm"], "PyCharm", "vscode"),
+        (&["webstorm64", "webstorm"], "WebStorm", "vscode"),
+        (&["clion64", "clion"], "CLion", "vscode"),
+        // Windsurf was rebranded to "Devin Desktop" (Cognition). Detect both the
+        // legacy and current executable names; keep the distinct labels/kinds.
+        (&["windsurf"], "Windsurf", "windsurf"),
+        (&["devin", "devin-desktop", "devindesktop"], "Devin Desktop", "devin"),
+        (&["cursor"], "Cursor", "cursor"),
+        (&["zed"], "Zed", "zed"),
+        (&["claude"], "Claude Code", "claude"),
+        (&["sublime_text"], "Sublime Text", "other"),
+        (&["blender"], "Blender", "other"),
+        (&["obs", "obs64"], "OBS Studio", "other"),
+        (&["photoshop"], "Adobe Photoshop", "other"),
+        (&["figma", "figma_agent"], "Figma", "other"),
+        (&["unity", "unity.exe", "unityhub"], "Unity", "other"),
+        (&["unrealeditor"], "Unreal Engine", "other"),
+        (&["godot"], "Godot Engine", "other"),
     ];
-    for (needle, display, kind) in table {
-        if exe_lower.contains(needle) {
+    for (names, display, kind) in table {
+        if names.iter().any(|n| exe_lower == *n) {
             return Some(DetectedActivity {
                 kind: (*kind).to_string(),
                 name: (*display).to_string(),

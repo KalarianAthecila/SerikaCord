@@ -375,7 +375,9 @@ export function FullProfileDialog({
           {/* Right panel — tabs */}
           <div className="flex-1 flex flex-col min-w-0 md:min-h-0 bg-transparent md:bg-[#111114]">
             {/* Tab bar */}
-            <div className="flex items-center gap-1 px-4 pt-4 pb-0 border-b border-white/[0.06] shrink-0 overflow-x-auto scrollbar-hide">
+            {/* pr-12 reserves room for the dialog's absolute top-right close
+                button so the last tab never collides with it. */}
+            <div className="flex items-center gap-1 pl-4 pr-12 pt-4 pb-0 border-b border-white/[0.06] shrink-0 overflow-x-auto scrollbar-hide">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
@@ -434,28 +436,30 @@ export function FullProfileDialog({
                   {/* Activity */}
                   <div>
                     <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-2">Recent Activity</h4>
-                    {userActivity?.activities?.map((game) => (
-                      <GameActivityCard key={`${game.type}-${game.name}`} game={game} />
-                    ))}
-                    {userActivity?.music && <MusicActivityCard music={userActivity.music} />}
-                    {moeActivity && <NowWatchingCard activity={moeActivity} />}
-                    {(!userActivity?.activities || userActivity.activities.length === 0) && !userActivity?.music && !moeActivity && (
-                      <div className="flex flex-col items-center justify-center text-center text-[#9a9aad] py-12 rounded-lg bg-white/[0.02] border border-white/[0.04]">
-                        <p className="text-sm">No recent activity to show.</p>
-                      </div>
-                    )}
+                    <div className="space-y-3">
+                      {moeActivity && <NowWatchingCard activity={moeActivity} />}
+                      {userActivity?.music && <MusicActivityCard music={userActivity.music} />}
+                      {userActivity?.activities?.map((game) => (
+                        <GameActivityCard key={`${game.type}-${game.name}`} game={game} />
+                      ))}
+                      {!moeActivity && !userActivity?.music && (!userActivity?.activities || userActivity.activities.length === 0) && (
+                        <div className="flex flex-col items-center justify-center text-center text-[#9a9aad] py-12 rounded-lg bg-white/[0.02] border border-white/[0.04]">
+                          <p className="text-sm">No recent activity to show.</p>
+                        </div>
+                      )}
+                    </div>
                   </div>
                 </div>
               )}
 
               {activeTab === "activity" && (
                 <div className="space-y-4">
+                  {moeActivity && <NowWatchingCard activity={moeActivity} />}
+                  {userActivity?.music && <MusicActivityCard music={userActivity.music} />}
                   {userActivity?.activities?.map((game) => (
                     <GameActivityCard key={`${game.type}-${game.name}`} game={game} />
                   ))}
-                  {userActivity?.music && <MusicActivityCard music={userActivity.music} />}
-                  {moeActivity && <NowWatchingCard activity={moeActivity} />}
-                  {(!userActivity?.activities || userActivity.activities.length === 0) && !userActivity?.music && !moeActivity && (
+                  {!moeActivity && !userActivity?.music && (!userActivity?.activities || userActivity.activities.length === 0) && (
                     <div className="flex flex-col items-center justify-center h-full text-center text-[#9a9aad] py-20">
                       <p className="text-sm">No activity in the last 30 days.</p>
                     </div>

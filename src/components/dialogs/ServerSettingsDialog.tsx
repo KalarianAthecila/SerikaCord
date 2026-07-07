@@ -44,6 +44,10 @@ import {
   GripVertical,
   Search,
   Play,
+  Lock,
+  Mail,
+  Globe,
+  ClipboardList,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { ROLE_PERMISSION_CATEGORIES } from "@/lib/constants/rolePermissions";
@@ -87,7 +91,9 @@ type SettingsTab =
   | "moderation"
   | "safety"
   | "members"
-  | "channels";
+  | "channels"
+  | "access"
+  | "applications";
 
 /** Tabs whose content is a multi-column / table layout and needs full width. */
 const WIDE_SETTINGS_TABS = new Set<SettingsTab>([
@@ -191,6 +197,22 @@ interface AuditLogEntry {
   };
 }
 
+interface ServerApplication {
+  id: string;
+  user: {
+    id: string;
+    username: string;
+    displayName?: string;
+    avatar?: string;
+    createdAt: string;
+  };
+  status: "pending" | "approved" | "rejected" | "interviewed";
+  answers: { question: string; answer: string }[];
+  createdAt: string;
+  processedAt?: string;
+  rejectionReason?: string;
+}
+
 export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialogProps) {
   const { currentServer, fetchServers, channels } = useServer();
   const { user } = useAuth();
@@ -267,6 +289,9 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [textChannels, setTextChannels] = useState<ServerChannel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingAppCount, setPendingAppCount] = useState(0);
+  const [applications, setApplications] = useState<ServerApplication[]>([]);
+  const [applicationFilter, setApplicationFilter] = useState<"all" | "pending" | "approved" | "rejected" | "interviewed">("all");
 
   // Emoji upload refs
   const emojiInputRef = useRef<HTMLInputElement>(null);
@@ -313,6 +338,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         "integrations.webhooks": false,
         "soundboard.enabled": true,
         "soundboard.volume": 100,
+        "access.joinMode": "invite_only",
+        isAgeGated: false,
       };
       try {
         const res = await fetch(`/api/servers/${currentServer.id}/settings`);
@@ -333,6 +360,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           base["integrations.webhooks"] = Boolean(s.integrations?.webhooks);
           base["soundboard.enabled"] = s.soundboard?.enabled ?? true;
           base["soundboard.volume"] = s.soundboard?.volume ?? 100;
+          base["access.joinMode"] = s.access?.joinMode || "invite_only";
+          base.isAgeGated = Boolean(s.isAgeGated);
         }
       } catch {
         // Defaults stay in place; a failed load must not block the dialog
@@ -450,6 +479,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             }
             break;
           }
+          case "applications": {
+            const appsRes = await fetch(`/api/servers/${currentServer.id}/applications?status=${applicationFilter}`);
+            if (appsRes.ok) {
+              const appsData = await appsRes.json();
+              setApplications(appsData.applications || []);
+            }
+            break;
+          }
         }
       } catch (error) {
         console.error("Failed to fetch data:", error);
@@ -459,14 +496,29 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     };
 
     fetchData();
-  }, [activeTab, open, currentServer, fetchMembersData, fetchRolesData]);
+  }, [activeTab, open, currentServer, fetchMembersData, fetchRolesData, applicationFilter]);
 
   // Reset role draft init ref when dialog closes (so opening again starts fresh)
   useEffect(() => {
     if (!open) {
       roleDraftInitIdRef.current = null;
+      return;
     }
-  }, [open]);
+    if (!currentServer) return;
+
+    const fetchAppCount = async () => {
+      try {
+        const res = await fetch(`/api/servers/${currentServer.id}/applications/count`);
+        if (res.ok) {
+          const data = await res.json();
+          setPendingAppCount(data.count ?? 0);
+        }
+      } catch {
+        setPendingAppCount(0);
+      }
+    };
+    void fetchAppCount();
+  }, [open, currentServer]);
 
   // Track the last role ID we initialized the draft for, so updates to the
   // roles list (e.g. after a member role assignment) don't wipe unsaved edits.
@@ -657,6 +709,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     "integrations.webhooks": "Webhooks integration",
     "soundboard.enabled": "Soundboard",
     "soundboard.volume": "Soundboard volume",
+    "access.joinMode": "Server access",
+    isAgeGated: "Age-restricted server",
   };
 
   // One atomic bulk save for every dirty field across all settings tabs.
@@ -1294,6 +1348,47 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     toast.success("Copied to clipboard!");
   };
 
+  const handleReviewApplication = async (
+    applicationId: string,
+    status: "approved" | "rejected" | "interviewed",
+    rejectionReason?: string
+  ) => {
+    if (!currentServer) return;
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/applications/${applicationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, rejectionReason }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        toast.error(data?.error || "Failed to update application");
+        return;
+      }
+
+      setApplications((prev) =>
+        prev.map((app) =>
+          app.id === applicationId
+            ? { ...app, status, processedAt: new Date().toISOString(), rejectionReason }
+            : app
+        )
+      );
+      if (status === "approved") {
+        setPendingAppCount((prev) => Math.max(0, prev - 1));
+        toast.success("Application approved. User has been added to the server.");
+      } else if (status === "rejected") {
+        setPendingAppCount((prev) => Math.max(0, prev - 1));
+        toast.success("Application rejected.");
+      } else {
+        toast.success("Application marked for interview.");
+      }
+    } catch (error) {
+      console.error("Failed to review application:", error);
+      toast.error("Failed to update application");
+    }
+  };
+
   if (!open || !currentServer) return null;
 
   // Permission guard: non-admin users cannot access server settings UI
@@ -1346,8 +1441,15 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       title: "User Management",
       items: [
         { id: "members" as SettingsTab, label: "Members", icon: Users },
+        { id: "applications" as SettingsTab, label: "Applications", icon: ClipboardList },
         { id: "invites" as SettingsTab, label: "Invites", icon: Link2 },
         { id: "integrations" as SettingsTab, label: "Integrations", icon: Folder },
+      ],
+    },
+    {
+      title: "Access",
+      items: [
+        { id: "access" as SettingsTab, label: "Access", icon: Lock },
       ],
     },
   ];
@@ -2347,6 +2449,239 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     );
   };
 
+  const renderAccess = () => {
+    const joinMode = draftString("access.joinMode", "invite_only");
+    const options = [
+      {
+        key: "invite_only",
+        icon: Lock,
+        title: "Invite Only",
+        description: "People can join your server directly with an invite",
+      },
+      {
+        key: "apply_to_join",
+        icon: Mail,
+        title: "Apply to Join",
+        description: "People must submit an application and be approved to join",
+      },
+      {
+        key: "discoverable",
+        icon: Globe,
+        title: "Discoverable",
+        description: "Anyone can join your server directly through Server Discovery",
+      },
+    ] as const;
+
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-white mb-1">Access</h2>
+          <p className="text-sm text-[#888888]">Control how people join your server</p>
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-white font-medium">How can people join your server?</h3>
+          <p className="text-sm text-[#888888]">
+            Keep your server private, or open it up for more people to join.{" "}
+            <a
+              href="https://support.discord.com/hc/en-us/articles/29729107418519-Server-Member-Applications"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#8B5CF6] hover:underline"
+            >
+              Learn More
+            </a>
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {options.map((option) => {
+              const Icon = option.icon;
+              const selected = joinMode === option.key;
+              return (
+                <button
+                  key={option.key}
+                  onClick={() => settingsDraft.update("access.joinMode", option.key)}
+                  className={cn(
+                    "flex flex-col items-center text-center p-4 rounded-xl border transition-colors",
+                    selected
+                      ? "bg-[#8B5CF6]/10 border-[#8B5CF6]/50"
+                      : "bg-[#111111] border-[#222222] hover:border-[#333333]"
+                  )}
+                >
+                  <div className={cn("p-2 rounded-full mb-2", selected ? "text-[#8B5CF6]" : "text-[#888888]")}>
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <span className={cn("font-medium", selected ? "text-white" : "text-[#aaaaaa]")}>
+                    {option.title}
+                  </span>
+                  <span className="text-xs text-[#888888] mt-1">{option.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-white font-medium">Age-Restricted Server</span>
+              <p className="text-sm text-[#888888] mt-1">
+                Users will need to confirm they are over the legal age to view the content in this server.{" "}
+                <a
+                  href="https://support.discord.com/hc/en-us/articles/115000084051"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#8B5CF6] hover:underline"
+                >
+                  Learn more
+                </a>
+              </p>
+            </div>
+            <ToggleSwitch
+              checked={draftBool("isAgeGated")}
+              onCheckedChange={(checked) => {
+                settingsDraft.update("isAgeGated", checked);
+                if (checked) {
+                  settingsDraft.update("access.joinMode", "invite_only");
+                }
+              }}
+              aria-label="Age-restricted server"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderApplications = () => {
+    const filtered = applicationFilter === "all"
+      ? applications
+      : applications.filter((app) => app.status === applicationFilter);
+
+    const statusBadge = (status: ServerApplication["status"]) => {
+      const styles = {
+        pending: "bg-yellow-500/10 text-yellow-500",
+        approved: "bg-green-500/10 text-green-500",
+        rejected: "bg-red-500/10 text-red-500",
+        interviewed: "bg-blue-500/10 text-blue-500",
+      };
+      return (
+        <span className={cn("px-2 py-0.5 rounded text-xs font-medium", styles[status])}>
+          {status.charAt(0).toUpperCase() + status.slice(1)}
+        </span>
+      );
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-white mb-1">Member Applications</h2>
+            <p className="text-sm text-[#888888]">Review and manage server member applications</p>
+          </div>
+          <select
+            value={applicationFilter}
+            onChange={(e) => setApplicationFilter(e.target.value as typeof applicationFilter)}
+            className="h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white text-sm"
+          >
+            <option value="all">All Types</option>
+            <option value="pending">Pending</option>
+            <option value="approved">Approved</option>
+            <option value="rejected">Rejected</option>
+            <option value="interviewed">Interviewed</option>
+          </select>
+        </div>
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <ClipboardList className="w-12 h-12 text-[#666666] mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-white mb-2">No applications</h3>
+            <p className="text-[#888888] text-sm">
+              {applicationFilter === "all"
+                ? "There are no member applications to review"
+                : `No ${applicationFilter} applications`}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filtered.map((app) => (
+              <div
+                key={app.id}
+                className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="w-10 h-10">
+                      <AvatarImage src={app.user.avatar} />
+                      <AvatarFallback className="bg-[#8B5CF6] text-white">
+                        {(app.user.displayName || app.user.username || "?").charAt(0)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-white font-medium">
+                        {app.user.displayName || app.user.username}
+                      </p>
+                      <p className="text-xs text-[#888888]">@{app.user.username}</p>
+                    </div>
+                  </div>
+                  {statusBadge(app.status)}
+                </div>
+
+                <div className="space-y-2">
+                  {app.answers.map((answer, index) => (
+                    <div key={index}>
+                      <p className="text-xs text-[#888888] uppercase">{answer.question}</p>
+                      <p className="text-sm text-white">{answer.answer}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {app.status === "pending" && (
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <button
+                      onClick={() => handleReviewApplication(app.id, "approved")}
+                      className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-md"
+                    >
+                      Approve
+                    </button>
+                    <button
+                      onClick={() => handleReviewApplication(app.id, "interviewed")}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md"
+                    >
+                      Interview
+                    </button>
+                    <button
+                      onClick={() => {
+                        const reason = window.prompt("Rejection reason (optional):");
+                        if (reason === null) return;
+                        void handleReviewApplication(app.id, "rejected", reason || undefined);
+                      }}
+                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md"
+                    >
+                      Reject
+                    </button>
+                  </div>
+                )}
+
+                {app.rejectionReason && (
+                  <p className="text-xs text-red-400">Reason: {app.rejectionReason}</p>
+                )}
+
+                <p className="text-xs text-[#666666]">
+                  Submitted {new Date(app.createdAt).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderWidget = () => (
     <div className="space-y-6">
       <div>
@@ -2743,6 +3078,10 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         return renderModeration();
       case "integrations":
         return renderIntegrations();
+      case "access":
+        return renderAccess();
+      case "applications":
+        return renderApplications();
       default:
         return renderOverview();
     }
@@ -2765,21 +3104,29 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   {section.title}
                 </h3>
                 <div className="space-y-0.5">
-                  {section.items.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => setActiveTab(item.id)}
-                      className={cn(
-                        "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
-                        activeTab === item.id
-                          ? "bg-[#8B5CF6]/10 text-white"
-                          : "text-[#888888] hover:bg-[#111111] hover:text-white"
-                      )}
-                    >
-                      <item.icon className="w-4 h-4 flex-shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                    </button>
-                  ))}
+                  {section.items.map((item) => {
+                    const showBadge = pendingAppCount > 0 && (item.id === "applications" || item.id === "members");
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveTab(item.id)}
+                        className={cn(
+                          "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
+                          activeTab === item.id
+                            ? "bg-[#8B5CF6]/10 text-white"
+                            : "text-[#888888] hover:bg-[#111111] hover:text-white"
+                        )}
+                      >
+                        <item.icon className="w-4 h-4 flex-shrink-0" />
+                        <span className="truncate flex-1 text-left">{item.label}</span>
+                        {showBadge && (
+                          <span className="ml-auto px-1.5 py-0.5 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] text-center">
+                            {pendingAppCount > 99 ? "99+" : pendingAppCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ))}

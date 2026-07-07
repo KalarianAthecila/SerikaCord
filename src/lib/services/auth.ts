@@ -121,11 +121,22 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
       payload: payload as unknown as JWTPayload,
     };
   } catch (localError) {
-    // Local verification failed - try accounts API fallback (with caching)
+    // Local verification failed - try accounts API fallback.
+    // Two cache layers keep the slow (5–10s worst case) external verify off the
+    // hot path: L1 in-memory (per process) and L2 Redis (shared across all app
+    // instances under load balancing). Both use the same short TTL so the
+    // token-revocation window is unchanged.
     const tokenHash = crypto.createHash('sha256').update(token).digest('hex').slice(0, 32);
     const cached = tokenVerifyCache.get(tokenHash);
     if (cached && cached.expiresAt > Date.now()) {
       return cached.result;
+    }
+
+    const redisKey = `tokenverify:${tokenHash}`;
+    const l2 = await cache.get<{ valid: boolean; payload?: JWTPayload; accountsUser?: any }>(redisKey);
+    if (l2) {
+      tokenVerifyCache.set(tokenHash, { result: l2, expiresAt: Date.now() + TOKEN_VERIFY_CACHE_TTL_MS });
+      return l2;
     }
 
     try {
@@ -155,6 +166,8 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
           accountsUser: data.user,
         };
         tokenVerifyCache.set(tokenHash, { result, expiresAt: Date.now() + TOKEN_VERIFY_CACHE_TTL_MS });
+        // Share across instances (best-effort; TTL matches the in-memory window).
+        void cache.set(redisKey, result, Math.ceil(TOKEN_VERIFY_CACHE_TTL_MS / 1000));
         return result;
       }
       

@@ -31,6 +31,7 @@ interface Server {
   memberCount: number;
   onlineCount?: number;
   isPartnered?: boolean;
+  joinMode?: string;
   category?: string;
   tags?: string[];
 }
@@ -156,7 +157,7 @@ function ServerCard({
             disabled={joining}
             className="px-4 py-1.5 rounded-full bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-colors disabled:opacity-60"
           >
-            {joining ? <Loader2 className="w-4 h-4 animate-spin" /> : "Join"}
+            {joining ? <Loader2 className="w-4 h-4 animate-spin" /> : server.joinMode === "apply_to_join" ? "Apply" : "Join"}
           </button>
         </div>
 
@@ -184,6 +185,9 @@ export default function ExplorePage() {
   const [servers, setServers] = useState<Server[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [joiningServerId, setJoiningServerId] = useState<string | null>(null);
+  const [applyServer, setApplyServer] = useState<Server | null>(null);
+  const [applyAnswer, setApplyAnswer] = useState("");
+  const [isSubmittingApply, setIsSubmittingApply] = useState(false);
 
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -205,6 +209,13 @@ export default function ExplorePage() {
   }, [selectedCategory, debouncedSearch]);
 
   const handleJoinServer = async (serverId: string) => {
+    const server = servers.find((s) => s.id === serverId);
+    if (server?.joinMode === "apply_to_join") {
+      setApplyServer(server);
+      setApplyAnswer("");
+      return;
+    }
+
     setJoiningServerId(serverId);
     try {
       const response = await fetch(`/api/servers/${serverId}/join`, {
@@ -217,6 +228,31 @@ export default function ExplorePage() {
       console.error("Failed to join server:", error);
     } finally {
       setJoiningServerId(null);
+    }
+  };
+
+  const handleSubmitApplication = async () => {
+    if (!applyServer || !applyAnswer.trim()) return;
+    setIsSubmittingApply(true);
+    try {
+      const response = await fetch(`/api/servers/${applyServer.id}/applications`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          answers: [
+            { question: "Why would you like to join?", answer: applyAnswer.trim() },
+          ],
+        }),
+      });
+      if (response.ok) {
+        setApplyServer(null);
+        setApplyAnswer("");
+        alert("Application submitted! You will be notified when it is reviewed.");
+      }
+    } catch (error) {
+      console.error("Failed to submit application:", error);
+    } finally {
+      setIsSubmittingApply(false);
     }
   };
 
@@ -345,6 +381,41 @@ export default function ExplorePage() {
           </section>
         </div>
       </ScrollArea>
+
+      {applyServer && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
+          <div className="w-full max-w-md bg-[#111214] rounded-xl border border-[#1f1f22] p-6 space-y-4">
+            <div>
+              <h3 className="text-xl font-bold text-white">Apply to join {applyServer.name}</h3>
+              <p className="text-sm text-[#949ba4] mt-1">
+                This server requires an application. Tell them a bit about yourself.
+              </p>
+            </div>
+            <textarea
+              value={applyAnswer}
+              onChange={(e) => setApplyAnswer(e.target.value)}
+              placeholder="Why would you like to join?"
+              rows={4}
+              className="w-full p-3 rounded-lg bg-[#1f1f22] border border-[#2b2d31] text-white placeholder:text-[#949ba4] focus:outline-none focus:border-[#5865F2] resize-none"
+            />
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={() => setApplyServer(null)}
+                className="px-4 py-2 text-white hover:bg-[#2b2d31] rounded-lg transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => void handleSubmitApplication()}
+                disabled={!applyAnswer.trim() || isSubmittingApply}
+                className="px-4 py-2 bg-[#5865F2] hover:bg-[#4752c4] disabled:opacity-60 text-white rounded-lg transition-colors"
+              >
+                {isSubmittingApply ? "Submitting..." : "Submit Application"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

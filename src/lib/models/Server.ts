@@ -40,7 +40,11 @@ export interface IServer extends Document {
       enabled: boolean;
       volume: number;
     };
+    access: {
+      joinMode: 'invite_only' | 'apply_to_join' | 'discoverable';
+    };
   };
+  joinMode: 'invite_only' | 'apply_to_join' | 'discoverable';
   soundboardSounds: {
     name: string;
     url: string;
@@ -189,6 +193,19 @@ const ServerSchema = new Schema<IServer>({
       enabled: { type: Boolean, default: true },
       volume: { type: Number, default: 100 },
     },
+    access: {
+      joinMode: {
+        type: String,
+        enum: ['invite_only', 'apply_to_join', 'discoverable'],
+        default: 'invite_only',
+      },
+    },
+  },
+  joinMode: {
+    type: String,
+    enum: ['invite_only', 'apply_to_join', 'discoverable'],
+    default: 'invite_only',
+    index: true,
   },
   soundboardSounds: [{
     name: { type: String, required: true },

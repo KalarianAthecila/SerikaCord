@@ -8,6 +8,7 @@ export { Invite, type IInvite } from './Invite';
 export { ServerEmoji, type IServerEmoji } from './ServerEmoji';
 export { ServerSticker, type IServerSticker } from './ServerSticker';
 export { ServerBan, type IServerBan } from './ServerBan';
+export { ServerMemberApplication, type IServerMemberApplication, type ApplicationStatus } from './ServerMemberApplication';
 export { AuthorizedApp, type IAuthorizedApp } from './AuthorizedApp';
 export { UserDeviceSession, type IUserDeviceSession } from './UserDeviceSession';
 export { UserConnection, type IUserConnection, type ConnectionProvider } from './UserConnection';

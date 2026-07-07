@@ -20,6 +20,7 @@ const typeConfig: Record<string, { label: string; Icon: React.ComponentType<{ cl
   vscode:  { label: "Working in VS Code:", Icon: Code2,    color: "#0ea5e9" },
   music:   { label: "Listening to Music",    Icon: Music,    color: "#e4335a" },
   windsurf:{ label: "Coding in Windsurf",  Icon: Wind,     color: "#38bdf8" },
+  devin:   { label: "Coding in Devin Desktop", Icon: Wind, color: "#0bb39a" },
   cursor:  { label: "Coding in Cursor",    Icon: Code2,    color: "#a855f7" },
   zed:     { label: "Coding in Zed",       Icon: Terminal, color: "#facc15" },
   claude:  { label: "Working with Claude",  Icon: Bot,      color: "#f97316" },

@@ -263,16 +263,14 @@ export function ProfileCard({
 
   const badges = user.badges?.length ? getBadgesByPriority(user.badges as string[]) : [];
 
-  const bgStyle = getProfileBackgroundStyle(user.customization);
-  const hasBgOverride = Boolean(bgStyle.background || bgStyle.backgroundColor);
+  const bgStyle = getProfileBackgroundStyle(user.customization, { opaque: true });
   const isHolographic = user.customization?.profileCardEffect === 'holographic';
 
   return (
     <div
       className={cn(
-        "w-[min(340px,calc(100vw-1.5rem))] overflow-hidden border border-white/[0.06] shadow-2xl transition-all duration-300",
+        "w-[min(340px,calc(100vw-1.5rem))] max-h-[100dvh] overflow-y-auto overflow-x-hidden border border-white/[0.06] shadow-2xl transition-all duration-300 bg-[#0c0c10]",
         !noRoundedCorners && "rounded-xl",
-        !hasBgOverride && !isHolographic && "bg-[#0c0c10]",
         isHolographic && "holographic-animation",
         className
       )}
@@ -417,22 +415,20 @@ export function ProfileCard({
           </div>
         )}
 
-        {/* Activity cards: game, music (Last.fm), watching (serika.moe) */}
-        {userActivity?.activities?.map((game) => (
-          <div key={`${game.type}-${game.name}`} className="mt-4">
-            <GameActivityCard game={game} />
-          </div>
-        ))}
-        {userActivity?.music && (
-          <div className="mt-4">
-            <MusicActivityCard music={userActivity.music} />
-          </div>
-        )}
-        {moeActivity && (
+        {/* Activity cards: show only one at a time, with serika.moe first */}
+        {moeActivity ? (
           <div className="mt-4">
             <NowWatchingCard activity={moeActivity} />
           </div>
-        )}
+        ) : userActivity?.music ? (
+          <div className="mt-4">
+            <MusicActivityCard music={userActivity.music} />
+          </div>
+        ) : userActivity?.activities?.[0] ? (
+          <div className="mt-4">
+            <GameActivityCard game={userActivity.activities[0]} />
+          </div>
+        ) : null}
 
         {/* Connections */}
         {!hideConnections && user.connections && user.connections.length > 0 && (
