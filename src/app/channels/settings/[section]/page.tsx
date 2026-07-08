@@ -48,7 +48,8 @@ const CONNECTION_PROVIDERS: Array<{
   { id: "github",    label: "GitHub",      color: "#c9d1d9", bg: "#ffffff12", hint: "Authorise via GitHub.", category: "social" },
   { id: "twitter",   label: "X / Twitter", color: "#1d9bf0", bg: "#1d9bf020", hint: "Authorise via X.", category: "social" },
   { id: "instagram", label: "Instagram",   color: "#e1306c", bg: "#e1306c20", hint: "Authorise via Instagram.", category: "social" },
-  { id: "discord",   label: "Discord",     color: "#5865f2", bg: "#5865f220", hint: "Authorise via Discord.", category: "social" },
+  { id: "discord",   label: "Discord",     color: "#5865f2", bg: "#5865f220", hint: "Managed through your Serika account.", category: "social" },
+  { id: "serika",    label: "Serika",      color: "#8B5CF6", bg: "#8B5CF620", hint: "Managed through your Serika account.", category: "social" },
   { id: "website",   label: "Website",     color: "#8B5CF6", bg: "#8B5CF620", hint: "Enter your personal website URL.", category: "social" },
 ];
 
@@ -1452,20 +1453,30 @@ export default function MobileSettingsSectionPage() {
                               </div>
                             </div>
                             {conn ? (
-                              <button
-                                onClick={async () => {
-                                  const res = await fetch(`/api/users/me/connections/${conn.id}`, { method: "DELETE" });
-                                  if (res.ok) {
-                                    setConnections((prev) => prev.filter((c) => c.id !== conn.id));
-                                    toast.success(`${prov.label} disconnected`);
-                                  } else {
-                                    toast.error("Failed to disconnect");
-                                  }
-                                }}
-                                className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                              >
-                                Disconnect
-                              </button>
+                              prov.id === "serika" || prov.id === "discord" ? (
+                                <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--app-accent)]/10 text-[var(--app-accent)]">
+                                  Managed
+                                </span>
+                              ) : (
+                                <button
+                                  onClick={async () => {
+                                    const res = await fetch(`/api/users/me/connections/${conn.id}`, { method: "DELETE" });
+                                    if (res.ok) {
+                                      setConnections((prev) => prev.filter((c) => c.id !== conn.id));
+                                      toast.success(`${prov.label} disconnected`);
+                                    } else {
+                                      toast.error("Failed to disconnect");
+                                    }
+                                  }}
+                                  className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                                >
+                                  Disconnect
+                                </button>
+                              )
+                            ) : prov.id === "serika" || prov.id === "discord" ? (
+                              <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--app-accent)]/10 text-[var(--app-accent)]">
+                                Managed
+                              </span>
                             ) : disabledProviders.includes(prov.id) ? (
                               <button
                                 disabled

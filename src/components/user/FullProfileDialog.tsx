@@ -11,6 +11,7 @@ import { MusicActivityCard } from "@/components/user/MusicActivityCard";
 import { GameActivityCard } from "@/components/user/GameActivityCard";
 import { NowWatchingCard } from "@/components/user/NowWatchingCard";
 import { useUserActivity } from "@/hooks/useMoeActivity";
+import { useCurrentTime } from "@/hooks/useCurrentTime";
 import { CalendarDays, MessageSquare, UserPlus, Clock, Check, Copy, ExternalLink, Crown } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
@@ -69,6 +70,7 @@ export function FullProfileDialog({
   const status = fullUser.status ?? "offline";
   const displayName = fullUser.displayName || fullUser.username;
   const userActivity = useUserActivity(fullUser.id);
+  const localTime = useCurrentTime(fullUser.timezone);
   const moeActivity = userActivity?.activity ?? null;
   const badges = fullUser.badges?.length ? getBadgesByPriority(fullUser.badges as string[]) : [];
 
@@ -300,11 +302,11 @@ export function FullProfileDialog({
                   <span className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: STATUS_COLORS[status] }} />
                   <span className="text-xs text-[#9a9aad]">{STATUS_LABELS[status]}</span>
                 </div>
-                {fullUser.showTimezone && fullUser.timezone && (
+                {fullUser.showTimezone && fullUser.timezone && localTime && (
                   <div className="flex items-center gap-1.5 mt-1.5">
                     <Clock className="w-3.5 h-3.5 text-[#9a9aad] shrink-0" />
                     <span className="text-xs text-[#9a9aad]">
-                      {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: fullUser.timezone })}
+                      {localTime}
                     </span>
                     <span className="text-[#4e5058] text-xs">&bull;</span>
                     <span className="text-xs text-[#9a9aad]">{fullUser.timezone}</span>

@@ -7,6 +7,8 @@ import type { MessageContextMenuState } from "@/hooks/useMessageActions";
 interface MessageContextMenuProps<M extends ChatMessage> {
   menu: MessageContextMenuState<M> | null;
   isOwn: (message: M) => boolean;
+  /** Owner / MANAGE_MESSAGES — can delete other people's messages. */
+  canModerate?: boolean;
   onClose: () => void;
   onReply: (message: M) => void;
   onAddReaction?: (message: M) => void;
@@ -23,6 +25,7 @@ const itemClass =
 export function MessageContextMenu<M extends ChatMessage>({
   menu,
   isOwn,
+  canModerate = false,
   onClose,
   onReply,
   onAddReaction,
@@ -34,6 +37,8 @@ export function MessageContextMenu<M extends ChatMessage>({
   if (!menu) return null;
 
   const { message } = menu;
+  const own = isOwn(message);
+  const canDelete = own || canModerate;
   const run = (action: () => void) => () => {
     action();
     onClose();
@@ -87,19 +92,21 @@ export function MessageContextMenu<M extends ChatMessage>({
       <button onClick={run(() => onPinToggle(message))} className={itemClass}>
         <Pin className="w-4 h-4" /> {message.pinned ? "Unpin Message" : "Pin Message"}
       </button>
-      {isOwn(message) && (
-        <>
-          <div className="h-px bg-[var(--border-subtle)] my-1" />
-          <button onClick={run(() => onEdit(message))} className={itemClass}>
-            <Pencil className="w-4 h-4" /> Edit Message
-          </button>
-          <button
-            onClick={run(() => onDelete(message))}
-            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/20 transition-colors text-left"
-          >
-            <Trash2 className="w-4 h-4" /> Delete Message
-          </button>
-        </>
+      {(own || canDelete) && (
+        <div className="h-px bg-[var(--border-subtle)] my-1" />
+      )}
+      {own && (
+        <button onClick={run(() => onEdit(message))} className={itemClass}>
+          <Pencil className="w-4 h-4" /> Edit Message
+        </button>
+      )}
+      {canDelete && (
+        <button
+          onClick={run(() => onDelete(message))}
+          className="w-full flex items-center gap-2 px-3 py-2 text-sm text-red-400 hover:bg-red-500/20 transition-colors text-left"
+        >
+          <Trash2 className="w-4 h-4" /> Delete Message
+        </button>
       )}
     </div>
   );

@@ -621,11 +621,16 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
     .filter((t: any) => t.members?.some((m: any) => m.userId === user.id))
     .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
-  // Get app counts per team
-  const teamsWithCounts = await Promise.all(teams.map(async (team: any) => {
-    const apps = await Application.find({ teamId: team.id });
-    const appCount = apps.length;
-    return { ...sanitizeTeam(team), appCount };
+  // Get app counts per team — batch fetch all apps for all teams in one query
+  const teamIds = teams.map((t: any) => t.id);
+  const allApps = teamIds.length > 0 ? await Application.find({ teamId: { in: teamIds } }) : [];
+  const appCountByTeam = new Map<string, number>();
+  for (const app of allApps as any[]) {
+    appCountByTeam.set(app.teamId, (appCountByTeam.get(app.teamId) || 0) + 1);
+  }
+  const teamsWithCounts = teams.map((team: any) => ({
+    ...sanitizeTeam(team),
+    appCount: appCountByTeam.get(team.id) || 0,
   }));
 
   return { teams: teamsWithCounts };

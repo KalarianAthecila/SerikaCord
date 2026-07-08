@@ -2,10 +2,10 @@ import { Elysia, t } from 'elysia';
 import { cors } from '@elysiajs/cors';
 import { jwt } from '@elysiajs/jwt';
 import { config } from '@/lib/config';
-import { connectDB } from '@/lib/db';
+import { connectDB, cache } from '@/lib/db';
 import { authenticateRequest, invalidateUserCache } from '@/lib/services/auth';
 import { checkRateLimit, getClientIP, rejectInvalidObjectIdParams, decryptFromStorage } from '@/lib/security';
-import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection } from '@/lib/models';
+import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection, ServerMember, Server, Role, ServerEmoji, ServerSticker, Channel, Message } from '@/lib/models';
 import { RichPresence } from '@/lib/models/RichPresence';
 import { authRoutes } from './auth';
 import { serverRoutes, inviteRoutes, partnerRoutes } from './servers';
@@ -299,9 +299,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Import ServerMember to get user's servers
-    const { ServerMember, Server } = await import('@/lib/models');
-    
+    // Get user's servers
     const memberships = await ServerMember.find({ userId: user.id });
 
     // Batch fetch servers
@@ -346,12 +344,20 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const { ServerMember, Server, Role } = await import('@/lib/models');
-    
     const memberships = await ServerMember.find({ userId: user.id });
     const serverIds = memberships.map(m => m.serverId);
-    const servers = serverIds.length > 0 ? await Server.find({ id: { in: serverIds } }) : [];
+    const [servers, allRoles] = await Promise.all([
+      serverIds.length > 0 ? Server.find({ id: { in: serverIds } }) : [],
+      serverIds.length > 0 ? Role.find({ serverId: { in: serverIds } }) : [],
+    ]);
     const serverMap = new Map(servers.map(s => [s.id, s]));
+    // Group roles by serverId for O(1) lookup
+    const rolesByServer = new Map<string, any[]>();
+    for (const role of allRoles as any[]) {
+      const list = rolesByServer.get(role.serverId) || [];
+      list.push(role);
+      rolesByServer.set(role.serverId, list);
+    }
 
     const results = [];
     for (const membership of memberships) {
@@ -362,7 +368,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       if (server.ownerId === user.id) {
         perms = 8n | (1n << 3n);
       } else {
-        const serverRoles = await Role.find({ serverId: server.id });
+        const serverRoles = rolesByServer.get(server.id) || [];
         const memberRoles = serverRoles.filter(r => (membership.roles || []).includes(r.id) || r.isDefault);
         for (const role of memberRoles) {
           perms |= BigInt(role.permissions || '0');
@@ -389,7 +395,6 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     try {
-      const { ServerMember, Message, Channel, User } = await import('@/lib/models');
 
       // Get all servers the user is a member of, plus their role IDs per server
       const memberships = await ServerMember.find({ userId: user.id });
@@ -459,16 +464,20 @@ const userRoutes = new Elysia({ prefix: '/users' })
       const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
       const authorMap = new Map(authors.map(a => [a.id, a]));
 
+      // Batch-decrypt all mention contents in parallel
+      const decryptedMentionContents = await Promise.all(
+        filteredMessages.map((msg) => decryptFromStorage(msg.content || ''))
+      );
+
       // Map channel -> serverId for filtering
       const serversWithMentions = new Set<string>();
-      const mentions = await Promise.all(filteredMessages.map(async (msg) => {
+      const mentions = filteredMessages.map((msg, idx) => {
         const sid = channelToServer.get(msg.channelId) || '';
         if (sid) serversWithMentions.add(sid);
         const author = authorMap.get(msg.authorId);
-        const decryptedContent = await decryptFromStorage(msg.content || '');
         return {
           id: msg.id,
-          content: decryptedContent,
+          content: decryptedMentionContents[idx],
           channelId: msg.channelId,
           channelName: channelToName.get(msg.channelId) || '',
           serverId: sid,
@@ -480,7 +489,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
             avatar: author.avatar,
           } : null,
         };
-      }));
+      });
 
       return {
         servers: Array.from(serversWithMentions).map(id => ({ id })),
@@ -547,9 +556,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     try {
-      const { ServerMember, ServerEmoji, Server } = await import('@/lib/models');
-
-      // Get all servers the user is a member of
+      // Get all servers the user is a member of, plus emojis and server names in parallel
       const memberships = await ServerMember.find({ userId: user.id });
       const serverIds = memberships.map(m => m.serverId);
 
@@ -557,14 +564,10 @@ const userRoutes = new Elysia({ prefix: '/users' })
         return { emojis: [] };
       }
 
-      // Get all emojis from all servers the user is in
-      const emojis = await ServerEmoji.find({
-        serverId: { in: serverIds },
-        available: true,
-      });
-
-      // Get server names for grouping
-      const servers = await Server.find({ id: { in: serverIds } });
+      const [emojis, servers] = await Promise.all([
+        ServerEmoji.find({ serverId: { in: serverIds }, available: true }),
+        Server.find({ id: { in: serverIds } }),
+      ]);
       const serverNameMap = new Map(servers.map(s => [s.id, s.name]));
 
       return {
@@ -590,8 +593,6 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     try {
-      const { ServerMember, ServerSticker, Server } = await import('@/lib/models');
-
       // Get all servers the user is a member of
       const memberships = await ServerMember.find({ userId: user.id });
       const serverIds = memberships.map(m => m.serverId);
@@ -600,16 +601,14 @@ const userRoutes = new Elysia({ prefix: '/users' })
         return { stickers: [] };
       }
 
-      // Get all stickers from all servers the user is in
-      const stickers = await ServerSticker.find({
-        serverId: { in: serverIds },
-        available: true,
-      });
+      // Fetch stickers and server names in parallel
+      const [stickers, servers] = await Promise.all([
+        ServerSticker.find({ serverId: { in: serverIds }, available: true }),
+        Server.find({ id: { in: serverIds } }),
+      ]);
       // Sort by createdAt desc
       stickers.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
 
-      // Get server names for grouping
-      const servers = await Server.find({ id: { in: serverIds } });
       const serverNameMap = new Map(servers.map(s => [s.id, s.name]));
 
       return {
@@ -1009,6 +1008,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
         t.Literal('twitter'),
         t.Literal('instagram'),
         t.Literal('battlenet'),
+        t.Literal('serika'),
       ]),
       accountId: t.String({ minLength: 1 }),
       username: t.Optional(t.String()),
@@ -1173,16 +1173,17 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: 'User not found' };
     }
 
-    const { ServerMember, Server } = await import('@/lib/models');
-    const requesterMemberships = await ServerMember.find({ userId: requester.id });
-    const targetMemberships = await ServerMember.find({ userId: targetUser.id });
+    const [requesterMemberships, targetMemberships] = await Promise.all([
+      ServerMember.find({ userId: requester.id }),
+      ServerMember.find({ userId: targetUser.id }),
+    ]);
 
-    const requesterServerIds = requesterMemberships.map((m) => m.serverId);
+    const requesterServerIds = new Set(requesterMemberships.map((m) => m.serverId));
     const mutualServerIds = targetMemberships
       .map((m) => m.serverId)
-      .filter((id) => requesterServerIds.includes(id));
+      .filter((id) => requesterServerIds.has(id));
 
-    const servers = await Server.find({ id: { in: mutualServerIds } });
+    const servers = mutualServerIds.length > 0 ? await Server.find({ id: { in: mutualServerIds } }) : [];
 
     return servers.map((s) => ({
       id: s.id,
@@ -1200,6 +1201,14 @@ const userRoutes = new Elysia({ prefix: '/users' })
   // Live activity for a user: "now watching" (serika.moe), Last.fm scrobble, and game/rich presence.
   // Respects the target user's "show activity" privacy setting.
   .get('/:userId/activity', async ({ params, set }) => {
+    // Short Redis cache to prevent DB pool exhaustion from 5s client polling.
+    const cacheKey = `activity:${params.userId}`;
+    const cached = await cache.get<string>(cacheKey).catch(() => null);
+    if (cached) {
+      set.headers['Content-Type'] = 'application/json';
+      return cached as any;
+    }
+
     const targetUser = await User.findById(params.userId);
     if (!targetUser) {
       set.status = 404;
@@ -1213,12 +1222,12 @@ const userRoutes = new Elysia({ prefix: '/users' })
 
     const userId = params.userId;
 
-    // Fetch all three in parallel
+    // Fetch all three in parallel — each is wrapped so one failure doesn't crash the endpoint
     const now = new Date();
     const [watchActivity, richPresenceDocs, lastfmConnection] = await Promise.all([
-      getMoeActivity(userId),
-      RichPresence.find({ userId: targetUser.id }),
-      UserConnection.findOne({ userId: targetUser.id, provider: 'lastfm' }),
+      getMoeActivity(userId).catch(() => null),
+      RichPresence.find({ userId: targetUser.id }).catch(() => []),
+      UserConnection.findOne({ userId: targetUser.id, provider: 'lastfm' as any }).catch(() => null),
     ]);
 
     // Filter non-expired rich presence
@@ -1227,7 +1236,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
     // Fetch Last.fm now playing if connected
     let music: import('@/lib/services/lastfmService').LastFmTrack | null = null;
     if (lastfmConnection?.accountId) {
-      music = await getLastFmNowPlaying(lastfmConnection.accountId);
+      music = await getLastFmNowPlaying(lastfmConnection.accountId).catch(() => null);
     }
 
     const activities = (activeRichPresence as any[]).map((doc) => ({
@@ -1243,12 +1252,17 @@ const userRoutes = new Elysia({ prefix: '/users' })
       endsAt: doc.endsAt ?? null,
     }));
 
-    return {
+    const result = {
       activity: watchActivity,
       music,
       game: activities[0] ?? null,
       activities,
     };
+
+    // Cache for 5 seconds — short enough for live activity, long enough to dedupe concurrent polls
+    await cache.set(cacheKey, JSON.stringify(result), 5).catch(() => {});
+
+    return result;
   }, {
     params: t.Object({
       userId: t.String(),
@@ -1913,8 +1927,6 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
     }
 
     try {
-      const { ServerMember, Message, Channel, Server, User } = await import('@/lib/models');
-
       // Get all servers the user is a member of
       const memberships = await ServerMember.find({ userId: user.id });
       const serverIds = memberships.map(m => m.serverId);
@@ -1984,7 +1996,12 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
       const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
       const authorMap = new Map(authors.map(a => [a.id, a]));
 
-      const notifications = await Promise.all(filteredMessages.map(async (msg) => {
+      // Batch-decrypt all notification contents in parallel
+      const decryptedNotifContents = await Promise.all(
+        filteredMessages.map((msg) => decryptFromStorage(msg.content || ''))
+      );
+
+      const notifications = filteredMessages.map((msg, idx) => {
         const channelId = msg.channelId;
         const serverId = channelToServer.get(channelId) || '';
         const channelName = channelToName.get(channelId) || '';
@@ -1992,7 +2009,6 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
         const serverIcon = serverToIcon.get(serverId) || '';
         
         const author = authorMap.get(msg.authorId);
-        const decryptedContent = await decryptFromStorage(msg.content || '');
 
         // Determine mention type
         let mentionType = 'mention';
@@ -2012,9 +2028,9 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
           channelId,
           serverName,
           channelName,
-          content: decryptedContent,
+          content: decryptedNotifContents[idx],
         };
-      }));
+      });
 
       return { notifications };
     } catch (error) {
@@ -2115,6 +2131,68 @@ export const api = new Elysia({ prefix: '/api' })
     service: 'serikacord',
     timestamp: new Date().toISOString(),
   }))
+  .post('/webhooks/:channelId/:token', async ({ params, body, set }) => {
+    const { ChannelWebhook, Channel, Message } = await import('@/lib/models');
+    const webhook = await ChannelWebhook.findOne({ 
+      channelId: params.channelId, 
+      token: params.token 
+    });
+    if (!webhook) {
+      set.status = 404;
+      return { error: 'Webhook not found' };
+    }
+    const channel = await Channel.findById(params.channelId);
+    if (!channel) {
+      set.status = 404;
+      return { error: 'Channel not found' };
+    }
+    const payload = body as any;
+    const content = payload.content || '';
+    const username = payload.username || webhook.name;
+    const avatarUrl = payload.avatar_url || webhook.avatar;
+    const { encryptForStorage } = await import('@/lib/security');
+    const encryptedContent = await encryptForStorage(content);
+    const message = await Message.create({
+      channelId: channel.id,
+      authorId: webhook.creatorId || '00000000-0000-0000-0000-000000000000',
+      content: encryptedContent,
+      type: 'default',
+    });
+    await Channel.updateById(channel.id, { lastMessageId: message.id, updatedAt: new Date() });
+    const isDiscord = username.toLowerCase().includes('discord') || webhook.name.toLowerCase().includes('discord');
+    const messageResponse = {
+      id: message.id,
+      content: content,
+      authorId: message.authorId,
+      author: {
+        id: message.authorId,
+        username: username,
+        displayName: username,
+        avatar: avatarUrl,
+        status: 'online',
+        isBot: true,
+        isSystem: false,
+        isDiscord: isDiscord,
+      },
+      channelId: message.channelId,
+      serverId: channel.serverId,
+      createdAt: message.createdAt,
+      updatedAt: message.updatedAt,
+      attachments: [],
+      edited: false,
+      type: 'default',
+      pinned: false,
+      reactions: [],
+    };
+    const { publishToChannel } = await import('./channels');
+    publishToChannel(channel.id, { type: 'message', message: messageResponse });
+    return {
+      id: message.id,
+      channel_id: channel.id,
+      content: content,
+      webhook_id: webhook.id,
+    };
+  })
   .get('/platform/announcement', async () => {
     const { getPlatformSettings } = await import('@/lib/models/PlatformSettings');
     const settings = await getPlatformSettings();
@@ -2131,6 +2209,102 @@ export const api = new Elysia({ prefix: '/api' })
       ? (settings.allowedFileTypes as any[]).map((f: any) => f.type)
       : config.ALLOWED_FILE_TYPES;
     return { fileTypes };
+  })
+  // Public list of enabled TTS sound triggers (triggerWord + path). Every
+  // client fetches this to know which words play sounds. No auth needed —
+  // it's just a mapping of public asset paths.
+  .get('/tts-sounds', async () => {
+    const { TtsSound } = await import('@/lib/models/TtsSound');
+    const sounds = await TtsSound.find({ enabled: true });
+    return {
+      sounds: sounds.map((s) => ({ triggerWord: s.triggerWord, path: s.path })),
+    };
+  })
+  // Public list of enabled TTS custom voices. Clients fetch this to resolve
+  // preset names like [fish:miku] or [se:Brian] to actual provider IDs.
+  .get('/tts-voices', async () => {
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    const voices = await TtsVoice.find({ enabled: true });
+    return {
+      voices: voices.map((v) => ({
+        id: v.id,
+        name: v.name,
+        provider: v.provider,
+        referenceId: v.referenceId,
+        description: v.description,
+        isDefault: v.isDefault,
+      })),
+    };
+  })
+  // Fish Audio TTS proxy — hides the API key from the client.
+  // Clients POST { text, reference_id, speed, volume } and receive raw audio bytes.
+  .post('/tts/fish', async ({ body, set }) => {
+    const apiKey = process.env.FISH_API_KEY;
+    if (!apiKey) {
+      set.status = 503;
+      return { error: 'Fish Audio TTS is not configured' };
+    }
+    const { text, reference_id, speed, volume } = body as {
+      text: string;
+      reference_id: string;
+      speed?: number;
+      volume?: number;
+    };
+    if (!text?.trim() || !reference_id) {
+      set.status = 400;
+      return { error: 'text and reference_id are required' };
+    }
+    try {
+      const fishBody: Record<string, unknown> = {
+        text,
+        reference_id,
+        format: 'mp3',
+        mp3_bitrate: 128,
+        normalize: true,
+        latency: 'normal',
+        chunk_length: 300,
+        prosody: {
+          speed: speed ?? 1,
+          volume: volume ?? 0,
+          normalize_loudness: true,
+        },
+      };
+      const res = await fetch('https://api.fish.audio/v1/tts', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${apiKey}`,
+          'Content-Type': 'application/json',
+          'model': 's2-pro',
+        },
+        body: JSON.stringify(fishBody),
+      });
+      if (!res.ok) {
+        const errText = await res.text().catch(() => 'Unknown error');
+        console.error('Fish Audio TTS error:', res.status, errText);
+        set.status = res.status === 402 ? 402 : 502;
+        return { error: `Fish Audio error: ${errText}` };
+      }
+      const audioBuffer = await res.arrayBuffer();
+      set.headers['Content-Type'] = 'audio/mpeg';
+      set.headers['Cache-Control'] = 'no-store';
+      return new Response(audioBuffer, {
+        headers: {
+          'Content-Type': 'audio/mpeg',
+          'Cache-Control': 'no-store',
+        },
+      });
+    } catch (err) {
+      console.error('Fish Audio TTS proxy error:', err);
+      set.status = 500;
+      return { error: 'Failed to generate speech' };
+    }
+  }, {
+    body: t.Object({
+      text: t.String(),
+      reference_id: t.String(),
+      speed: t.Optional(t.Number()),
+      volume: t.Optional(t.Number()),
+    }),
   })
   .use(authRoutes)
   .use(userRoutes)

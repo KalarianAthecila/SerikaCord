@@ -238,7 +238,7 @@ export function ImageLightbox({
 
       <div
         className={cn(
-          "relative max-w-[90vw] max-h-[90vh] overflow-hidden",
+          "relative max-w-[90vw] max-h-[90vh]",
           scale > 1 && "cursor-grab",
           isDragging && "cursor-grabbing"
         )}

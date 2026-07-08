@@ -82,6 +82,18 @@ export function isImageLikeUrl(url: string): boolean {
   return false;
 }
 
+// Provider "page" URLs (giphy/tenor/klipy detail pages) that LinkEmbed turns
+// into a rendered GIF. These are NOT direct image URLs, so isImageLikeUrl is
+// false — MessageContent should suppress the raw link and let LinkEmbed render
+// the GIF cleanly (like a first-party GIF).
+const GIF_PROVIDER_PAGE =
+  /^https?:\/\/(?:www\.)?(?:giphy\.com\/(?:gifs|embed|clips)\/|tenor\.com\/(?:view|i)\/|(?:[a-z0-9-]+\.)?klipy\.(?:com|dev)\/)/i;
+
+export function isGifProviderUrl(url: string): boolean {
+  if (!url) return false;
+  return GIF_PROVIDER_PAGE.test(url);
+}
+
 export function isGifUrl(url: string): boolean {
   if (!url) return false;
   if (GIF_EXTENSIONS.test(url) || GIF_HOSTS.test(url)) return true;

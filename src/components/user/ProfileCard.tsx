@@ -24,6 +24,7 @@ import { cn } from "@/lib/utils";
 import { getBadgesByPriority } from "@/lib/constants/badges";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
+import { useCurrentTime } from "@/hooks/useCurrentTime";
 import { hasPermissionBit } from "@/lib/roles/bitfield";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle, getProfileBannerStyle } from "@/lib/userDisplayNameStyle";
 import { useUserActivity } from "@/hooks/useMoeActivity";
@@ -145,6 +146,7 @@ export function ProfileCard({
   const router = useRouter();
   const { user: currentUser } = useAuth();
   const isSelf = isCurrentUser || (currentUser?.id && user.id && currentUser.id === user.id);
+  const localTime = useCurrentTime(user.timezone);
 
   const [copied, setCopied] = useState(false);
   const [friendRequestSent, setFriendRequestSent] = useState(user.friendRequestSent ?? false);
@@ -409,11 +411,11 @@ export function ProfileCard({
             />
             <span className="text-xs text-[#9a9aad]">{STATUS_LABELS[status]}</span>
           </div>
-          {user.showTimezone && user.timezone && (
+          {user.showTimezone && user.timezone && localTime && (
             <div className="flex items-center gap-1.5 mt-1.5">
               <Clock className="w-3.5 h-3.5 text-[#9a9aad] shrink-0" />
               <span className="text-xs text-[#9a9aad]">
-                {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: user.timezone })}
+                {localTime}
               </span>
               <span className="text-[#4e5058] text-xs">•</span>
               <span className="text-xs text-[#9a9aad]">{user.timezone}</span>

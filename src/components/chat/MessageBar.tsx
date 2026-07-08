@@ -268,17 +268,17 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
     const addFiles = useCallback((files: File[]) => {
       if (files.length === 0) return;
 
-      const maxFree = 100 * 1024 * 1024; // 100MB
-      const maxPremium = 500 * 1024 * 1024; // 500MB
+      const maxFree = 500 * 1024 * 1024; // 500MB
+      const maxPremium = 2 * 1024 * 1024 * 1024; // 2GB
 
       const validFiles: File[] = [];
       for (const file of files) {
         if (file.size > maxPremium) {
-          toast.error(`${file.name} is too large`, { description: `Maximum is 500MB (Serika+). File is ${(file.size / 1024 / 1024).toFixed(1)}MB.` });
+          toast.error(`${file.name} is too large`, { description: `Maximum is 2GB (Serika+). File is ${(file.size / 1024 / 1024).toFixed(1)}MB.` });
           continue;
         }
         if (file.size > maxFree) {
-          toast.error(`${file.name} exceeds 100MB`, { description: "Upgrade to Serika+ for up to 500MB uploads." });
+          toast.error(`${file.name} exceeds 500MB`, { description: "Upgrade to Serika+ for up to 2GB uploads." });
           continue;
         }
         validFiles.push(file);
@@ -453,7 +453,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
       setShowEmojiPicker(false);
     }, [onStickerSelect]);
 
-    const canSend = (hasText || attachments.length > 0) && !isSending && !isUploading;
+    const canSend = (hasText || attachments.length > 0) && !isUploading;
 
     return (
       <>
@@ -620,6 +620,9 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                               <span className="flex flex-col min-w-0 gap-0.5">
                                 <span className="truncate font-mono text-sm text-[#a78bfa]">/{suggestion.label}</span>
                                 <span className="truncate text-xs text-[var(--app-muted)]">{suggestion.description}</span>
+                                {suggestion.commandHint && (
+                                  <span className="truncate text-[10px] text-[var(--app-muted)]/60 italic">{suggestion.commandHint}</span>
+                                )}
                               </span>
                               {suggestion.usage && (
                                 <span className="ml-auto text-[10px] font-mono text-[var(--app-muted)]/70 truncate shrink-0 max-w-[140px]">
@@ -638,6 +641,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 {mentionSuggestions.length === 1 && mentionSuggestions[0].kind === "param-hint" && (() => {
                   const s = mentionSuggestions[0];
                   const cmdIcon = s.commandName ? COMMAND_ICONS[s.commandName as keyof typeof COMMAND_ICONS] : null;
+                  const isTts = s.commandName === "tts";
                   return (
                     <div className="px-4 py-3">
                       <div className="flex items-center gap-2 mb-1.5">
@@ -654,7 +658,53 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                         )}
                       </div>
                       <p className="text-xs text-[var(--app-muted)] leading-relaxed pl-8">{s.description}</p>
-                      <p className="text-[10px] text-[var(--app-muted)]/60 mt-1.5 pl-8">Type your value and press space…</p>
+                      {isTts ? (
+                        <div className="mt-2.5 pl-8 space-y-1.5">
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[f]</span>
+                            <span className="text-[var(--app-muted)]">Female voice</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[m]</span>
+                            <span className="text-[var(--app-muted)]">Male voice</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[2x]</span>
+                            <span className="text-[var(--app-muted)]">Speed (also: [1.5x], [slow], [fast], [turbo])</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[vol:50]</span>
+                            <span className="text-[var(--app-muted)]">Volume 0–500% (also: [vol:BASS] bass boost)</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[steven]</span>
+                            <span className="text-[var(--app-muted)]">Stephen Hawking robotic voice</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[fish:miku]</span>
+                            <span className="text-[var(--app-muted)]">FishAudio AI voice (also: [fish:model-id])</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[f-japanese]</span>
+                            <span className="text-[var(--app-muted)]">Gender + accent (also: [m-dutch], [scottish]…)</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <Volume2 className="w-3 h-3 shrink-0 text-emerald-400/70" />
+                            <span className="text-[var(--app-muted)]">Switch speakers mid-message: [m] hi [f] hello</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <Music className="w-3 h-3 shrink-0 text-amber-400/70" />
+                            <span className="text-[var(--app-muted)]">Trigger words auto-play sound effects mid-speech</span>
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-[var(--app-border)]/40">
+                            <p className="text-[10px] text-[var(--app-muted)]/70 font-mono">
+                              <span className="text-[#a78bfa]">/tts</span> [m] whoa nice day [f] ik right
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-[var(--app-muted)]/60 mt-1.5 pl-8">Type your value and press space…</p>
+                      )}
                     </div>
                   );
                 })()}
@@ -829,7 +879,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 onKeyDown={onKeyDown}
                 placeholder={placeholder}
                 aria-label={ariaLabel ?? placeholder}
-                disabled={disabled || isSending}
+                disabled={disabled}
               />
 
               {/* Right-side buttons (pinned to editor row) */}
@@ -898,12 +948,12 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 </PopoverContent>
               </Popover>
 
-              {/* Send button (stays visible with a spinner while sending/uploading) */}
+              {/* Send button (shows spinner while sending/uploading, but stays clickable) */}
               {(canSend || isSending || isUploading) && (
                 <button
                   type="button"
                   onClick={onSend}
-                  disabled={isSending || isUploading}
+                  disabled={isUploading}
                   aria-label={isUploading ? "Uploading attachments" : isSending ? "Sending" : "Send message"}
                   className="text-[#8B5CF6] hover:text-[#A78BFA] transition-colors disabled:opacity-70"
                 >

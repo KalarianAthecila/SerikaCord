@@ -3,8 +3,8 @@
 export const UPLOAD_LIMITS = {
   // Regular users
   FREE: {
-    maxFileSize: 20 * 1024 * 1024, // 20MB
-    maxFileSizeDisplay: '20MB',
+    maxFileSize: 500 * 1024 * 1024, // 500MB
+    maxFileSizeDisplay: '500MB',
     maxAvatarSize: 2 * 1024 * 1024, // 2MB
     maxBannerSize: 5 * 1024 * 1024, // 5MB
     allowedFormats: ['jpg', 'jpeg', 'png', 'gif', 'webp'],
@@ -15,8 +15,8 @@ export const UPLOAD_LIMITS = {
   
   // Serika+ subscribers
   SERIKA_PLUS: {
-    maxFileSize: 100 * 1024 * 1024, // 100MB
-    maxFileSizeDisplay: '100MB',
+    maxFileSize: 2 * 1024 * 1024 * 1024, // 2GB
+    maxFileSizeDisplay: '2GB',
     maxAvatarSize: 10 * 1024 * 1024, // 10MB
     maxBannerSize: 25 * 1024 * 1024, // 25MB
     allowedFormats: ['jpg', 'jpeg', 'png', 'gif', 'webp', 'apng'],
@@ -53,24 +53,28 @@ export const SERVER_LIMITS = {
     maxServers: 100,
     maxChannels: 500,
     maxRoles: 250,
-    maxEmoji: 50,
-    maxStickers: 5,
+    maxEmoji: 500,
+    maxStickers: 500,
+    maxSoundboardSounds: 500,
     maxMembers: 500000,
     maxBans: 10000,
   },
   BOOSTED_TIER_1: {
-    maxEmoji: 100,
-    maxStickers: 15,
+    maxEmoji: 500,
+    maxStickers: 500,
+    maxSoundboardSounds: 500,
     audioQualityKbps: 128,
   },
   BOOSTED_TIER_2: {
-    maxEmoji: 150,
-    maxStickers: 30,
+    maxEmoji: 500,
+    maxStickers: 500,
+    maxSoundboardSounds: 500,
     audioQualityKbps: 256,
   },
   BOOSTED_TIER_3: {
-    maxEmoji: 250,
-    maxStickers: 60,
+    maxEmoji: 500,
+    maxStickers: 500,
+    maxSoundboardSounds: 500,
     audioQualityKbps: 384,
   },
 } as const;

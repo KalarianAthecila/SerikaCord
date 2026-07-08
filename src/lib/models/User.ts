@@ -81,6 +81,10 @@ export interface IUserSettings {
     dyslexicFont: boolean;
     messageSpacing: 'compact' | 'cozy';
     tts: boolean;
+    /** Reading speed for TTS playback (0.5–2.0). Default 1. */
+    ttsRate?: number;
+    /** Preferred TTS voice gender. Default 'auto'. */
+    ttsVoice?: 'auto' | 'female' | 'male';
   };
   voiceVideo: {
     inputVolume: number;

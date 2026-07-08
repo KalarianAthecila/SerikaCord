@@ -1,4 +1,4 @@
-import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
+import { RateLimiterRedis, RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import sanitizeHtml from 'sanitize-html';
 import xss from 'xss';
 import crypto from 'crypto';
@@ -6,20 +6,35 @@ import { getRedis } from '../db/redis';
 import { config } from '../config';
 
 // Rate limiter configurations
-const rateLimiters: Map<string, RateLimiterRedis> = new Map();
+const rateLimiters: Map<string, RateLimiterRedis | RateLimiterMemory> = new Map();
 
 export function getRateLimiter(
   key: string,
   options: { points: number; duration: number; blockDuration?: number }
-): RateLimiterRedis {
-  if (!rateLimiters.has(key)) {
-    rateLimiters.set(key, new RateLimiterRedis({
-      storeClient: getRedis(),
-      keyPrefix: `rl:${key}`,
-      points: options.points,
-      duration: options.duration,
-      blockDuration: options.blockDuration || 0,
-    }));
+): RateLimiterRedis | RateLimiterMemory {
+  const redisClient = getRedis();
+  
+  if (redisClient) {
+    const existing = rateLimiters.get(key);
+    if (!existing || existing instanceof RateLimiterMemory) {
+      rateLimiters.set(key, new RateLimiterRedis({
+        storeClient: redisClient,
+        keyPrefix: `rl:${key}`,
+        points: options.points,
+        duration: options.duration,
+        blockDuration: options.blockDuration || 0,
+      }));
+    }
+  } else {
+    const existing = rateLimiters.get(key);
+    if (!existing || existing instanceof RateLimiterRedis) {
+      rateLimiters.set(key, new RateLimiterMemory({
+        keyPrefix: `rl:${key}`,
+        points: options.points,
+        duration: options.duration,
+        blockDuration: options.blockDuration || 0,
+      }));
+    }
   }
   return rateLimiters.get(key)!;
 }
@@ -55,9 +70,9 @@ export async function checkRateLimit(
   identifier: string
 ): Promise<{ success: boolean; retryAfter?: number; remaining?: number }> {
   const limiterConfig = rateLimiters_config[limiterKey];
-  const limiter = getRateLimiter(limiterKey, limiterConfig);
   
   try {
+    const limiter = getRateLimiter(limiterKey, limiterConfig);
     const result = await limiter.consume(identifier);
     return { 
       success: true, 
@@ -71,7 +86,32 @@ export async function checkRateLimit(
         remaining: 0 
       };
     }
-    throw error;
+    
+    // Redis connection error or general Redis command timeout - failover to memory rate limiting
+    console.warn(`⚠️ Rate limiter Redis error, falling back to memory: ${error instanceof Error ? error.message : error}`);
+    try {
+      const fallbackLimiter = new RateLimiterMemory({
+        keyPrefix: `rl-fallback:${limiterKey}`,
+        points: limiterConfig.points,
+        duration: limiterConfig.duration,
+        blockDuration: limiterConfig.blockDuration || 0,
+      });
+      const result = await fallbackLimiter.consume(identifier);
+      return {
+        success: true,
+        remaining: result.remainingPoints
+      };
+    } catch (memError) {
+      if (memError instanceof RateLimiterRes) {
+        return {
+          success: false,
+          retryAfter: Math.ceil(memError.msBeforeNext / 1000),
+          remaining: 0
+        };
+      }
+      // If memory rate limiting fails, default to allowing the action
+      return { success: true, remaining: 1 };
+    }
   }
 }
 

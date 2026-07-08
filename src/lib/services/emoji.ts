@@ -60,6 +60,140 @@ export function clearEmojiCache(emojiId?: string): void {
 }
 
 /**
+ * Batch-parse custom emojis across multiple message contents in a single pass.
+ * Collects all unique emoji IDs from all contents, does a single batch DB
+ * lookup for cache misses, then processes each content with the shared emoji
+ * map. This eliminates N separate parseCustomEmojis calls (each with its own
+ * Promise.all overhead) when loading a page of 50 messages.
+ *
+ * No server-access restriction is applied (pass undefined for both server
+ * params) — this matches the existing load-path behaviour where access was
+ * validated at send time.
+ */
+export async function batchParseCustomEmojis(
+  contents: string[],
+  userServerId?: string,
+  userServerIds?: string[]
+): Promise<EmojiParseResult[]> {
+  if (contents.length === 0) return [];
+
+  // Phase 1: Scan all contents for emoji matches and collect unique IDs.
+  const allMatches: { contentIdx: number; match: RegExpMatchArray }[] = [];
+  const uniqueIds = new Set<string>();
+
+  for (let i = 0; i < contents.length; i++) {
+    const matches = [...contents[i].matchAll(CUSTOM_EMOJI_REGEX)];
+    for (const match of matches) {
+      const emojiId = match[3];
+      allMatches.push({ contentIdx: i, match });
+      if (isValidUUID(emojiId)) {
+        uniqueIds.add(emojiId);
+      }
+    }
+  }
+
+  // Fast path: no emojis in any content
+  if (uniqueIds.size === 0) {
+    return contents.map(content => ({ content, emojis: [], invalidEmojis: [] }));
+  }
+
+  // Phase 2: Batch-fetch all unique emoji IDs.
+  // Check in-memory cache first, collect cache misses for a single DB query.
+  const emojiMap = new Map<string, IServerEmoji | null>();
+  const uncachedIds: string[] = [];
+
+  for (const id of uniqueIds) {
+    const cached = emojiCache.get(id);
+    if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+      emojiMap.set(id, cached.emoji);
+    } else {
+      uncachedIds.push(id);
+    }
+  }
+
+  if (uncachedIds.length > 0) {
+    const dbEmojis = await ServerEmoji.find({ id: { in: uncachedIds } });
+    const dbMap = new Map<string, IServerEmoji>();
+    for (const e of dbEmojis as any[]) {
+      dbMap.set(e.id, e);
+    }
+    for (const id of uncachedIds) {
+      const emoji = dbMap.get(id) ?? null;
+      emojiMap.set(id, emoji);
+      emojiCache.set(id, { emoji, timestamp: Date.now() });
+    }
+  }
+
+  // Build accessible servers set
+  const accessibleServers = new Set<string>();
+  if (userServerId) accessibleServers.add(userServerId);
+  if (userServerIds) for (const id of userServerIds) accessibleServers.add(id);
+
+  // Phase 3: Process each content's matches using the shared emoji map.
+  const results: EmojiParseResult[] = contents.map(content => ({
+    content,
+    emojis: [],
+    invalidEmojis: [],
+  }));
+
+  // Track seen IDs per content to handle duplicates within a single message
+  const seenPerContent: Map<number, Map<string, ParsedEmoji | null>> = new Map();
+
+  for (const { contentIdx, match } of allMatches) {
+    const [fullMatch, animated, name, emojiId] = match;
+    const result = results[contentIdx];
+
+    let seen = seenPerContent.get(contentIdx);
+    if (!seen) {
+      seen = new Map();
+      seenPerContent.set(contentIdx, seen);
+    }
+
+    if (seen.has(emojiId)) {
+      const cached = seen.get(emojiId);
+      if (cached) {
+        result.emojis.push({ ...cached, raw: fullMatch });
+      } else {
+        result.invalidEmojis.push(fullMatch);
+      }
+      continue;
+    }
+
+    if (!isValidUUID(emojiId)) {
+      result.invalidEmojis.push(fullMatch);
+      seen.set(emojiId, null);
+      continue;
+    }
+
+    const emoji = emojiMap.get(emojiId);
+    if (!emoji || !emoji.available) {
+      result.invalidEmojis.push(fullMatch);
+      seen.set(emojiId, null);
+      continue;
+    }
+
+    if (accessibleServers.size > 0 && !accessibleServers.has(emoji.serverId)) {
+      result.invalidEmojis.push(fullMatch);
+      seen.set(emojiId, null);
+      continue;
+    }
+
+    const parsedEmoji: ParsedEmoji = {
+      name: emoji.name,
+      id: emojiId,
+      animated: emoji.animated ?? false,
+      url: emoji.imageUrl,
+      raw: fullMatch,
+    };
+
+    result.emojis.push(parsedEmoji);
+    seen.set(emojiId, parsedEmoji);
+  }
+
+  return results;
+}
+
+/**
  * Parse custom emojis from message content
  * Validates emoji IDs and resolves them to actual emoji data
  * Handles multiple occurrences of the same emoji efficiently

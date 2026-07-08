@@ -293,6 +293,79 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [applications, setApplications] = useState<ServerApplication[]>([]);
   const [applicationFilter, setApplicationFilter] = useState<"all" | "pending" | "approved" | "rejected" | "interviewed">("all");
 
+  const [isSyncingDiscord, setIsSyncingDiscord] = useState(false);
+  const [isTriggeringTwitch, setIsTriggeringTwitch] = useState(false);
+  const [isTriggeringYoutube, setIsTriggeringYoutube] = useState(false);
+  const [isTriggeringDiscord, setIsTriggeringDiscord] = useState(false);
+
+  const handleDiscordSync = async () => {
+    if (!currentServer) return;
+    setIsSyncingDiscord(true);
+    try {
+      const mode = draftString("integrations.discordMode", "add");
+      const res = await fetch(`/api/servers/${currentServer.id}/integrations/discord/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`Synced Discord channels successfully! Mode: ${data.details.mode}. Created: ${data.details.created}, Linked: ${data.details.linked}, Deleted: ${data.details.deleted}.`);
+        await fetchServers();
+      } else {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || "Failed to sync Discord channels");
+      }
+    } catch {
+      toast.error("Failed to sync Discord channels");
+    } finally {
+      setIsSyncingDiscord(false);
+    }
+  };
+
+  const handleMockTrigger = async (type: "twitch" | "youtube" | "discord") => {
+    if (!currentServer) return;
+    let channelId = "";
+    if (type === "twitch") {
+      channelId = draftString("integrations.twitchNotificationChannelId", "");
+      setIsTriggeringTwitch(true);
+    } else if (type === "youtube") {
+      channelId = draftString("integrations.youtubeNotificationChannelId", "");
+      setIsTriggeringYoutube(true);
+    } else if (type === "discord") {
+      channelId = textChannels[0]?.id || "";
+      setIsTriggeringDiscord(true);
+    }
+
+    if (!channelId) {
+      toast.error("Please configure and select a notification channel first");
+      setIsTriggeringTwitch(false);
+      setIsTriggeringYoutube(false);
+      setIsTriggeringDiscord(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/servers/${currentServer.id}/integrations/${type}/mock-trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId }),
+      });
+      if (res.ok) {
+        toast.success(`Mock ${type} alert triggered successfully!`);
+      } else {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || `Failed to trigger mock ${type} alert`);
+      }
+    } catch {
+      toast.error(`Failed to trigger mock ${type} alert`);
+    } finally {
+      setIsTriggeringTwitch(false);
+      setIsTriggeringYoutube(false);
+      setIsTriggeringDiscord(false);
+    }
+  };
+
   // Emoji upload refs
   const emojiInputRef = useRef<HTMLInputElement>(null);
   const [isUploadingEmoji, setIsUploadingEmoji] = useState(false);
@@ -333,13 +406,21 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         "safety.antiSpam": true,
         "safety.mentionSpamLimit": 5,
         "integrations.discord": false,
+        "integrations.discordGuildId": "",
+        "integrations.discordMode": "add",
         "integrations.twitch": false,
+        "integrations.twitchChannel": "",
+        "integrations.twitchNotificationChannelId": "",
         "integrations.youtube": false,
+        "integrations.youtubeChannel": "",
+        "integrations.youtubeNotificationChannelId": "",
         "integrations.webhooks": false,
         "soundboard.enabled": true,
         "soundboard.volume": 100,
         "access.joinMode": "invite_only",
         isAgeGated: false,
+        discoveryDescription: "",
+        discoveryCategories: [],
       };
       try {
         const res = await fetch(`/api/servers/${currentServer.id}/settings`);
@@ -355,13 +436,21 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           base["safety.antiSpam"] = s.safety?.antiSpam ?? true;
           base["safety.mentionSpamLimit"] = s.safety?.mentionSpamLimit ?? 5;
           base["integrations.discord"] = Boolean(s.integrations?.discord);
+          base["integrations.discordGuildId"] = s.integrations?.discordGuildId || "";
+          base["integrations.discordMode"] = s.integrations?.discordMode || "add";
           base["integrations.twitch"] = Boolean(s.integrations?.twitch);
+          base["integrations.twitchChannel"] = s.integrations?.twitchChannel || "";
+          base["integrations.twitchNotificationChannelId"] = s.integrations?.twitchNotificationChannelId || "";
           base["integrations.youtube"] = Boolean(s.integrations?.youtube);
+          base["integrations.youtubeChannel"] = s.integrations?.youtubeChannel || "";
+          base["integrations.youtubeNotificationChannelId"] = s.integrations?.youtubeNotificationChannelId || "";
           base["integrations.webhooks"] = Boolean(s.integrations?.webhooks);
           base["soundboard.enabled"] = s.soundboard?.enabled ?? true;
           base["soundboard.volume"] = s.soundboard?.volume ?? 100;
           base["access.joinMode"] = s.access?.joinMode || "invite_only";
           base.isAgeGated = Boolean(s.isAgeGated);
+          base.discoveryDescription = s.discoveryDescription || "";
+          base.discoveryCategories = s.discoveryCategories || [];
         }
       } catch {
         // Defaults stay in place; a failed load must not block the dialog
@@ -2265,7 +2354,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-white mb-1">Server Emoji</h2>
-          <p className="text-sm text-[#888888]">Upload custom emoji for your server ({emojis.length}/50)</p>
+          <p className="text-sm text-[#888888]">Upload custom emoji for your server ({emojis.length}/500)</p>
         </div>
         <button
           onClick={() => emojiInputRef.current?.click()}
@@ -2367,7 +2456,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-xl font-bold text-white mb-1">Server Stickers</h2>
-          <p className="text-sm text-[#888888]">Upload custom stickers for your server ({stickers.length}/15)</p>
+          <p className="text-sm text-[#888888]">Upload custom stickers for your server ({stickers.length}/500)</p>
         </div>
         <button
           onClick={() => stickerInputRef.current?.click()}
@@ -2520,6 +2609,70 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             })}
           </div>
         </div>
+
+        {joinMode === "discoverable" && (
+          <div className="space-y-4 p-4 rounded-lg bg-[#111111] border border-[#222222] animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="space-y-2">
+              <label className="text-white font-medium text-sm">Discovery Description</label>
+              <Textarea
+                placeholder="A brief description of your server shown in Server Discovery..."
+                value={draftString("discoveryDescription")}
+                onChange={(e) => settingsDraft.update("discoveryDescription", e.target.value)}
+                maxLength={1024}
+                className="bg-[#0a0d15] border-[#222222] text-white placeholder-[#555555] focus:border-[#8B5CF6] min-h-[80px]"
+              />
+              <p className="text-xs text-[#888888] text-right">
+                {draftString("discoveryDescription").length}/1024
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-white font-medium text-sm">Discovery Categories</label>
+              <p className="text-xs text-[#888888]">Select up to 3 categories that best describe your server</p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[
+                  { id: "gaming", name: "Gaming" },
+                  { id: "music", name: "Music" },
+                  { id: "tech", name: "Tech & Programming" },
+                  { id: "art", name: "Art & Design" },
+                  { id: "education", name: "Education" },
+                  { id: "entertainment", name: "Entertainment" },
+                ].map((cat) => {
+                  const selectedCats = (settingsDraft.draft.discoveryCategories as string[]) || [];
+                  const isSelected = selectedCats.includes(cat.id);
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => {
+                        const nextCats = [...selectedCats];
+                        const idx = nextCats.indexOf(cat.id);
+                        if (idx > -1) {
+                          nextCats.splice(idx, 1);
+                        } else {
+                          if (nextCats.length >= 3) {
+                            toast.error("You can select up to 3 categories");
+                            return;
+                          }
+                          nextCats.push(cat.id);
+                        }
+                        settingsDraft.update("discoveryCategories", nextCats);
+                      }}
+                      className={cn(
+                        "px-3 py-1.5 rounded-full text-xs font-medium border transition-all active:scale-95",
+                        isSelected
+                          ? "bg-[#8B5CF6] border-[#8B5CF6] text-white shadow-md shadow-[#8B5CF6]/20"
+                          : "bg-[#0a0d15] border-[#222222] text-[#888888] hover:border-[#333333] hover:text-[#d5d9e8]"
+                      )}
+                    >
+                      {cat.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
           <div className="flex items-center justify-between">
@@ -2951,7 +3104,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-white">Sounds ({soundboardSounds.length}/20)</h3>
+            <h3 className="text-lg font-semibold text-white">Sounds ({soundboardSounds.length}/500)</h3>
             <p className="text-xs text-[#888888]">Upload audio files (max 20MB, 30s, mp3/wav/ogg)</p>
           </div>
           <button
@@ -3020,36 +3173,287 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     </div>
   );
 
-  const renderIntegrations = () => (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-white mb-1">Integrations</h2>
-        <p className="text-sm text-[#888888]">Enable or disable external integrations for your server</p>
-      </div>
+  const renderIntegrations = () => {
+    const isDiscordEnabled = draftBool("integrations.discord");
+    const isTwitchEnabled = draftBool("integrations.twitch");
+    const isYoutubeEnabled = draftBool("integrations.youtube");
+    const isWebhooksEnabled = draftBool("integrations.webhooks");
 
-      <div className="space-y-3">
-        {[
-          { key: "discord", label: "Discord Bridge", description: "Sync webhook announcements from Discord channels" },
-          { key: "twitch", label: "Twitch", description: "Announce stream go-live events in your server" },
-          { key: "youtube", label: "YouTube", description: "Post new video notifications to announcement channels" },
-          { key: "webhooks", label: "Custom Webhooks", description: "Allow inbound/outbound webhook automations" },
-        ].map((integration) => (
-          <div key={integration.key} className="p-4 rounded-lg bg-[#111111] border border-[#222222] flex items-center justify-between gap-4">
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-white mb-1">Integrations</h2>
+          <p className="text-sm text-[#888888]">Enable or disable external integrations for your server</p>
+        </div>
+
+        <div className="space-y-4">
+          {/* Discord Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#5865F2]/15 flex items-center justify-center shrink-0">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5 fill-[#5865F2]" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.872-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.06.06 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-semibold flex items-center gap-2">
+                    Discord Bridge
+                  </p>
+                  <p className="text-sm text-[#888888]">Sync channels, roles, and messages bidirectionally with Discord</p>
+                </div>
+              </div>
+              <ToggleSwitch
+                checked={isDiscordEnabled}
+                onCheckedChange={(checked) => settingsDraft.update("integrations.discord", checked)}
+                aria-label="Discord Bridge"
+              />
+            </div>
+
+            {isDiscordEnabled && (
+              <div className="pt-4 border-t border-[#222222] space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Bot Status & Invite */}
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-[#0d0d0d] border border-[#1e1e1e]">
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white">SerikaCord Bot</p>
+                    <p className="text-[11px] text-[#888888]">Online and listening for messages via Gateway</p>
+                  </div>
+                  <a
+                    href="https://discord.com/oauth2/authorize?client_id=1524469730256355421&permissions=8&scope=bot"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-white font-semibold bg-[#5865F2] hover:bg-[#4752c4] rounded-md h-8 px-3 transition-colors shrink-0"
+                  >
+                    Invite Bot <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+
+                {/* Guild ID Input */}
+                <div>
+                  <label className="block text-xs font-semibold text-[#888888] mb-2">DISCORD SERVER (GUILD) ID</label>
+                  <Input
+                    type="text"
+                    placeholder="e.g. 1161608848428236902"
+                    value={draftString("integrations.discordGuildId", "")}
+                    onChange={(e) => settingsDraft.update("integrations.discordGuildId", e.target.value)}
+                    className="bg-[#0a0a0a] border-[#222222] text-white font-mono text-sm"
+                  />
+                  <p className="text-[11px] text-[#666666] mt-1.5">
+                    Right-click your Discord server &gt; Copy Server ID (enable Developer Mode in Discord settings)
+                  </p>
+                </div>
+
+                {/* Advanced Sync Controls */}
+                <div className="bg-[#181818] p-4 rounded-md border border-[#2c2c2c] space-y-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-white">Channel &amp; Role Sync</p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2">SYNC MODE</label>
+                    <select
+                      value={draftString("integrations.discordMode", "add")}
+                      onChange={(e) => settingsDraft.update("integrations.discordMode", e.target.value)}
+                      className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+                    >
+                      <option value="add">Keep existing channels, add Discord channels alongside</option>
+                      <option value="delete">Replace all channels with Discord channels (destructive)</option>
+                    </select>
+                  </div>
+
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleDiscordSync}
+                      disabled={isSyncingDiscord}
+                      className="px-4 h-9 bg-[#5865F2] hover:bg-[#4752c4] disabled:bg-[#5865F2]/50 text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                    >
+                      {isSyncingDiscord ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Syncing...
+                        </>
+                      ) : (
+                        "Sync Channels & Roles"
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleMockTrigger("discord")}
+                      disabled={isTriggeringDiscord}
+                      className="px-4 h-9 bg-neutral-700 hover:bg-neutral-600 disabled:bg-neutral-800 text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                    >
+                      {isTriggeringDiscord ? (
+                        <>
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                          Testing...
+                        </>
+                      ) : (
+                        "Send Test Message"
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Info Banner */}
+                <div className="flex items-start gap-2 p-3 rounded-md bg-[#5865F2]/8 border border-[#5865F2]/20">
+                  <Check className="w-3.5 h-3.5 text-[#5865F2] shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-[#a8b1ff] leading-relaxed">
+                    Messages from Discord appear in SerikaCord with the author's Discord username and tag.
+                    Messages sent in SerikaCord are relayed back to Discord via the bot. Webhooks are auto-provisioned during sync.
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Twitch Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-white font-medium flex items-center gap-2">
+                  <span className="text-[#a970ff] font-semibold">Twitch Integration</span>
+                </p>
+                <p className="text-sm text-[#888888]">Post stream notifications automatically</p>
+              </div>
+              <ToggleSwitch
+                checked={isTwitchEnabled}
+                onCheckedChange={(checked) => settingsDraft.update("integrations.twitch", checked)}
+                aria-label="Twitch"
+              />
+            </div>
+
+            {isTwitchEnabled && (
+              <div className="pt-4 border-t border-[#222222] space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2">TWITCH CHANNEL NAME</label>
+                    <Input
+                      type="text"
+                      placeholder="e.g. shroud"
+                      value={draftString("integrations.twitchChannel", "")}
+                      onChange={(e) => settingsDraft.update("integrations.twitchChannel", e.target.value)}
+                      className="bg-[#0a0a0a] border-[#222222] text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2">NOTIFICATION CHANNEL</label>
+                    <select
+                      value={draftString("integrations.twitchNotificationChannelId", "")}
+                      onChange={(e) => settingsDraft.update("integrations.twitchNotificationChannelId", e.target.value)}
+                      className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+                    >
+                      <option value="">Select a channel</option>
+                      {textChannels.map((channel) => (
+                        <option key={channel.id} value={channel.id}>#{channel.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleMockTrigger("twitch")}
+                    disabled={isTriggeringTwitch}
+                    className="px-4 h-9 bg-[#a970ff] hover:bg-[#b88cff] disabled:bg-[#7e55bf] text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                  >
+                    {isTriggeringTwitch ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Triggering...
+                      </>
+                    ) : (
+                      "Trigger Mock Stream Live Alert"
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* YouTube Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-white font-medium flex items-center gap-2">
+                  <span className="text-[#FF0000] font-semibold">YouTube Integration</span>
+                </p>
+                <p className="text-sm text-[#888888]">Post notifications for new uploads and videos</p>
+              </div>
+              <ToggleSwitch
+                checked={isYoutubeEnabled}
+                onCheckedChange={(checked) => settingsDraft.update("integrations.youtube", checked)}
+                aria-label="YouTube"
+              />
+            </div>
+
+            {isYoutubeEnabled && (
+              <div className="pt-4 border-t border-[#222222] space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2">YOUTUBE CHANNEL ID OR NAME</label>
+                    <Input
+                      type="text"
+                      placeholder="e.g. MrBeast"
+                      value={draftString("integrations.youtubeChannel", "")}
+                      onChange={(e) => settingsDraft.update("integrations.youtubeChannel", e.target.value)}
+                      className="bg-[#0a0a0a] border-[#222222] text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2">NOTIFICATION CHANNEL</label>
+                    <select
+                      value={draftString("integrations.youtubeNotificationChannelId", "")}
+                      onChange={(e) => settingsDraft.update("integrations.youtubeNotificationChannelId", e.target.value)}
+                      className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+                    >
+                      <option value="">Select a channel</option>
+                      {textChannels.map((channel) => (
+                        <option key={channel.id} value={channel.id}>#{channel.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleMockTrigger("youtube")}
+                    disabled={isTriggeringYoutube}
+                    className="px-4 h-9 bg-[#FF0000] hover:bg-[#ff3333] disabled:bg-[#cc0000] text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                  >
+                    {isTriggeringYoutube ? (
+                      <>
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        Triggering...
+                      </>
+                    ) : (
+                      "Trigger Mock Video Upload Alert"
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Webhooks Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] flex items-center justify-between gap-4">
             <div>
-              <p className="text-white font-medium">{integration.label}</p>
-              <p className="text-sm text-[#888888]">{integration.description}</p>
+              <p className="text-white font-medium">Custom Webhooks</p>
+              <p className="text-sm text-[#888888]">Allow inbound/outbound webhook automations</p>
             </div>
             <ToggleSwitch
-              checked={draftBool(`integrations.${integration.key}`)}
-              onCheckedChange={(checked) => settingsDraft.update(`integrations.${integration.key}`, checked)}
-              aria-label={integration.label}
+              checked={isWebhooksEnabled}
+              onCheckedChange={(checked) => settingsDraft.update("integrations.webhooks", checked)}
+              aria-label="Custom Webhooks"
             />
           </div>
-        ))}
+        </div>
       </div>
-
-    </div>
-  );
+    );
+  };
 
   const renderContent = () => {
     switch (activeTab) {

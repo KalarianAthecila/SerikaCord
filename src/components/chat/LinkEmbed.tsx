@@ -8,6 +8,51 @@ import { GifFavoriteButton } from "@/components/chat/GifFavoriteButton";
 
 interface LinkEmbedProps {
   content: string;
+  /** Opens a GIF in the in-app image viewer instead of the provider website. */
+  onMediaClick?: (src: string, alt?: string) => void;
+}
+
+/** Shared media/badge layout for provider GIF embeds (Giphy/Tenor/Klipy). */
+function GifEmbedFrame({
+  gifSrc,
+  alt,
+  url,
+  source,
+  label,
+  onMediaClick,
+}: {
+  gifSrc: string;
+  alt: string;
+  url: string;
+  source: string;
+  label: string;
+  onMediaClick?: (src: string, alt?: string) => void;
+}) {
+  return (
+    <div className="mt-2 inline-flex relative group rounded-lg overflow-hidden max-w-[400px] chat-gif-wrap">
+      {onMediaClick ? (
+        <button type="button" className="inline-flex" onClick={() => onMediaClick(gifSrc, alt)}>
+          <img src={gifSrc} alt={alt} className="rounded-lg max-h-[300px] w-auto block cursor-pointer" loading="lazy" />
+        </button>
+      ) : (
+        <a href={url} target="_blank" rel="noopener noreferrer" className="inline-flex">
+          <img src={gifSrc} alt={alt} className="rounded-lg max-h-[300px] w-auto block" loading="lazy" />
+        </a>
+      )}
+      <a
+        href={url}
+        target="_blank"
+        rel="noopener noreferrer"
+        onClick={(e) => e.stopPropagation()}
+        className="absolute bottom-1 right-1 px-2 py-0.5 bg-black/70 rounded text-[10px] text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity hover:underline"
+      >
+        {label}
+      </a>
+      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+        <GifFavoriteButton url={url} title={alt} source={source} />
+      </div>
+    </div>
+  );
 }
 
 const FIRST_PARTY_DOMAINS = [
@@ -225,34 +270,14 @@ function SpotifyEmbed({ type, id, url }: { type: string; id: string; url: string
   );
 }
 
-function GiphyEmbed({ gifId, url }: { gifId: string; url: string }) {
+function GiphyEmbed({ gifId, url, onMediaClick }: { gifId: string; url: string; onMediaClick?: (src: string, alt?: string) => void }) {
   const gifUrl = `https://media.giphy.com/media/${gifId}/giphy.gif`;
   return (
-    <div className="mt-2 inline-flex relative group rounded-lg overflow-hidden max-w-[400px]">
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex"
-      >
-        <img
-          src={gifUrl}
-          alt="Giphy GIF"
-          className="rounded-lg max-h-[300px] w-auto block"
-          loading="lazy"
-        />
-        <div className="absolute bottom-1 right-1 px-2 py-0.5 bg-black/70 rounded text-[10px] text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-          GIPHY
-        </div>
-      </a>
-      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-        <GifFavoriteButton url={url} title="Giphy GIF" source="giphy" />
-      </div>
-    </div>
+    <GifEmbedFrame gifSrc={gifUrl} alt="Giphy GIF" url={url} source="giphy" label="GIPHY" onMediaClick={onMediaClick} />
   );
 }
 
-function TenorEmbed({ gifId, url, preview }: { gifId: string; url: string; preview?: { title?: string; description?: string; thumbnail?: string; siteName?: string } }) {
+function TenorEmbed({ gifId, url, preview, onMediaClick }: { gifId: string; url: string; preview?: { title?: string; description?: string; thumbnail?: string; siteName?: string }; onMediaClick?: (src: string, alt?: string) => void }) {
   const [gifSrc, setGifSrc] = useState<string | null>(preview?.thumbnail || null);
 
   useEffect(() => {
@@ -293,31 +318,11 @@ function TenorEmbed({ gifId, url, preview }: { gifId: string; url: string; previ
   }
 
   return (
-    <div className="mt-2 inline-flex relative group rounded-lg overflow-hidden max-w-[400px]">
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex"
-      >
-        <img
-          src={gifSrc}
-          alt={preview?.title || "Tenor GIF"}
-          className="rounded-lg max-h-[300px] w-auto block"
-          loading="lazy"
-        />
-        <div className="absolute bottom-1 right-1 px-2 py-0.5 bg-black/70 rounded text-[10px] text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-          Tenor
-        </div>
-      </a>
-      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-        <GifFavoriteButton url={url} title={preview?.title} source="tenor" />
-      </div>
-    </div>
+    <GifEmbedFrame gifSrc={gifSrc} alt={preview?.title || "Tenor GIF"} url={url} source="tenor" label="Tenor" onMediaClick={onMediaClick} />
   );
 }
 
-function KlipyEmbed({ url, preview }: { url: string; preview?: { title?: string; description?: string; thumbnail?: string; siteName?: string } }) {
+function KlipyEmbed({ url, preview, onMediaClick }: { url: string; preview?: { title?: string; description?: string; thumbnail?: string; siteName?: string }; onMediaClick?: (src: string, alt?: string) => void }) {
   const [gifSrc, setGifSrc] = useState<string | null>(preview?.thumbnail || null);
 
   useEffect(() => {
@@ -357,33 +362,13 @@ function KlipyEmbed({ url, preview }: { url: string; preview?: { title?: string;
   }
 
   return (
-    <div className="mt-2 inline-flex relative group rounded-lg overflow-hidden max-w-[400px]">
-      <a
-        href={url}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="inline-flex"
-      >
-        <img
-          src={gifSrc}
-          alt={preview?.title || "Klipy GIF"}
-          className="rounded-lg max-h-[300px] w-auto block"
-          loading="lazy"
-        />
-        <div className="absolute bottom-1 right-1 px-2 py-0.5 bg-black/70 rounded text-[10px] text-white font-medium opacity-0 group-hover:opacity-100 transition-opacity">
-          Klipy
-        </div>
-      </a>
-      <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-        <GifFavoriteButton url={url} title={preview?.title} source="klipy" />
-      </div>
-    </div>
+    <GifEmbedFrame gifSrc={gifSrc} alt={preview?.title || "Klipy GIF"} url={url} source="klipy" label="Klipy" onMediaClick={onMediaClick} />
   );
 }
 
 // Memoized: embeds fetch previews and must not re-run while unrelated chat
 // state (composer text, typing indicators) changes.
-export const LinkEmbed = memo(function LinkEmbed({ content }: LinkEmbedProps) {
+export const LinkEmbed = memo(function LinkEmbed({ content, onMediaClick }: LinkEmbedProps) {
   // Decode entities (e.g. `&amp;` in query strings) so URLs resolve correctly.
   const urls = extractUrls(decodeHtmlEntities(content));
   const url = urls[0] || "";
@@ -453,19 +438,19 @@ export const LinkEmbed = memo(function LinkEmbed({ content }: LinkEmbedProps) {
   if (urlType === "giphy") {
     const gifId = parseGiphyUrl(url);
     if (gifId) {
-      return <GiphyEmbed gifId={gifId} url={url} />;
+      return <GiphyEmbed gifId={gifId} url={url} onMediaClick={onMediaClick} />;
     }
   }
 
   if (urlType === "tenor") {
     const gifId = parseTenorUrl(url);
     if (gifId) {
-      return <TenorEmbed gifId={gifId} url={url} preview={preview || undefined} />;
+      return <TenorEmbed gifId={gifId} url={url} preview={preview || undefined} onMediaClick={onMediaClick} />;
     }
   }
 
   if (urlType === "klipy") {
-    return <KlipyEmbed url={url} preview={preview || undefined} />;
+    return <KlipyEmbed url={url} preview={preview || undefined} onMediaClick={onMediaClick} />;
   }
 
   return <GenericEmbed url={url} preview={preview || undefined} />;

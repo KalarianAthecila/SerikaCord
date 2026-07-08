@@ -25,6 +25,7 @@ import { PinnedMessagesDialog } from "@/components/chat/PinnedMessagesDialog";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { useChatSession } from "@/hooks/useChatSession";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
+import { playTts } from "@/lib/chat/tts";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { ChatMessage, MessageAuthor } from "@/lib/chat/types";
@@ -87,6 +88,21 @@ export default function DMConversationPage() {
         requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
       }
     },
+    onIncomingMessage: (message) => {
+      // Auto TTS for DMs: speak when the listener has TTS enabled or the
+      // message carries the /tts prefix (so both parties hear a /tts message).
+      const ttsEnabled = user?.settings?.accessibility?.tts === true;
+      const hasTtsPrefix = typeof message.content === "string" && message.content.startsWith("/tts ");
+      if ((ttsEnabled || hasTtsPrefix) && message.content) {
+        const authorName = message.author?.displayName || message.author?.username || "Someone";
+        void playTts({
+          content: message.content,
+          authorName,
+          rate: user?.settings?.accessibility?.ttsRate,
+          voiceGender: user?.settings?.accessibility?.ttsVoice,
+        });
+      }
+    },
   });
 
   const { executeCommand } = useSlashCommands({});
@@ -101,7 +117,12 @@ export default function DMConversationPage() {
       if (result.handled) {
         if (result.ttsText) {
           composer?.clear();
-          await chat.sendMessage({ contentOverride: result.ttsText });
+          void playTts({
+            content: result.ttsText,
+            rate: user?.settings?.accessibility?.ttsRate,
+            voiceGender: user?.settings?.accessibility?.ttsVoice,
+          });
+          await chat.sendMessage({ contentOverride: `/tts ${result.ttsText}` });
         } else if (result.sendAsMessage) {
           composer?.clear();
           await chat.sendMessage({ contentOverride: result.sendAsMessage });
@@ -114,7 +135,7 @@ export default function DMConversationPage() {
     }
 
     void chat.sendMessage();
-  }, [executeCommand, chat]);
+  }, [executeCommand, chat, user?.settings?.accessibility?.ttsRate, user?.settings?.accessibility?.ttsVoice]);
 
   const lightbox = useMediaLightbox(chat.mediaGallery);
 

@@ -14,6 +14,25 @@ import {
 } from '@icons-pack/react-simple-icons';
 import { Globe } from 'lucide-react';
 
+// Custom icon component for Serika — uses the serika.moe favicon
+const SerikaIcon: React.FC<{ size?: number; className?: string; style?: React.CSSProperties }> = ({ size = 16, className, style }) => (
+  <img
+    src="https://serika.moe/favicon.ico"
+    alt="Serika"
+    width={size}
+    height={size}
+    className={className}
+    style={{ ...style, objectFit: 'contain', display: 'inline-block' }}
+    onError={(e) => {
+      (e.target as HTMLImageElement).style.display = 'none';
+      const parent = (e.target as HTMLImageElement).parentElement;
+      if (parent) {
+        parent.innerHTML = `<span style="font-size:${size}px;line-height:1">✦</span>`;
+      }
+    }}
+  />
+);
+
 const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: string; style?: React.CSSProperties }>> = {
   lastfm:    SiLastdotfm,
   spotify:   SiSpotify,
@@ -28,6 +47,7 @@ const ICON_MAP: Record<string, React.ComponentType<{ size?: number; className?: 
   twitter:   SiX,
   instagram: SiInstagram,
   discord:   SiDiscord,
+  serika:    SerikaIcon,
   website:   Globe,
 };
 
@@ -45,6 +65,7 @@ const COLOR_MAP: Record<string, string> = {
   twitter:   '#1d9bf0',
   instagram: '#e1306c',
   discord:   '#5865f2',
+  serika:    '#8B5CF6',
   website:   '#8B5CF6',
 };
 
@@ -61,7 +82,8 @@ const HREF_MAP: Record<string, (id: string) => string> = {
   github:    (id) => `https://github.com/${id}`,
   twitter:   (id) => `https://x.com/${id}`,
   instagram: (id) => `https://instagram.com/${id}`,
-  discord:   () => `https://discord.com`,
+  discord:   (id) => id ? `https://discord.com/users/${id}` : `https://discord.com`,
+  serika:    (id) => `https://serika.moe/u/${encodeURIComponent(id)}`,
   website:   (id) => id.startsWith('http') ? id : `https://${id}`,
 };
 

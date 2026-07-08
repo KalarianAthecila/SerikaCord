@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCurrentTime } from "@/hooks/useCurrentTime";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { SwitchAccountsDialog } from "@/components/dialogs/SwitchAccountsDialog";
@@ -47,6 +48,7 @@ type StatusValue = typeof statusOptions[number]['value'];
 
 export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupProps) {
   const { user, refresh, updateUser } = useAuth();
+  const localTime = useCurrentTime(user?.timezone);
   const [open, setOpen] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -208,11 +210,11 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
             )}
 
             {/* Current Time */}
-            {user.showTimezone && user.timezone && (
+            {user.showTimezone && user.timezone && localTime && (
               <div className="flex items-center gap-1.5 mb-2 text-sm text-[#dcddde]">
                 <Clock className="w-3.5 h-3.5 text-[#888888]" />
                 <span>
-                  {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: user.timezone })}
+                  {localTime}
                 </span>
                 <span className="text-[#555555]">•</span>
                 <span className="text-xs text-[#888888]">{user.timezone}</span>

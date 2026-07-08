@@ -9,7 +9,7 @@ import {
   handleDiscordOAuth,
   authenticateRequest,
 } from '../services/auth';
-import { UserConnection } from '../models';
+import { UserConnection, User } from '../models';
 import { getPlatformSettings } from '../models/PlatformSettings';
 import {
   accountsRegister,
@@ -19,6 +19,7 @@ import {
   accountsResendVerification,
   accountsForgotPassword,
   accountsResetPassword,
+  accountsInternalGetUser,
 } from '../services/accountsClient';
 
 interface SavedAccountEntry {
@@ -225,6 +226,44 @@ const OAUTH2_PROVIDERS: Record<string, OAuth2Provider> = {
       };
     },
   },
+
+  discord: {
+    clientId: config.DISCORD_CLIENT_ID,
+    clientSecret: config.DISCORD_CLIENT_SECRET,
+    scopes: 'identify',
+    getAuthUrl: (clientId, redirectUri, scopes) =>
+      `https://discord.com/api/oauth2/authorize?client_id=${clientId}&redirect_uri=${redirectUri}&response_type=code&scope=${encodeURIComponent(scopes)}`,
+    exchangeCode: async (clientId, clientSecret, code, redirectUri) => {
+      const resp = await fetch('https://discord.com/api/oauth2/token', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({
+          client_id: clientId,
+          client_secret: clientSecret,
+          grant_type: 'authorization_code',
+          code,
+          redirect_uri: redirectUri,
+        }),
+      });
+      const data = await resp.json() as any;
+      return { access_token: data.access_token, refreshToken: data.refresh_token };
+    },
+    fetchUser: async (accessToken) => {
+      const resp = await fetch('https://discord.com/api/users/@me', {
+        headers: { Authorization: `Bearer ${accessToken}` },
+      });
+      const data = await resp.json() as any;
+      const avatar = data.avatar
+        ? `https://cdn.discordapp.com/avatars/${data.id}/${data.avatar}.${data.avatar.startsWith('a_') ? 'gif' : 'png'}`
+        : `https://cdn.discordapp.com/embed/avatars/${parseInt(data.discriminator || '0') % 5}.png`;
+      return {
+        accountId: data.id,
+        username: data.username,
+        displayName: data.global_name || data.username,
+        avatar,
+      };
+    },
+  },
 };
 
 export const authRoutes = new Elysia({ prefix: '/auth' })
@@ -323,6 +362,109 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
             refreshToken: data.refreshToken,
             savedAt: Date.now(),
           });
+
+          // Fetch full accounts profile if login response is missing serikaMoe/discord fields.
+          // The accounts /internal/get-user endpoint already returns serikaMoeUsername/serikaMoeId
+          // and (after redeployment) discordId/discordUsername.
+          let accountsUser = data.user as any;
+          if (!accountsUser?.serikaMoeUsername && !accountsUser?.discordId) {
+            try {
+              const lookupKey = accountsUser?.id || email || '';
+              if (lookupKey) {
+                const { ok: guOk, data: guData } = await accountsInternalGetUser(lookupKey);
+                if (guOk && guData.user) {
+                  accountsUser = { ...accountsUser, ...guData.user };
+                }
+              }
+            } catch {
+              // Best-effort — continue with whatever we have
+            }
+          }
+
+          // Auto-create/update 'serika' connection using serikaMoeUsername from accounts API
+          // The serika.moe profile URL is /u/<serikaMoeUsername>, not /u/<serikacord username>
+          try {
+            const moeUsername = accountsUser?.serikaMoeUsername?.toLowerCase() || null;
+            const moeId = accountsUser?.serikaMoeId || null;
+            // Only create serika connection if user has a linked serika.moe account
+            if (moeUsername) {
+              const existingSerikaConn = await UserConnection.findOne({ userId: newUser.id, provider: 'serika' });
+              // Use the accounts service avatar (serika.moe avatar) if available,
+              // fall back to the SerikaCord user avatar.
+              const moeAvatar = accountsUser?.avatar || newUser.avatar || null;
+              const connData = {
+                accountId: moeUsername,
+                username: moeUsername,
+                displayName: moeUsername,
+                avatar: moeAvatar,
+                metadata: moeId ? { serikaMoeId: moeId } : undefined,
+              };
+              if (existingSerikaConn) {
+                await UserConnection.updateById(existingSerikaConn.id, connData);
+              } else {
+                await UserConnection.create({
+                  userId: newUser.id,
+                  provider: 'serika',
+                  ...connData,
+                });
+              }
+            }
+          } catch (e) {
+            // Non-critical — don't fail login if connection sync fails
+            console.error('[Auth] Failed to auto-create serika connection:', e);
+          }
+
+          // Auto-create/update Discord connection from accounts API or local DB
+          try {
+            const discordId = accountsUser?.discordId || newUser.discordId || null;
+            let discordUsername = accountsUser?.discordUsername || newUser.discordUsername || null;
+            if (discordId) {
+              const existingDiscordConn = await UserConnection.findOne({ userId: newUser.id, provider: 'discord' });
+              // Fetch fresh Discord profile (avatar, username, display name) from the bot API.
+              let discordAvatar: string | null = null;
+              let discordDisplayName = discordUsername || newUser.username;
+              try {
+                const botToken = process.env.SERIKA_DISCORD_TOKEN;
+                if (botToken) {
+                  const dUser = await fetch(`https://discord.com/api/v10/users/${discordId}`, {
+                    headers: { Authorization: `Bot ${botToken}` },
+                  });
+                  if (dUser.ok) {
+                    const dData = await dUser.json() as any;
+                    // Use the actual Discord username (not global_name) for the connection username
+                    if (dData.username) discordUsername = dData.username;
+                    // Use global_name (display name) if available, otherwise the username
+                    discordDisplayName = dData.global_name || dData.username || discordUsername;
+                    if (dData.avatar) {
+                      const ext = dData.avatar.startsWith('a_') ? 'gif' : 'png';
+                      discordAvatar = `https://cdn.discordapp.com/avatars/${discordId}/${dData.avatar}.${ext}?size=64`;
+                    }
+                  }
+                }
+              } catch {
+                // Best-effort — avatar/name is non-critical
+              }
+              if (existingDiscordConn) {
+                await UserConnection.updateById(existingDiscordConn.id, {
+                  accountId: discordId,
+                  username: discordUsername || newUser.username,
+                  displayName: discordDisplayName,
+                  avatar: discordAvatar,
+                });
+              } else {
+                await UserConnection.create({
+                  userId: newUser.id,
+                  provider: 'discord',
+                  accountId: discordId,
+                  username: discordUsername || newUser.username,
+                  displayName: discordDisplayName,
+                  avatar: discordAvatar,
+                });
+              }
+            }
+          } catch (e) {
+            console.error('[Auth] Failed to auto-create discord connection:', e);
+          }
         }
       }
 
@@ -621,11 +763,18 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     return oauthRedirect(`https://discord.com/api/oauth2/authorize?${params}`);
   })
 
-  // Discord OAuth - callback
-  .get('/discord/callback', async ({ query, set, headers }) => {
+  // Discord OAuth - callback (handles both login AND connection linking)
+  .get('/discord/callback', async ({ query, set, headers, cookie }) => {
     const { code, error: discordError } = query;
+    const base = config.FRONTEND_URL || config.API_BASE_URL;
+    const redirectBase = `${base}/channels/me?openSettings=connections`;
 
     if (discordError || !code) {
+      // Check if this was a connection attempt
+      const state = (cookie as any).oauth2_state?.value as string | undefined;
+      if (state && state.startsWith('discord:')) {
+        return oauthRedirect(`${redirectBase}&error=discord_denied`, 'oauth2_state=; Path=/; Max-Age=0');
+      }
       set.status = 400;
       return { error: discordError || 'No authorization code provided' };
     }
@@ -668,10 +817,54 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       const discordUser = await userResponse.json() as {
         id: string;
         username: string;
+        global_name?: string;
         email?: string;
         avatar?: string;
       };
 
+      // ── Check if this is a CONNECTION request (via oauth2_state cookie) ──
+      const state = (cookie as any).oauth2_state?.value as string | undefined;
+      if (state && state.startsWith('discord:')) {
+        const userId = state.split(':')[1];
+        const avatar = discordUser.avatar
+          ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.${discordUser.avatar.startsWith('a_') ? 'gif' : 'png'}`
+          : undefined;
+
+        // Upsert UserConnection
+        const existingConn = await UserConnection.findOne({ userId, provider: 'discord' });
+        if (existingConn) {
+          await UserConnection.updateById(existingConn.id, {
+            accountId: discordUser.id,
+            username: discordUser.username,
+            displayName: discordUser.global_name || discordUser.username,
+            avatar,
+            metadata: { accessToken: tokens.access_token },
+          });
+        } else {
+          await UserConnection.create({
+            userId,
+            provider: 'discord',
+            accountId: discordUser.id,
+            username: discordUser.username,
+            displayName: discordUser.global_name || discordUser.username,
+            avatar,
+            metadata: { accessToken: tokens.access_token },
+          });
+        }
+
+        // Also link discordId on the user model if not already set
+        const serikaUser = await User.findById(userId);
+        if (serikaUser && !serikaUser.discordId) {
+          await User.updateById(userId, {
+            discordId: discordUser.id,
+            discordUsername: discordUser.username,
+          });
+        }
+
+        return oauthRedirect(`${redirectBase}&success=discord`, 'oauth2_state=; Path=/; Max-Age=0');
+      }
+
+      // ── Otherwise, treat as LOGIN ──
       // Handle OAuth login/registration
       const result = await handleDiscordOAuth(discordUser, {
         userAgent: headers['user-agent'],

@@ -26,6 +26,7 @@ export {
 export {
   // Emoji utilities
   parseCustomEmojis,
+  batchParseCustomEmojis,
   formatEmoji,
   normalizeEmojiFormat,
   extractEmojiIds,

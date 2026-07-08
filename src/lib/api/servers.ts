@@ -7,7 +7,7 @@ import { nanoid } from 'nanoid';
 import { config } from '@/lib/config';
 import { isReservedSlug, isValidVanityCode } from '@/lib/constants/reserved';
 import { resolveEffectiveStatus, PRESENCE_TIMEOUT_MS } from '@/lib/services/presence';
-import { parseCustomEmojis } from '@/lib/services/emoji';
+import { parseCustomEmojis, batchParseCustomEmojis } from '@/lib/services/emoji';
 import { User } from '@/lib/models';
 
 // Live count of members who are actually online right now (status + fresh
@@ -50,16 +50,50 @@ const DEFAULT_PERMISSIONS = {
 const PERM_ADMINISTRATOR = 1n << 3n;
 const PERM_MANAGE_SERVER = 1n << 5n;
 const PERM_MANAGE_ROLES = 1n << 28n;
+const PERM_MANAGE_CHANNELS = 1n << 4n;
+const PERM_BAN_MEMBERS = 1n << 2n;
+const PERM_KICK_MEMBERS = 1n << 1n;
+
+// In-memory cache for role permission checks: serverId+roleId -> permissions bigint string
+// TTL 60s — roles change rarely, but we don't want stale perms forever.
+const rolePermCache = new Map<string, string>();
+const ROLE_CACHE_TTL_MS = 60_000;
+
+async function getRolePermissionsForServer(roleIds: string[], serverId: string): Promise<Map<string, bigint>> {
+  const result = new Map<string, bigint>();
+  const uncachedIds: string[] = [];
+  for (const id of roleIds) {
+    const key = `${serverId}:${id}`;
+    const cached = rolePermCache.get(key);
+    if (cached !== undefined) {
+      result.set(id, BigInt(cached));
+    } else {
+      uncachedIds.push(id);
+    }
+  }
+  if (uncachedIds.length > 0) {
+    const roles = await Role.find({ id: { in: uncachedIds }, serverId });
+    for (const role of roles) {
+      const perms = role.permissions || '0';
+      result.set(role.id, BigInt(perms));
+      rolePermCache.set(`${serverId}:${role.id}`, perms);
+    }
+    setTimeout(() => {
+      for (const id of uncachedIds) rolePermCache.delete(`${serverId}:${id}`);
+    }, ROLE_CACHE_TTL_MS);
+  }
+  return result;
+}
 
 // Check if user can manage roles in a server (owner or has Manage Roles / Administrator)
 async function canManageRoles(server: { ownerId: string; id: string }, userId: string): Promise<boolean> {
   if (server.ownerId === userId) return true;
   const member = await ServerMember.findOne({ serverId: server.id, userId });
   if (!member) return false;
-  const roleIds = member.roles || [];
-  const roles = roleIds.length > 0 ? await Role.find({ id: { in: roleIds }, serverId: server.id }) : [];
-  for (const role of roles) {
-    const perms = BigInt(role.permissions || '0');
+  const roleIds = (member.roles || []) as string[];
+  if (roleIds.length === 0) return false;
+  const rolePerms = await getRolePermissionsForServer(roleIds, server.id);
+  for (const [, perms] of rolePerms) {
     if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
     if ((perms & PERM_MANAGE_ROLES) === PERM_MANAGE_ROLES) return true;
   }
@@ -71,12 +105,43 @@ async function canManageServer(server: { ownerId: string; id: string }, userId: 
   if (server.ownerId === userId) return true;
   const member = await ServerMember.findOne({ serverId: server.id, userId });
   if (!member) return false;
-  const roleIds = member.roles || [];
-  const roles = roleIds.length > 0 ? await Role.find({ id: { in: roleIds }, serverId: server.id }) : [];
-  for (const role of roles) {
-    const perms = BigInt(role.permissions || '0');
+  const roleIds = (member.roles || []) as string[];
+  if (roleIds.length === 0) return false;
+  const rolePerms = await getRolePermissionsForServer(roleIds, server.id);
+  for (const [, perms] of rolePerms) {
     if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
     if ((perms & PERM_MANAGE_SERVER) === PERM_MANAGE_SERVER) return true;
+  }
+  return false;
+}
+
+// Check if user can ban/kick members (owner or has BAN_MEMBERS / ADMINISTRATOR)
+async function canModerateMembers(server: { ownerId: string; id: string }, userId: string): Promise<boolean> {
+  if (server.ownerId === userId) return true;
+  const member = await ServerMember.findOne({ serverId: server.id, userId });
+  if (!member) return false;
+  const roleIds = (member.roles || []) as string[];
+  if (roleIds.length === 0) return false;
+  const rolePerms = await getRolePermissionsForServer(roleIds, server.id);
+  for (const [, perms] of rolePerms) {
+    if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
+    if ((perms & PERM_BAN_MEMBERS) === PERM_BAN_MEMBERS) return true;
+  }
+  return false;
+}
+
+// Check if user can kick members (owner or has KICK_MEMBERS / BAN_MEMBERS / ADMINISTRATOR)
+async function canKickMembers(server: { ownerId: string; id: string }, userId: string): Promise<boolean> {
+  if (server.ownerId === userId) return true;
+  const member = await ServerMember.findOne({ serverId: server.id, userId });
+  if (!member) return false;
+  const roleIds = (member.roles || []) as string[];
+  if (roleIds.length === 0) return false;
+  const rolePerms = await getRolePermissionsForServer(roleIds, server.id);
+  for (const [, perms] of rolePerms) {
+    if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
+    if ((perms & PERM_KICK_MEMBERS) === PERM_KICK_MEMBERS) return true;
+    if ((perms & PERM_BAN_MEMBERS) === PERM_BAN_MEMBERS) return true;
   }
   return false;
 }
@@ -227,6 +292,7 @@ function normalizeMemberDto(member: {
     customStatus: userData?.customStatus || null,
     isPremium: Boolean(userData?.isPremium),
     isBot: Boolean(userData?.isBot),
+    isSystem: Boolean(userData?.isSystem),
     isVerified: Boolean(userData?.isVerified),
     isOwner: ownerId ? ownerId === userData?.id : false,
     customization: userData?.customization || null,
@@ -591,11 +657,18 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
           require2FA: (server.settings as any)?.moderation?.require2FA || false,
         },
         safety: (server.settings as any)?.safety || { raidProtection: false, antiSpam: true, mentionSpamLimit: 5 },
-        integrations: (server.settings as any)?.integrations || {
+        integrations: {
           discord: false,
           twitch: false,
           youtube: false,
           webhooks: false,
+          discordGuildId: '',
+          discordMode: 'add',
+          twitchChannel: '',
+          twitchNotificationChannelId: '',
+          youtubeChannel: '',
+          youtubeNotificationChannelId: '',
+          ...((server.settings as any)?.integrations || {}),
         },
         soundboard: (server.settings as any)?.soundboard || {
           enabled: true,
@@ -605,6 +678,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
           joinMode: (server.settings as any)?.access?.joinMode || server.joinMode || 'invite_only',
         },
         isAgeGated: Boolean(server.isAgeGated),
+        discoveryDescription: server.discoveryDescription || '',
+        discoveryCategories: server.discoveryCategories || [],
       },
     };
   }, {
@@ -694,12 +769,33 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       }
     }
 
-    await Server.updateById(server.id, { settings: nextSettings as any });
+    if (payload.settings?.discoveryDescription !== undefined) {
+      server.discoveryDescription = payload.settings.discoveryDescription === '' ? null : payload.settings.discoveryDescription;
+    }
+    if (payload.settings?.discoveryCategories !== undefined) {
+      server.discoveryCategories = payload.settings.discoveryCategories;
+    }
+
+    await Server.updateById(server.id, {
+      settings: nextSettings as any,
+      joinMode: server.joinMode,
+      isDiscoverable: server.isDiscoverable,
+      discoverableAt: server.discoverableAt,
+      isAgeGated: server.isAgeGated,
+      isPartnered: server.isPartnered,
+      partneredAt: server.partneredAt,
+      discoveryDescription: server.discoveryDescription,
+      discoveryCategories: server.discoveryCategories,
+    });
     await cache.del(`server:${server.id}`);
 
     return {
       success: true,
-      settings: server.settings,
+      settings: {
+        ...nextSettings,
+        discoveryDescription: server.discoveryDescription || '',
+        discoveryCategories: server.discoveryCategories || [],
+      },
     };
   }, {
     params: t.Object({
@@ -911,6 +1007,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
           if (v !== undefined) staged.push(() => { section('integrations')[key.split('.')[1]] = v; });
           break;
         }
+        case 'integrations.discordGuildId':
+        case 'integrations.discordMode':
+        case 'integrations.twitchChannel':
+        case 'integrations.twitchNotificationChannelId':
+        case 'integrations.youtubeChannel':
+        case 'integrations.youtubeNotificationChannelId': {
+          const v = expectString(key, 1024);
+          if (v !== undefined) staged.push(() => { section('integrations')[key.split('.')[1]] = v; });
+          break;
+        }
         case 'soundboard.enabled': {
           const v = expectBoolean(key);
           if (v !== undefined) staged.push(() => { section('soundboard').enabled = v; });
@@ -931,6 +1037,30 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
               server.discoverableAt = new Date();
             }
           });
+          break;
+        }
+        case 'discoveryDescription': {
+          if (changes[key] === null || changes[key] === '') {
+            staged.push(() => { server.discoveryDescription = null; });
+          } else {
+            const v = expectString(key, 1024);
+            if (v !== undefined) staged.push(() => { server.discoveryDescription = v || null; });
+          }
+          break;
+        }
+        case 'discoveryCategories': {
+          const v = changes[key];
+          if (!Array.isArray(v)) {
+            fieldErrors[key] = 'Must be an array of categories';
+          } else {
+            const allowed = ['gaming', 'music', 'tech', 'art', 'education', 'entertainment'];
+            const valid = v.every((c: any) => typeof c === 'string' && allowed.includes(c));
+            if (!valid) {
+              fieldErrors[key] = `Categories must be one or more of: ${allowed.join(', ')}`;
+            } else {
+              staged.push(() => { server.discoveryCategories = v; });
+            }
+          }
           break;
         }
         case 'isAgeGated': {
@@ -975,14 +1105,18 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
         afkChannelId: server.afkChannelId ?? null,
         afkTimeout: server.afkTimeout,
       },
-      settings: server.settings,
+      settings: {
+        ...server.settings,
+        discoveryDescription: server.discoveryDescription || '',
+        discoveryCategories: server.discoveryCategories || [],
+      },
     };
   }, {
     params: t.Object({
       serverId: t.String(),
     }),
     body: t.Object({
-      changes: t.Record(t.String(), t.Union([t.String(), t.Number(), t.Boolean(), t.Null()])),
+      changes: t.Record(t.String(), t.Any()),
     }),
   })
   // Update server
@@ -1563,24 +1697,82 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Invalid server ID' };
     }
 
-    // Check membership
-    const membership = await ServerMember.findOne({
-      serverId: params.serverId,
-      userId: user.id,
-    });
+    // Check membership, fetch server, and channels in parallel — all independent
+    const [membership, server, allChannels] = await Promise.all([
+      ServerMember.findOne({ serverId: params.serverId, userId: user.id }),
+      Server.findById(params.serverId),
+      Channel.find({ serverId: params.serverId }),
+    ]);
 
     if (!membership) {
       set.status = 403;
       return { error: 'You are not a member of this server' };
     }
 
-    // Threads (public_thread / private_thread) live inside forum channels and are
-    // listed via /channels/:id/threads — never as top-level sidebar channels.
-    const allChannels = await Channel.find({
-      serverId: params.serverId,
-    });
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    // Check if user is server owner (bypasses all permission checks)
+    const isOwner = server.ownerId === user.id;
+
+    // Get user's roles for permission checking — use cached role permissions
+    const userRoleIds = (membership.roles || []) as string[];
+    const hasAdmin = isOwner || (userRoleIds.length > 0 && await (async () => {
+      const rolePerms = await getRolePermissionsForServer(userRoleIds, params.serverId);
+      for (const [, perms] of rolePerms) {
+        if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR || (perms & PERM_MANAGE_CHANNELS) === PERM_MANAGE_CHANNELS) return true;
+      }
+      return false;
+    })());
+
+    const PERM_VIEW_CHANNEL = 1n << 10n;
+
     const channels = allChannels
-      .filter((ch: any) => ch.type !== 'public_thread' && ch.type !== 'private_thread')
+      .filter((ch: any) => {
+        if (ch.type === 'public_thread' || ch.type === 'private_thread') {
+          return Array.isArray(ch.threadMemberIds) && ch.threadMemberIds.includes(user.id);
+        }
+        // Owner and admin bypass permission overwrites
+        if (isOwner || hasAdmin) return true;
+        // Check permission overwrites for VIEW_CHANNEL
+        const overwrites = ch.permissionOverwrites || [];
+        if (!overwrites.length) return true;
+
+        // Check @everyone overwrite
+        const everyoneOverwrite = overwrites.find((o: any) => o.type === 'role' && o.id === params.serverId);
+        let baseDeny = 0n;
+        let baseAllow = 0n;
+        if (everyoneOverwrite) {
+          baseDeny = BigInt(everyoneOverwrite.deny || '0');
+          baseAllow = BigInt(everyoneOverwrite.allow || '0');
+        }
+
+        let effectiveAllow = baseAllow;
+        let effectiveDeny = baseDeny;
+
+        // Apply role-specific overwrites
+        for (const roleId of userRoleIds) {
+          const roleOverwrite = overwrites.find((o: any) => o.type === 'role' && o.id === roleId);
+          if (roleOverwrite) {
+            effectiveAllow |= BigInt(roleOverwrite.allow || '0');
+            effectiveDeny |= BigInt(roleOverwrite.deny || '0');
+          }
+        }
+
+        // Apply member-specific overwrites
+        const memberOverwrite = overwrites.find((o: any) => o.type === 'member' && o.id === user.id);
+        if (memberOverwrite) {
+          effectiveAllow |= BigInt(memberOverwrite.allow || '0');
+          effectiveDeny |= BigInt(memberOverwrite.deny || '0');
+        }
+
+        if ((effectiveDeny & PERM_VIEW_CHANNEL) === PERM_VIEW_CHANNEL) return false;
+        if ((effectiveAllow & PERM_VIEW_CHANNEL) === PERM_VIEW_CHANNEL) return true;
+        if ((baseDeny & PERM_VIEW_CHANNEL) === PERM_VIEW_CHANNEL) return false;
+        return true;
+      })
       .sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
 
     // Batch-resolve the timestamp of each channel's last message so the client
@@ -1617,6 +1809,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
         allow: o.allow,
         deny: o.deny,
       })),
+      threadMemberIds: ch.threadMemberIds || [],
     }));
   }, {
     params: t.Object({
@@ -2014,8 +2207,26 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       const refAuthors = refAuthorIds.length > 0 ? await User.find({ id: { in: refAuthorIds } }) : [];
       const refAuthorMap = new Map(refAuthors.map((a: any) => [a.id, a]));
 
-      const decrypted = await Promise.all(
-        rawMessages.map(async (msg) => {
+      // Batch-decrypt all message contents in parallel
+      const decryptedContents = await Promise.all(
+        rawMessages.map((msg: any) => decryptFromStorage(msg.content || ''))
+      );
+      // Batch-parse custom emojis across all decrypted contents in a single pass
+      const emojiResults = await batchParseCustomEmojis(decryptedContents);
+      // Batch-decrypt referenced message contents
+      const refDecryptEntries = rawMessages
+        .filter((msg: any) => msg.referencedMessageId && refMsgMap.get(msg.referencedMessageId))
+        .map((msg: any) => {
+          const refMsg = refMsgMap.get(msg.referencedMessageId)!;
+          return { refId: msg.referencedMessageId, content: refMsg.content || '' };
+        });
+      const refDecrypted = await Promise.all(
+        refDecryptEntries.map((entry) => decryptFromStorage(entry.content))
+      );
+      const refContentMap = new Map<string, string>();
+      refDecryptEntries.forEach((entry, i) => refContentMap.set(entry.refId, refDecrypted[i]));
+
+      const decrypted = rawMessages.map((msg: any, idx: number) => {
           const m = msg as unknown as {
             id: string;
             content?: string;
@@ -2029,10 +2240,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
             referencedMessageId?: string | null;
           };
           const author = m.authorId ? authorMap.get(m.authorId) : null;
-          const content = await decryptFromStorage(m.content || '');
+          const content = decryptedContents[idx];
 
-          const emojiResult = await parseCustomEmojis(content);
-          const customEmojis: WidgetEmoji[] = emojiResult.emojis.map(e => ({
+          const customEmojis: WidgetEmoji[] = emojiResults[idx].emojis.map(e => ({
             id: e.id,
             name: e.name,
             url: e.url,
@@ -2047,7 +2257,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
               const refAuthor = ref.authorId ? refAuthorMap.get(ref.authorId) : null;
               referencedMessage = {
                 id: ref.id,
-                content: ref.content ? await decryptFromStorage(ref.content) : '',
+                content: refContentMap.get(refId) || '',
                 author: refAuthor
                   ? {
                       id: refAuthor.id,
@@ -2087,8 +2297,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
               : undefined,
             referencedMessage,
           } satisfies WidgetMessage;
-        })
-      );
+        });
       recentMessages = decrypted.reverse();
 
       // Batch-resolve mention names once for the whole message set.
@@ -2243,10 +2452,10 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Only the server owner can upload emojis' };
     }
 
-    // Check emoji limit (50 for non-premium, 100 for premium)
+    // Check emoji limit (500 for all servers)
     const allEmojis = await ServerEmoji.find({ serverId: params.serverId });
     const emojiCount = allEmojis.length;
-    const maxEmojis = Number(server.premiumTier || 0) >= 1 ? 100 : 50;
+    const maxEmojis = 500;
     if (emojiCount >= maxEmojis) {
       set.status = 400;
       return { error: `You can only have ${maxEmojis} custom emojis` };
@@ -2367,7 +2576,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const allStickers = await ServerSticker.find({ serverId: params.serverId });
     const stickerCount = allStickers.length;
-    const maxStickers = Number(server.premiumTier || 0) >= 1 ? 30 : 15;
+    const maxStickers = 500;
     if (stickerCount >= maxStickers) {
       set.status = 400;
       return { error: `Sticker limit reached (${maxStickers})` };
@@ -2486,9 +2695,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Name and URL are required' };
     }
 
-    if ((server.soundboardSounds as any[] | undefined)?.length ?? 0 >= 20) {
+    if (((server.soundboardSounds as any[] | undefined)?.length ?? 0) >= 500) {
       set.status = 400;
-      return { error: 'Maximum of 20 soundboard sounds reached' };
+      return { error: 'Maximum of 500 soundboard sounds reached' };
     }
 
     const sounds = (server.soundboardSounds as any[]) || [];
@@ -2837,7 +3046,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (server.ownerId !== user.id) {
+    if (!await canModerateMembers(server, user.id)) {
       set.status = 403;
       return { error: 'You do not have permission to ban users' };
     }
@@ -2891,6 +3100,67 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       reason: t.Optional(t.String({ maxLength: 512 })),
     }),
   })
+  // Kick member (remove without banning)
+  .post('/:serverId/members/:userId/kick', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId) || !isValidObjectId(params.userId)) {
+      set.status = 400;
+      return { error: 'Invalid ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!await canKickMembers(server, user.id)) {
+      set.status = 403;
+      return { error: 'You do not have permission to kick members' };
+    }
+
+    if (server.ownerId === params.userId) {
+      set.status = 400;
+      return { error: 'You cannot kick the server owner' };
+    }
+
+    const targetMember = await ServerMember.findOne({
+      serverId: params.serverId,
+      userId: params.userId,
+    });
+    if (!targetMember) {
+      set.status = 404;
+      return { error: 'User is not a server member' };
+    }
+
+    await ServerMember.deleteById(targetMember.id);
+    await Server.updateById(server.id, { memberCount: Math.max(0, (server.memberCount || 0) - 1) });
+    await cache.del(`server:${params.serverId}`);
+
+    await AdminLog.create({
+      adminId: user.id,
+      action: 'ban_user',
+      targetType: 'server',
+      targetId: params.serverId,
+      reason: body.reason || null,
+      details: { userId: params.userId, kick: true },
+    });
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+      userId: t.String(),
+    }),
+    body: t.Object({
+      reason: t.Optional(t.String({ maxLength: 512 })),
+    }),
+  })
   // Unban user
   .delete('/:serverId/bans/:userId', async ({ headers, cookie, params, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -2905,8 +3175,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    // Only owner can unban
-    if (server.ownerId !== user.id) {
+    // Only moderators (BAN_MEMBERS perm) can unban
+    if (!await canModerateMembers(server, user.id)) {
       set.status = 403;
       return { error: 'You do not have permission to unban users' };
     }
@@ -3342,6 +3612,23 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }),
   });
 
+function convertDiscordOverwrites(
+  overwrites: any[],
+  discordRoleMap: Record<string, string>,
+): any[] {
+  if (!overwrites || !overwrites.length) return [];
+  return overwrites.map((o: any) => {
+    const type = o.type === 0 || o.type === '0' || o.type === 'role' ? 'role' : 'member';
+    const mappedId = discordRoleMap[o.id] || o.id;
+    return {
+      id: mappedId,
+      type,
+      allow: String(o.allow ?? '0'),
+      deny: String(o.deny ?? '0'),
+    };
+  });
+}
+
 // Public partnered servers list (no auth required)
 export const partnerRoutes = new Elysia({ prefix: '/servers' })
   .get('/partnered', async ({ set }) => {
@@ -3379,12 +3666,28 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
         const searchLower = query.search.toLowerCase();
         servers = servers.filter((s: any) =>
           (s.name || '').toLowerCase().includes(searchLower) ||
-          (s.description || '').toLowerCase().includes(searchLower)
+          (s.description || '').toLowerCase().includes(searchLower) ||
+          (s.discoveryDescription || '').toLowerCase().includes(searchLower)
         );
       }
 
-      servers.sort((a: any, b: any) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
-      const limitedServers = servers.slice(0, 50);
+      const sort = query.sort || 'popular';
+      if (sort === 'new') {
+        servers.sort((a: any, b: any) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+      } else if (sort === 'trending') {
+        // Trending: combination of recent activity and member count
+        const now = Date.now();
+        servers.sort((a: any, b: any) => {
+          const aScore = (a.memberCount ?? 0) + (a.onlineCount ?? 0) * 2;
+          const bScore = (b.memberCount ?? 0) + (b.onlineCount ?? 0) * 2;
+          return bScore - aScore;
+        });
+      } else {
+        servers.sort((a: any, b: any) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
+      }
+
+      const limit = Math.min(parseInt(query.limit || '100'), 100);
+      const limitedServers = servers.slice(0, limit);
 
       // Calculate online counts dynamically for each server
       const serverIds = limitedServers.map((s: any) => s.id);
@@ -3409,6 +3712,16 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
         onlineCountMap.set(sid, count);
       }
 
+      // Get category counts for sidebar badges
+      const allDiscoverable = await Server.find({ isDiscoverable: true });
+      const categoryCounts: Record<string, number> = {};
+      for (const s of allDiscoverable as any[]) {
+        const cats = s.discoveryCategories || [];
+        for (const c of cats) {
+          categoryCounts[c] = (categoryCounts[c] || 0) + 1;
+        }
+      }
+
       return {
         servers: limitedServers.map((s: any) => ({
           id: s.id,
@@ -3419,11 +3732,17 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
           memberCount: s.memberCount ?? 0,
           onlineCount: onlineCountMap.get(s.id) ?? 0,
           isPartnered: s.isPartnered ?? false,
+          isVerified: s.isVerified ?? false,
           joinMode: s.joinMode || 'invite_only',
           category: s.discoveryCategories?.[0] ?? null,
           tags: s.discoveryCategories ?? [],
           vanityUrlCode: s.vanityUrlCode ?? null,
+          createdAt: s.createdAt ?? null,
         })),
+        categoryCounts,
+        totalServers: allDiscoverable.length,
+        totalMembers: allDiscoverable.reduce((sum: number, s: any) => sum + (s.memberCount ?? 0), 0),
+        totalOnline: Array.from(onlineCountMap.values()).reduce((sum, v) => sum + v, 0),
       };
     } catch {
       set.status = 500;
@@ -3433,7 +3752,555 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
     query: t.Object({
       category: t.Optional(t.String()),
       search: t.Optional(t.String()),
+      sort: t.Optional(t.Union([t.Literal('popular'), t.Literal('new'), t.Literal('trending')])),
+      limit: t.Optional(t.String()),
     }),
+  })
+  .post('/:serverId/integrations/discord/sync', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+    const { Server, ServerMember, Channel, Role } = await import('@/lib/models');
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+    const member = await ServerMember.findOne({ serverId: server.id, userId: user.id });
+    if (!member) {
+      set.status = 403;
+      return { error: 'Forbidden' };
+    }
+    const isOwner = server.ownerId === user.id;
+    let hasManageServer = isOwner;
+    if (!hasManageServer) {
+      const serverRoles = await Role.find({ serverId: server.id });
+      const myRoles = serverRoles.filter(r => (member.roles || []).includes(r.id) || r.isDefault);
+      for (const r of myRoles) {
+        const perms = BigInt(r.permissions || '0');
+        if ((perms & (1n << 3n)) || (perms & (1n << 5n))) {
+          hasManageServer = true;
+          break;
+        }
+      }
+    }
+    if (!hasManageServer) {
+      set.status = 403;
+      return { error: 'Forbidden' };
+    }
+    const payload = body as any;
+    const mode = payload.mode || 'add';
+    const currentChannels = await Channel.find({ serverId: server.id });
+    const botToken = process.env.SERIKA_DISCORD_TOKEN;
+    const integrations = (server.settings as any)?.integrations || {};
+    const guildId = integrations.discordGuildId;
+    let discordChannels: Array<{ id: string; name: string; type: string; position: number; parentId: string | null; topic?: string; permissionOverwrites?: any[] }> = [];
+    const discordChannelWebhookMap: Record<string, string> = {};
+    const discordRoleMap: Record<string, string> = {};
+
+    if (botToken && guildId) {
+      try {
+        console.log(`[Discord Bridge] Fetching channels for guild ${guildId} from Discord API`);
+        const res = await fetch(`https://discord.com/api/v10/guilds/${guildId}/channels`, {
+          headers: { Authorization: `Bot ${botToken}` },
+        });
+        if (res.ok) {
+          const channelsData = (await res.json()) as any[];
+          const typeMap: Record<number, string> = {
+            0: 'text',
+            2: 'voice',
+            4: 'category',
+            5: 'announcement',
+          };
+          discordChannels = channelsData
+            .filter((c: any) => typeMap[c.type] !== undefined)
+            .map((c: any) => ({
+              id: c.id,
+              name: c.name,
+              type: typeMap[c.type],
+              position: c.position || 0,
+              parentId: c.parent_id || null,
+              topic: c.topic || '',
+              permissionOverwrites: c.permission_overwrites || [],
+            }));
+
+          for (const c of channelsData) {
+            if (c.type === 0 || c.type === 5) {
+              try {
+                console.log(`[Discord Bridge] Checking webhooks for channel ${c.name} (${c.id})`);
+                const whRes = await fetch(`https://discord.com/api/v10/channels/${c.id}/webhooks`, {
+                  headers: { Authorization: `Bot ${botToken}` },
+                });
+                // Handle rate limiting on webhook listing
+                if (whRes.status === 429) {
+                  const retryAfter = parseFloat(whRes.headers.get('Retry-After') || '2') * 1000;
+                  console.warn(`[Discord Bridge] Rate limited on webhook list for ${c.name}, waiting ${retryAfter}ms`);
+                  await new Promise(r => setTimeout(r, retryAfter));
+                  continue; // Skip this channel — will be retried on next sync
+                }
+                let webhookUrl = '';
+                if (whRes.ok) {
+                  const webhooksList = (await whRes.json()) as any[];
+                  const existingWh = webhooksList.find(w => w.name === 'SerikaBridge' && w.token);
+                  if (existingWh) {
+                    webhookUrl = `https://discord.com/api/webhooks/${existingWh.id}/${existingWh.token}`;
+                    console.log(`[Discord Bridge] Found existing webhook for ${c.name}: ${webhookUrl}`);
+                  }
+                }
+
+                if (!webhookUrl) {
+                  console.log(`[Discord Bridge] Creating new webhook for channel ${c.name} (${c.id})`);
+                  let createAttempts = 0;
+                  const MAX_WEBHOOK_ATTEMPTS = 3;
+                  while (createAttempts < MAX_WEBHOOK_ATTEMPTS && !webhookUrl) {
+                    createAttempts++;
+                    const createWhRes = await fetch(`https://discord.com/api/v10/channels/${c.id}/webhooks`, {
+                      method: 'POST',
+                      headers: {
+                        Authorization: `Bot ${botToken}`,
+                        'Content-Type': 'application/json',
+                      },
+                      body: JSON.stringify({ name: 'SerikaBridge' }),
+                    });
+                    if (createWhRes.ok) {
+                      const newWh = await createWhRes.json();
+                      webhookUrl = `https://discord.com/api/webhooks/${newWh.id}/${newWh.token}`;
+                      console.log(`[Discord Bridge] Created new webhook for ${c.name}: ${webhookUrl}`);
+                    } else if (createWhRes.status === 429) {
+                      const retryAfter = parseFloat(createWhRes.headers.get('Retry-After') || '2') * 1000;
+                      console.warn(`[Discord Bridge] Rate limited creating webhook for ${c.name} (attempt ${createAttempts}/${MAX_WEBHOOK_ATTEMPTS}), waiting ${retryAfter}ms`);
+                      await new Promise(r => setTimeout(r, retryAfter));
+                    } else {
+                      console.warn(`[Discord Bridge] Failed to create webhook for ${c.name}: status ${createWhRes.status}`);
+                      break; // Non-retryable error
+                    }
+                  }
+                }
+
+                if (webhookUrl) {
+                  discordChannelWebhookMap[c.name.toLowerCase()] = webhookUrl;
+                }
+                // Small delay between channels to avoid burst rate limiting
+                await new Promise(r => setTimeout(r, 500));
+              } catch (whErr) {
+                console.error(`[Discord Bridge] Error handling webhook for channel ${c.name}:`, whErr);
+              }
+            }
+          }
+        } else {
+          console.warn('[Discord Bridge] Failed to fetch channels from Discord: status', res.status);
+        }
+
+        console.log(`[Discord Bridge] Fetching roles for guild ${guildId} from Discord API`);
+        const rolesRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/roles`, {
+          headers: { Authorization: `Bot ${botToken}` },
+        });
+        if (rolesRes.ok) {
+          const rolesData = (await rolesRes.json()) as any[];
+          const currentRoles = await Role.find({ serverId: server.id });
+          const currentRoleNames = new Set(currentRoles.map(r => r.name.toLowerCase()));
+          for (const dr of rolesData) {
+            if (dr.name === '@everyone') continue;
+            if (!currentRoleNames.has(dr.name.toLowerCase())) {
+              await Role.create({
+                serverId: server.id,
+                name: dr.name,
+                color: dr.color || 0,
+                hoist: dr.hoist || false,
+                mentionable: dr.mentionable || false,
+                permissions: dr.permissions || '0',
+                isDefault: false,
+              });
+            }
+          }
+          // Build Discord role ID → SerikaCord role ID map for permission overwrites
+          discordRoleMap[guildId] = server.id; // @everyone: Discord guild ID → server ID
+          const allRoles = await Role.find({ serverId: server.id });
+          for (const dr of rolesData) {
+            if (dr.name === '@everyone') continue;
+            const matchingRole = allRoles.find(r => r.name.toLowerCase() === dr.name.toLowerCase());
+            if (matchingRole) {
+              discordRoleMap[dr.id] = matchingRole.id;
+            }
+          }
+        }
+
+        // Sync emojis from Discord
+        try {
+          console.log(`[Discord Bridge] Fetching emojis for guild ${guildId}`);
+          const emojiRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/emojis`, {
+            headers: { Authorization: `Bot ${botToken}` },
+          });
+          if (emojiRes.ok) {
+            const emojisData = (await emojiRes.json()) as any[];
+            const existingEmojis = await ServerEmoji.find({ serverId: server.id });
+            const existingEmojiNames = new Set(existingEmojis.map(e => e.name.toLowerCase()));
+            let syncedEmojis = 0;
+            for (const de of emojisData) {
+              if (existingEmojiNames.has(de.name.toLowerCase())) continue;
+              const ext = de.animated ? 'gif' : 'png';
+              const imageUrl = `https://cdn.discordapp.com/emojis/${de.id}.${ext}?size=128`;
+              try {
+                await ServerEmoji.create({
+                  serverId: server.id,
+                  name: de.name,
+                  imageUrl,
+                  animated: de.animated || false,
+                  available: de.available !== false,
+                  managed: de.managed || false,
+                  requireColons: true,
+                  roles: [],
+                  uploadedBy: user.id,
+                });
+                syncedEmojis++;
+              } catch (e) {
+                console.warn(`[Discord Bridge] Failed to sync emoji ${de.name}:`, e);
+              }
+            }
+            console.log(`[Discord Bridge] Synced ${syncedEmojis} emojis from Discord`);
+          }
+        } catch (emojiErr) {
+          console.error('[Discord Bridge] Error syncing emojis:', emojiErr);
+        }
+
+        // Sync stickers from Discord
+        try {
+          console.log(`[Discord Bridge] Fetching stickers for guild ${guildId}`);
+          const stickerRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/stickers`, {
+            headers: { Authorization: `Bot ${botToken}` },
+          });
+          if (stickerRes.ok) {
+            const stickersData = (await stickerRes.json()) as any[];
+            const existingStickers = await ServerSticker.find({ serverId: server.id });
+            const existingStickerNames = new Set(existingStickers.map(s => s.name.toLowerCase()));
+            let syncedStickers = 0;
+            for (const ds of stickersData) {
+              if (existingStickerNames.has(ds.name.toLowerCase())) continue;
+              const ext = ds.format_type === 1 ? 'png' : ds.format_type === 2 ? 'apng' : ds.format_type === 3 ? 'json' : 'gif';
+              const imageUrl = `https://cdn.discordapp.com/stickers/${ds.id}.${ext}`;
+              try {
+                await ServerSticker.create({
+                  serverId: server.id,
+                  name: ds.name,
+                  description: ds.description || null,
+                  imageUrl,
+                  tags: ds.tags ? ds.tags.split(',').map((t: string) => t.trim()) : [],
+                  available: true,
+                  uploadedBy: user.id,
+                });
+                syncedStickers++;
+              } catch (e) {
+                console.warn(`[Discord Bridge] Failed to sync sticker ${ds.name}:`, e);
+              }
+            }
+            console.log(`[Discord Bridge] Synced ${syncedStickers} stickers from Discord`);
+          }
+        } catch (stickerErr) {
+          console.error('[Discord Bridge] Error syncing stickers:', stickerErr);
+        }
+
+        // Sync soundboard sounds from Discord
+        try {
+          console.log(`[Discord Bridge] Fetching soundboard sounds for guild ${guildId}`);
+          const soundRes = await fetch(`https://discord.com/api/v10/guilds/${guildId}/soundboard-sounds`, {
+            headers: { Authorization: `Bot ${botToken}` },
+          });
+          if (soundRes.ok) {
+            const rawSounds = await soundRes.json();
+            const soundsData: any[] = Array.isArray(rawSounds) ? rawSounds : (rawSounds?.soundboard_sounds ?? rawSounds?.sounds ?? []);
+            const existingSounds = (server.soundboardSounds as any[]) || [];
+            const existingSoundNames = new Set(existingSounds.map(s => s.name?.toLowerCase()));
+            let syncedSounds = 0;
+            const updatedSounds = [...existingSounds];
+            for (const ds of soundsData) {
+              if (existingSoundNames.has(ds.name?.toLowerCase())) continue;
+              updatedSounds.push({
+                name: (ds.name || 'Unknown').substring(0, 32),
+                url: `https://cdn.discordapp.com/soundboard-sounds/${ds.sound_id}`,
+                emoji: ds.emoji_name || '🔊',
+                uploadedBy: user.id,
+              });
+              syncedSounds++;
+            }
+            if (syncedSounds > 0) {
+              await Server.updateById(server.id, { soundboardSounds: updatedSounds as any });
+              console.log(`[Discord Bridge] Synced ${syncedSounds} soundboard sounds from Discord`);
+            }
+          }
+        } catch (soundErr) {
+          console.error('[Discord Bridge] Error syncing soundboard sounds:', soundErr);
+        }
+      } catch (err) {
+        console.error('[Discord Bridge] Error syncing with Discord API:', err);
+      }
+    }
+
+    if (discordChannels.length === 0) {
+      if (botToken && guildId) {
+        set.status = 502;
+        return {
+          error: 'Failed to fetch channels from Discord. Check that the bot is in the guild and has the correct permissions.',
+          details: { guildId, botConfigured: !!botToken },
+        };
+      }
+      set.status = 400;
+      return {
+        error: 'No Discord guild is linked. Set the Discord guild ID in server integrations before syncing.',
+      };
+    }
+
+    let deletedCount = 0;
+    let createdCount = 0;
+    let linkedCount = 0;
+    const discordWebhooks: Record<string, string> = {};
+    const discordChannelsMap: Record<string, string> = {};
+    const discordCategoryMap: Record<string, string> = {};
+
+    if (mode === 'delete') {
+      for (const c of currentChannels) {
+        await Channel.deleteById(c.id);
+        deletedCount++;
+      }
+
+      const categoryChannels = discordChannels.filter(dc => dc.type === 'category');
+      for (const dc of categoryChannels) {
+        const newChan = await Channel.create({
+          serverId: server.id,
+          name: dc.name,
+          type: 'category',
+          topic: dc.topic,
+          position: dc.position,
+          nsfw: false,
+          bitrate: 64000,
+          userLimit: 0,
+          recipientIds: [],
+          permissionOverwrites: convertDiscordOverwrites(dc.permissionOverwrites || [], discordRoleMap),
+        });
+        createdCount++;
+        discordCategoryMap[dc.id] = newChan.id;
+        discordChannelsMap[dc.id] = newChan.id;
+      }
+
+      const nonCategoryChannels = discordChannels.filter(dc => dc.type !== 'category');
+      for (const dc of nonCategoryChannels) {
+        const parentId = dc.parentId ? discordCategoryMap[dc.parentId] : null;
+        const newChan = await Channel.create({
+          serverId: server.id,
+          name: dc.name,
+          type: dc.type as any,
+          topic: dc.topic,
+          position: dc.position,
+          parentId,
+          nsfw: false,
+          bitrate: 64000,
+          userLimit: 0,
+          recipientIds: [],
+          permissionOverwrites: convertDiscordOverwrites(dc.permissionOverwrites || [], discordRoleMap),
+        });
+        createdCount++;
+        discordChannelsMap[dc.id] = newChan.id;
+
+        const wUrl = discordChannelWebhookMap[dc.name.toLowerCase()];
+        if (wUrl) {
+          discordWebhooks[newChan.id] = wUrl;
+        }
+      }
+    } else {
+      const categoryChannels = discordChannels.filter(dc => dc.type === 'category');
+      const currentCategories = currentChannels.filter(c => c.type === 'category');
+      const currentCategoryMapByName = new Map(currentCategories.map(c => [c.name.toLowerCase(), c]));
+
+      for (const dc of categoryChannels) {
+        const existing = currentCategoryMapByName.get(dc.name.toLowerCase());
+        if (existing) {
+          linkedCount++;
+          await Channel.updateById(existing.id, { position: dc.position, permissionOverwrites: convertDiscordOverwrites(dc.permissionOverwrites || [], discordRoleMap) });
+          discordCategoryMap[dc.id] = existing.id;
+          discordChannelsMap[dc.id] = existing.id;
+        } else {
+          const newChan = await Channel.create({
+            serverId: server.id,
+            name: dc.name,
+            type: 'category',
+            topic: dc.topic,
+            position: dc.position,
+            nsfw: false,
+            bitrate: 64000,
+            userLimit: 0,
+            recipientIds: [],
+            permissionOverwrites: convertDiscordOverwrites(dc.permissionOverwrites || [], discordRoleMap),
+          });
+          createdCount++;
+          discordCategoryMap[dc.id] = newChan.id;
+          discordChannelsMap[dc.id] = newChan.id;
+        }
+      }
+
+      const nonCategoryChannels = discordChannels.filter(dc => dc.type !== 'category');
+      const currentNonCategories = currentChannels.filter(c => c.type !== 'category');
+
+      for (const dc of nonCategoryChannels) {
+        const parentId = dc.parentId ? discordCategoryMap[dc.parentId] : null;
+        const existing = currentNonCategories.find(c => c.name.toLowerCase() === dc.name.toLowerCase() && c.type === dc.type);
+        if (existing) {
+          linkedCount++;
+          await Channel.updateById(existing.id, {
+            position: dc.position,
+            parentId,
+            permissionOverwrites: convertDiscordOverwrites(dc.permissionOverwrites || [], discordRoleMap),
+          });
+          discordChannelsMap[dc.id] = existing.id;
+          const wUrl = discordChannelWebhookMap[dc.name.toLowerCase()];
+          if (wUrl) {
+            discordWebhooks[existing.id] = wUrl;
+          }
+        } else {
+          const newChan = await Channel.create({
+            serverId: server.id,
+            name: dc.name,
+            type: dc.type as any,
+            topic: dc.topic,
+            position: dc.position,
+            parentId,
+            nsfw: false,
+            bitrate: 64000,
+            userLimit: 0,
+            recipientIds: [],
+            permissionOverwrites: convertDiscordOverwrites(dc.permissionOverwrites || [], discordRoleMap),
+          });
+          createdCount++;
+          discordChannelsMap[dc.id] = newChan.id;
+          const wUrl = discordChannelWebhookMap[dc.name.toLowerCase()];
+          if (wUrl) {
+            discordWebhooks[newChan.id] = wUrl;
+          }
+        }
+      }
+    }
+
+    const nextSettings = {
+      ...(server.settings as any || {}),
+      integrations: {
+        ...(server.settings as any)?.integrations || {},
+        discordWebhooks,
+        discordChannelsMap,
+      }
+    };
+    await Server.updateById(server.id, { settings: nextSettings as any });
+    await cache.del(`server:${server.id}`);
+
+    return {
+      success: true,
+      details: {
+        mode,
+        deleted: deletedCount,
+        created: createdCount,
+        linked: linkedCount
+      }
+    };
+  }, {
+    body: t.Object({
+      mode: t.Union([t.Literal('add'), t.Literal('delete')])
+    })
+  })
+  .post('/:serverId/integrations/:type/mock-trigger', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+    const { Server, Channel, Message, User } = await import('@/lib/models');
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+    const payload = body as any;
+    const channelId = payload.channelId;
+    if (!channelId) {
+      set.status = 400;
+      return { error: 'Missing channelId' };
+    }
+    const channel = await Channel.findById(channelId);
+    if (!channel || channel.serverId !== server.id) {
+      set.status = 404;
+      return { error: 'Target channel not found in this server' };
+    }
+    const integrations = (server.settings as any)?.integrations || {};
+    let senderUsername = '';
+    let senderAvatar = '';
+    let notificationText = '';
+    let isDiscord = false;
+    if (params.type === 'twitch') {
+      const channelName = integrations.twitchChannel || 'SerikaStreamer';
+      senderUsername = `${channelName} (Twitch)`;
+      senderAvatar = 'https://cdn.pixabay.com/photo/2021/12/10/16/38/twitch-6860918_1280.png';
+      notificationText = `🔴 **Live Now!** ${channelName} is live playing **Retro Games**! Come watch: https://twitch.tv/${channelName}`;
+    } else if (params.type === 'youtube') {
+      const channelName = integrations.youtubeChannel || 'SerikaGaming';
+      senderUsername = `${channelName} (YouTube)`;
+      senderAvatar = 'https://cdn.pixabay.com/photo/2016/11/19/03/08/youtube-1837872_1280.png';
+      notificationText = `🎥 **New Upload!** ${channelName} just uploaded a new video: *"Building SerikaCord in 2026!"* check it out: https://youtube.com/watch?v=mock_video_id`;
+    } else if (params.type === 'discord') {
+      senderUsername = 'Wumpus (Discord)';
+      senderAvatar = 'https://cdn.pixabay.com/photo/2021/11/24/05/19/discord-6820244_1280.png';
+      notificationText = `Hello! This is a mock bridged message sent from our Discord server guild. Sync is fully functional.`;
+      isDiscord = true;
+    } else {
+      set.status = 400;
+      return { error: 'Invalid integration type' };
+    }
+    const { encryptForStorage } = await import('@/lib/security');
+    const encryptedContent = await encryptForStorage(notificationText);
+    let integrationUser = await User.findOne({ username: `${params.type}-integration-user` });
+    if (!integrationUser) {
+      integrationUser = await User.create({
+        username: `${params.type}-integration-user`,
+        displayName: senderUsername,
+        avatar: senderAvatar,
+        isBot: true,
+        isSystem: false,
+      });
+    }
+    const msg = await Message.create({
+      channelId: channel.id,
+      authorId: integrationUser.id,
+      content: encryptedContent,
+      type: 'default',
+    });
+    await Channel.updateById(channel.id, { lastMessageId: msg.id, updatedAt: new Date() });
+    const messageResponse = {
+      id: msg.id,
+      content: notificationText,
+      authorId: integrationUser.id,
+      author: {
+        id: integrationUser.id,
+        username: integrationUser.username,
+        displayName: senderUsername,
+        avatar: integrationUser.avatar,
+        status: 'online',
+        isBot: true,
+        isSystem: false,
+        isDiscord: isDiscord,
+      },
+      channelId: channel.id,
+      serverId: server.id,
+      createdAt: msg.createdAt,
+      updatedAt: msg.updatedAt,
+      attachments: [],
+      edited: false,
+      type: 'default',
+      pinned: false,
+      reactions: [],
+    };
+    const { publishToChannel } = await import('./channels');
+    publishToChannel(channel.id, { type: 'message', message: messageResponse });
+    return {
+      success: true,
+      message: messageResponse,
+    };
   });
 
 // Resolve an invite code to a server: normal invite docs first, then partnered

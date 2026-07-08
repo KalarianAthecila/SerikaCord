@@ -483,17 +483,37 @@ export function ChannelSidebar({
     [getMentionCount]
   );
 
+  const normalChannels = useMemo(() => {
+    return channels.filter(c => c.type !== "public_thread" && c.type !== "private_thread");
+  }, [channels]);
+
+  const threadsByParent = useMemo(() => {
+    const map = new Map<string, typeof channels>();
+    for (const channel of channels) {
+      if (channel.type === "public_thread" || channel.type === "private_thread") {
+        if (channel.parentId) {
+          const pId = channel.parentId.toString();
+          if (!map.has(pId)) {
+            map.set(pId, []);
+          }
+          map.get(pId)?.push(channel);
+        }
+      }
+    }
+    return map;
+  }, [channels]);
+
   const uncategorizedChannels = useMemo(() => {
-    return channels.filter(c => c.type !== "category" && !c.parentId).sort(mentionFirst);
-  }, [channels, mentionFirst]);
+    return normalChannels.filter(c => c.type !== "category" && !c.parentId).sort(mentionFirst);
+  }, [normalChannels, mentionFirst]);
 
   const categories = useMemo(() => {
-    return channels.filter(c => c.type === "category").sort((a, b) => a.position - b.position);
-  }, [channels]);
+    return normalChannels.filter(c => c.type === "category").sort((a, b) => a.position - b.position);
+  }, [normalChannels]);
 
   const channelsByCategory = useMemo(() => {
     const map = new Map<string, typeof channels>();
-    for (const channel of channels) {
+    for (const channel of normalChannels) {
       if (channel.type === "category") continue;
       if (channel.parentId) {
         const pId = channel.parentId.toString();
@@ -508,7 +528,7 @@ export function ChannelSidebar({
       map.get(key)?.sort(mentionFirst);
     }
     return map;
-  }, [channels, mentionFirst]);
+  }, [normalChannels, mentionFirst]);
 
   // Mark channel as read when it becomes active (also updates the unread engine's
   // notion of which channel the user is viewing so its own messages don't glow).
@@ -732,6 +752,81 @@ export function ChannelSidebar({
     );
   };
 
+  const renderThreadItem = (thread: typeof channels[0], isLast: boolean) => {
+    const isActive = currentChannel?.id === thread.id;
+    const unread = !isActive && isChannelUnread(thread.id);
+    const mentionCount = getMentionCount(thread.id);
+
+    return (
+      <div key={thread.id} className="relative flex items-center pl-6 pr-2 mb-0.5 group">
+        <div 
+          className="absolute left-[25px] top-0 w-px bg-zinc-700" 
+          style={{ height: isLast ? "14px" : "100%" }}
+        />
+        <div 
+          className="absolute left-[25px] top-[14px] w-3 h-px bg-zinc-700"
+        />
+
+        {unread && (
+          <div className="absolute left-[33px] top-1/2 -translate-y-1/2 w-1 h-2 rounded-r-full bg-white z-20" />
+        )}
+
+        <button
+          onClick={() => { navigateToChannel(thread); setActiveChannel(thread.id); }}
+          onMouseEnter={() => { void prefetchChannelMessages(`/api/channels/${thread.id}`); }}
+          onContextMenu={(e) => handleContextMenu(e, thread)}
+          className={cn(
+            "w-full pl-7 pr-2 py-1 rounded flex items-center gap-1.5 text-xs text-[#888888] hover:text-[#d5d9e8] hover:bg-[var(--bg-sidebar-elevated)] transition-all min-w-0 overflow-hidden",
+            isActive && "bg-[var(--bg-active)] text-[var(--app-accent)] font-medium",
+            !isActive && unread && "text-white font-semibold"
+          )}
+        >
+          <span className="text-[9px] uppercase font-bold tracking-wider px-1 py-0.5 rounded bg-zinc-800 text-zinc-500 scale-90 select-none shrink-0">
+            Th
+          </span>
+          <span className="truncate flex-1 text-left min-w-0" title={thread.name}>
+            {thread.name}
+          </span>
+          {mentionCount > 0 && !isActive && (
+            <span className="shrink-0 min-w-[14px] h-[14px] px-1 flex items-center justify-center rounded-full bg-[#c4306b] text-[9px] font-bold text-white leading-none">
+              {mentionCount > 99 ? "99+" : mentionCount}
+            </span>
+          )}
+          {canManageChannels && (
+            <Settings
+              onClick={(e) => {
+                e.stopPropagation();
+                setSettingsChannelId(thread.id);
+              }}
+              className="w-3 h-3 shrink-0 text-[#888888] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+            />
+          )}
+        </button>
+      </div>
+    );
+  };
+
+  const renderChannelWithThreads = (channel: typeof channels[0]) => {
+    const parentHtml = renderChannelItem(channel);
+    const childThreads = threadsByParent.get(channel.id) || [];
+    
+    if (childThreads.length === 0) {
+      return parentHtml;
+    }
+    
+    return (
+      <div key={channel.id} className="flex flex-col">
+        {parentHtml}
+        <div className="flex flex-col mt-0.5">
+          {childThreads.map((thread, index) => {
+            const isLast = index === childThreads.length - 1;
+            return renderThreadItem(thread, isLast);
+          })}
+        </div>
+      </div>
+    );
+  };
+
   useEffect(() => {
     if (!currentServer || !channels.length || !pathname) return;
     const match = pathname.match(/^\/channels\/[^/]+\/([^/]+)$/);
@@ -886,12 +981,19 @@ export function ChannelSidebar({
                           style={{ backgroundColor: statusColors[recipient.status] || statusColors.offline }}
                         />
                       </div>
-                      <div className="relative flex-1 min-w-0 overflow-hidden">
-                        <span className={cn("block truncate text-sm", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
+                      <div className="relative flex-1 min-w-0 overflow-hidden flex items-center gap-1">
+                        <span className={cn("truncate text-sm", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
                           {recipient.displayName || recipient.username}
                         </span>
                         {recipient.isSystem && (
-                          <span className="text-[10px] text-blue-400">System</span>
+                          <span className="shrink-0 px-1 py-[2px] rounded bg-[#5865F2] text-[8px] font-bold text-white uppercase leading-none select-none">
+                            SYSTEM
+                          </span>
+                        )}
+                        {recipient.isBot && !recipient.isSystem && (
+                          <span className="shrink-0 px-1 py-[2px] rounded bg-[#5865F2] text-[8px] font-bold text-white uppercase leading-none select-none">
+                            BOT
+                          </span>
                         )}
                       </div>
                       <button
@@ -1066,7 +1168,7 @@ export function ChannelSidebar({
           >
             {uncategorizedChannels.length > 0 && (
               <div className="space-y-0.5">
-                {uncategorizedChannels.map((channel) => renderChannelItem(channel))}
+                {uncategorizedChannels.map((channel) => renderChannelWithThreads(channel))}
               </div>
             )}
           </div>
@@ -1137,7 +1239,7 @@ export function ChannelSidebar({
                 {!isCollapsed && (
                   <div className="space-y-0.5">
                     {categoryChildren.length > 0 ? (
-                      categoryChildren.map((channel) => renderChannelItem(channel))
+                      categoryChildren.map((channel) => renderChannelWithThreads(channel))
                     ) : (
                       <div className="pl-6 text-[11px] text-[var(--text-muted)] italic select-none">
                         No channels in this category

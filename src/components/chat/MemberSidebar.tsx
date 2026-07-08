@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useMemo, useRef } from "react";
 import { Crown, Play, Pause, Music2, Gamepad2, Code2, Bot, Check } from "lucide-react";
-import { useServer } from "@/contexts/ServerContext";
+import { useServer, useServerMembers } from "@/contexts/ServerContext";
 import { useUserActivity } from "@/hooks/useMoeActivity";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,6 +35,7 @@ interface Member {
   isPremium?: boolean;
   isOwner?: boolean;
   isBot?: boolean;
+  isSystem?: boolean;
   isVerified?: boolean;
   joinedAt?: string | null;
   roles: MemberRole[];
@@ -76,7 +77,8 @@ function sortMembersByName(items: Member[]): Member[] {
 }
 
 export function MemberSidebar() {
-  const { currentServer, members, isMembersLoading: isLoading } = useServer();
+  const { currentServer } = useServer();
+  const { members, isMembersLoading: isLoading } = useServerMembers();
 
   const groupedOnlineMembers = useMemo(() => {
     const onlineMembers = sortMembersByName(members.filter((member) => member.status !== "offline"));
@@ -220,7 +222,12 @@ function MemberItem({ member, serverId }: MemberItemProps) {
                 {member.isOwner && (
                   <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
                 )}
-                {member.isBot && (
+                {member.isSystem && (
+                  <span className="inline-flex items-center px-1 py-0.5 text-[9px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase scale-90 origin-left bg-[#5865F2] text-white">
+                    SYSTEM
+                  </span>
+                )}
+                {member.isBot && !member.isSystem && (
                   <span className={cn(
                     "inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase scale-90 origin-left",
                     member.isVerified 

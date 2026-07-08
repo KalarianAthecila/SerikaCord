@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef, useTransition } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef, useTransition, useMemo } from "react";
 import { usePolling } from "@/hooks/usePolling";
 import { prefetchChannelMessages } from "@/hooks/useChatSession";
 
@@ -75,12 +75,20 @@ interface ServerContextType {
   deleteChannel: (channelId: string) => Promise<void>;
   updateChannel: (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[]; type?: string; forumMode?: 'posts' | 'tickets'; ticketAccessRoleIds?: string[]; availableTags?: Array<{ id?: string; name: string; moderated?: boolean; emojiName?: string }>; archived?: boolean; locked?: boolean }) => Promise<void>;
   reorderChannels: (serverId: string, channelUpdates: Array<{ id: string; position: number; parentId?: string | null }>) => Promise<void>;
-  members: any[];
-  isMembersLoading: boolean;
   fetchMembers: (serverId: string) => Promise<void>;
 }
 
 const ServerContext = createContext<ServerContextType | undefined>(undefined);
+
+// Members live in a SEPARATE context so the 30s member poll (and per-navigation
+// member refetches) only re-render the member list + chat, not every one of the
+// ~19 useServer() consumers (sidebars, server list, etc.).
+interface ServerMembersContextType {
+  members: any[];
+  isMembersLoading: boolean;
+}
+
+const ServerMembersContext = createContext<ServerMembersContextType | undefined>(undefined);
 
 // ── localStorage stale-while-revalidate ────────────────────────────────────
 // Persist the servers list and per-server channels so a reload paints instantly
@@ -311,7 +319,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  const createServer = async (name: string, icon?: File): Promise<Server> => {
+  const createServer = useCallback(async (name: string, icon?: File): Promise<Server> => {
     let iconUrl: string | undefined;
     
     // Upload icon first if provided
@@ -352,9 +360,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       return [...prev, server];
     });
     return server;
-  };
+  }, []);
 
-  const joinServer = async (inviteCode: string) => {
+  const joinServer = useCallback(async (inviteCode: string) => {
     const response = await fetch(`/api/invites/${inviteCode}`, {
       method: "POST",
     });
@@ -365,9 +373,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     }
 
     await fetchServers();
-  };
+  }, [fetchServers]);
 
-  const leaveServer = async (serverId: string) => {
+  const leaveServer = useCallback(async (serverId: string) => {
     const response = await fetch(`/api/servers/${serverId}/leave`, {
       method: "POST",
     });
@@ -383,9 +391,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       setCurrentServer(null);
       setCurrentChannel(null);
     }
-  };
+  }, [currentServer, setCurrentServer]);
 
-  const deleteChannel = async (channelId: string) => {
+  const deleteChannel = useCallback(async (channelId: string) => {
     const response = await fetch(`/api/channels/${channelId}`, {
       method: "DELETE",
     });
@@ -400,9 +408,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     if (currentChannel?.id === channelId) {
       setCurrentChannel(null);
     }
-  };
+  }, [currentChannel]);
 
-  const updateChannel = async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[]; type?: string; forumMode?: 'posts' | 'tickets'; ticketAccessRoleIds?: string[]; availableTags?: Array<{ id?: string; name: string; moderated?: boolean; emojiName?: string }>; archived?: boolean; locked?: boolean }) => {
+  const updateChannel = useCallback(async (channelId: string, data: { name?: string; topic?: string; nsfw?: boolean; parentId?: string | null; position?: number; rateLimitPerUser?: number; permissionOverwrites?: PermissionOverwrite[]; type?: string; forumMode?: 'posts' | 'tickets'; ticketAccessRoleIds?: string[]; availableTags?: Array<{ id?: string; name: string; moderated?: boolean; emojiName?: string }>; archived?: boolean; locked?: boolean }) => {
     const response = await fetch(`/api/channels/${channelId}`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -427,9 +435,9 @@ export function ServerProvider({ children }: { children: ReactNode }) {
         );
       }
     }
-  };
+  }, [currentServer]);
 
-  const reorderChannels = async (serverId: string, channelUpdates: Array<{ id: string; position: number; parentId?: string | null }>) => {
+  const reorderChannels = useCallback(async (serverId: string, channelUpdates: Array<{ id: string; position: number; parentId?: string | null }>) => {
     const response = await fetch(`/api/servers/${serverId}/channels/reorder`, {
       method: "PATCH",
       headers: { "Content-Type": "application/json" },
@@ -457,7 +465,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       setChannels(transformedChannels);
       channelCacheRef.current.set(serverId, transformedChannels);
     }
-  };
+  }, []);
 
   // Load cached servers from localStorage on mount (client-only) to paint
   // instantly while the network refetch happens in the background.
@@ -493,36 +501,49 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     currentServer?.id
   );
 
-  // Use currentServerState for the provider
-  const currentServerValue = currentServer;
+  // Memoize the context value so consumers only re-render when a field they
+  // actually depend on changes — not on every provider render (e.g. the 30s
+  // member poll, which now lives in a separate context below).
+  const value = useMemo<ServerContextType>(
+    () => ({
+      servers,
+      currentServer,
+      channels,
+      currentChannel,
+      isLoading,
+      isTransitioning,
+      setCurrentServer,
+      setCurrentChannel,
+      clearContext,
+      fetchServers,
+      fetchChannels,
+      prefetchServer,
+      createServer,
+      joinServer,
+      leaveServer,
+      deleteChannel,
+      updateChannel,
+      reorderChannels,
+      fetchMembers,
+    }),
+    [
+      servers, currentServer, channels, currentChannel, isLoading, isTransitioning,
+      setCurrentServer, setCurrentChannel, clearContext, fetchServers, fetchChannels,
+      prefetchServer, createServer, joinServer, leaveServer, deleteChannel,
+      updateChannel, reorderChannels, fetchMembers,
+    ]
+  );
+
+  const membersValue = useMemo<ServerMembersContextType>(
+    () => ({ members, isMembersLoading }),
+    [members, isMembersLoading]
+  );
 
   return (
-    <ServerContext.Provider
-      value={{
-        servers,
-        currentServer: currentServerValue,
-        channels,
-        currentChannel,
-        isLoading,
-        isTransitioning,
-        setCurrentServer,
-        setCurrentChannel,
-        clearContext,
-        fetchServers,
-        fetchChannels,
-        prefetchServer,
-        createServer,
-        joinServer,
-        leaveServer,
-        deleteChannel,
-        updateChannel,
-        reorderChannels,
-        members,
-        isMembersLoading,
-        fetchMembers,
-      }}
-    >
-      {children}
+    <ServerContext.Provider value={value}>
+      <ServerMembersContext.Provider value={membersValue}>
+        {children}
+      </ServerMembersContext.Provider>
     </ServerContext.Provider>
   );
 }
@@ -531,6 +552,14 @@ export function useServer() {
   const context = useContext(ServerContext);
   if (context === undefined) {
     throw new Error("useServer must be used within a ServerProvider");
+  }
+  return context;
+}
+
+export function useServerMembers() {
+  const context = useContext(ServerMembersContext);
+  if (context === undefined) {
+    throw new Error("useServerMembers must be used within a ServerProvider");
   }
   return context;
 }

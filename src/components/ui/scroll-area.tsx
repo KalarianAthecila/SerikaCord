@@ -18,7 +18,13 @@ function ScrollArea({
     >
       <ScrollAreaPrimitive.Viewport
         data-slot="scroll-area-viewport"
-        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1 overscroll-contain [-webkit-overflow-scrolling:touch]"
+        // Radix wraps children in a `display:table; min-width:100%` div, which
+        // shrink-wraps to content width and defeats `truncate`/`w-full` on
+        // descendants (long channel names overflow the sidebar instead of
+        // truncating). Force that wrapper to `display:block` so children size to
+        // the viewport width. `!block` emits `display:block !important`, which
+        // overrides Radix's inline `display:table`.
+        className="focus-visible:ring-ring/50 size-full rounded-[inherit] transition-[color,box-shadow] outline-none focus-visible:ring-[3px] focus-visible:outline-1 overscroll-contain [-webkit-overflow-scrolling:touch] [&>div]:!block"
       >
         {children}
       </ScrollAreaPrimitive.Viewport>
