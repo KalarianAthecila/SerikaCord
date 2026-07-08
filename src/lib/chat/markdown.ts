@@ -14,7 +14,7 @@ const UNDERLINE_RE = /__([^_]+)__/;
 const STRIKE_RE = /~~([^~]+)~~/;
 const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/;
 const TIMESTAMP_RE = /<t:(-?\d+)(?::([tTdDfFRC])(?:\[([^\]]*)\])?)?>/;
-const CHANNEL_MENTION_RE = /<#([a-f0-9]{24})>/;
+const CHANNEL_MENTION_RE = /<#([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/;
 
 function parseInline(text: string): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];

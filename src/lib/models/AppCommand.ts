@@ -1,33 +1,61 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-/** A registered application (slash) command — global or guild-scoped. */
-export interface IAppCommand extends Document {
-  _id: Types.ObjectId;
-  applicationId: Types.ObjectId;
-  guildId?: Types.ObjectId | null;
-  name: string;
-  description: string;
-  options: unknown[];
-  defaultPermission: boolean;
-  type: number;
-  version: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IAppCommand = typeof schema.appCommands.$inferSelect;
 
-const AppCommandSchema = new Schema<IAppCommand>({
-  applicationId: { type: Schema.Types.ObjectId, ref: 'Application', required: true, index: true },
-  guildId: { type: Schema.Types.ObjectId, ref: 'Server', default: null, index: true },
-  name: { type: String, required: true, trim: true, maxlength: 32 },
-  description: { type: String, required: true, maxlength: 100 },
-  options: { type: Schema.Types.Mixed, default: [] },
-  defaultPermission: { type: Boolean, default: true },
-  type: { type: Number, default: 1 },
-  version: { type: String, default: '1' },
-}, { timestamps: true });
+export const AppCommand = {
+  table: schema.appCommands,
 
-AppCommandSchema.index({ applicationId: 1, guildId: 1, name: 1 }, { unique: true });
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.appCommands).where(eq(schema.appCommands.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-export const AppCommand =
-  (mongoose.models.AppCommand as mongoose.Model<IAppCommand>) ||
-  mongoose.model<IAppCommand>('AppCommand', AppCommandSchema);
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'applicationId': conditions.push(eq(schema.appCommands.applicationId, normalizeId(value as string))); break;
+        case 'guildId': conditions.push(eq(schema.appCommands.guildId, normalizeId(value as string))); break;
+      }
+    }
+    let query = db.select().from(schema.appCommands);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
+
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'applicationId': conditions.push(eq(schema.appCommands.applicationId, normalizeId(value as string))); break;
+        case 'guildId': conditions.push(eq(schema.appCommands.guildId, normalizeId(value as string))); break;
+      }
+    }
+    let query = db.select().from(schema.appCommands);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.appCommands.$inferInsert) {
+    const [row] = await db.insert(schema.appCommands).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.appCommands.$inferInsert>) {
+    const [row] = await db.update(schema.appCommands).set({ ...data, updatedAt: new Date() }).where(eq(schema.appCommands.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.appCommands).where(eq(schema.appCommands.id, normalizeId(id)));
+  },
+};

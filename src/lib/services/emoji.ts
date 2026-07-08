@@ -1,5 +1,8 @@
 import { ServerEmoji, type IServerEmoji } from '@/lib/models/ServerEmoji';
-import { Types } from 'mongoose';
+
+function isValidUUID(id: string): boolean {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
+}
 
 export interface ParsedEmoji {
   name: string;
@@ -17,7 +20,7 @@ export interface EmojiParseResult {
 
 // Regex for custom emoji format: <:name:id> or <a:name:id> for animated
 // Also supports shorthand :name:id for backward compatibility
-const CUSTOM_EMOJI_REGEX = /<?(a)?:([a-zA-Z0-9_]{2,32}):([a-f0-9]{24})>?/gi;
+const CUSTOM_EMOJI_REGEX = /<?(a)?:([a-zA-Z0-9_]{2,32}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>?/gi;
 
 // Cache for emoji lookups - expires after 5 minutes
 const emojiCache = new Map<string, { emoji: IServerEmoji | null; timestamp: number }>();
@@ -59,8 +62,8 @@ export function clearEmojiCache(emojiId?: string): void {
  */
 export async function parseCustomEmojis(
   content: string,
-  userServerId?: string | Types.ObjectId, // Server context for validation
-  userServerIds?: (string | Types.ObjectId)[] // All servers user has access to
+  userServerId?: string,
+  userServerIds?: string[]
 ): Promise<EmojiParseResult> {
   const emojis: ParsedEmoji[] = [];
   const invalidEmojis: string[] = [];
@@ -77,7 +80,7 @@ export async function parseCustomEmojis(
   const uniqueIds = new Set<string>();
   for (const match of matches) {
     const emojiId = match[3];
-    if (Types.ObjectId.isValid(emojiId)) {
+    if (isValidUUID(emojiId)) {
       uniqueIds.add(emojiId);
     }
   }
@@ -97,11 +100,11 @@ export async function parseCustomEmojis(
   // Convert user server IDs to string set for comparison
   const accessibleServers = new Set<string>();
   if (userServerId) {
-    accessibleServers.add(userServerId.toString());
+    accessibleServers.add(userServerId);
   }
   if (userServerIds) {
     for (const id of userServerIds) {
-      accessibleServers.add(id.toString());
+      accessibleServers.add(id);
     }
   }
 
@@ -120,7 +123,7 @@ export async function parseCustomEmojis(
       continue;
     }
 
-    if (!Types.ObjectId.isValid(emojiId)) {
+    if (!isValidUUID(emojiId)) {
       invalidEmojis.push(fullMatch);
       seenIds.set(emojiId, null);
       continue;
@@ -142,7 +145,7 @@ export async function parseCustomEmojis(
     }
 
     // Validate server access if provided
-    if (accessibleServers.size > 0 && !accessibleServers.has(emoji.serverId.toString())) {
+    if (accessibleServers.size > 0 && !accessibleServers.has(emoji.serverId)) {
       invalidEmojis.push(fullMatch);
       seenIds.set(emojiId, null);
       continue;
@@ -151,7 +154,7 @@ export async function parseCustomEmojis(
     const parsedEmoji: ParsedEmoji = {
       name: emoji.name,
       id: emojiId,
-      animated: emoji.animated,
+      animated: emoji.animated ?? false,
       url: emoji.imageUrl,
       raw: fullMatch,
     };
@@ -177,7 +180,7 @@ export function formatEmoji(name: string, id: string, animated = false): string 
  */
 export function normalizeEmojiFormat(content: string): string {
   // Match :name:id format without angle brackets
-  return content.replace(/:([a-zA-Z0-9_]{2,32}):([a-f0-9]{24})(?!>)/gi, '<:$1:$2>');
+  return content.replace(/:([a-zA-Z0-9_]{2,32}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?!>)/gi, '<:$1:$2>');
 }
 
 /**
@@ -189,7 +192,7 @@ export function extractEmojiIds(content: string): string[] {
   
   for (const match of matches) {
     const emojiId = match[3];
-    if (Types.ObjectId.isValid(emojiId) && !ids.includes(emojiId)) {
+    if (isValidUUID(emojiId) && !ids.includes(emojiId)) {
       ids.push(emojiId);
     }
   }
@@ -219,7 +222,7 @@ export async function getReactionEmoji(emojiStr: string): Promise<{
   if (match) {
     const [, animated, name, id] = match;
     
-    if (!Types.ObjectId.isValid(id)) {
+    if (!isValidUUID(id)) {
       return null;
     }
 
@@ -231,7 +234,7 @@ export async function getReactionEmoji(emojiStr: string): Promise<{
     return {
       name: emoji.name,
       id,
-      animated: emoji.animated,
+      animated: emoji.animated ?? false,
       url: emoji.imageUrl,
     };
   }
@@ -247,7 +250,7 @@ export async function getReactionEmoji(emojiStr: string): Promise<{
  */
 export async function validateEmojisInContent(
   content: string,
-  userServerIds: (string | Types.ObjectId)[]
+  userServerIds: string[]
 ): Promise<{ valid: boolean; invalidEmojis: string[] }> {
   const result = await parseCustomEmojis(content, undefined, userServerIds);
   return {

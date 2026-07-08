@@ -171,8 +171,8 @@ export function ProfileCard({
         if (!active) return;
         if (serverRes.ok) {
           const serverData = await serverRes.json();
-          const roles = (serverData.server?.roles || []).map((r: { _id?: string; id?: string; name: string; color?: string; isDefault?: boolean }) => ({
-            id: r._id || r.id || "",
+          const roles = (serverData.server?.roles || []).map((r: { id?: string; name: string; color?: string; isDefault?: boolean }) => ({
+            id: r.id || "",
             name: r.name,
             color: r.color,
             isDefault: r.isDefault,

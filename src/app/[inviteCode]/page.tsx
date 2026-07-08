@@ -23,7 +23,7 @@ import { ShareInviteButton } from "@/components/invite/ShareInviteButton";
 interface InviteInfo {
   code: string;
   server: {
-    _id: string;
+    id: string;
     name: string;
     icon?: string;
     banner?: string;
@@ -123,7 +123,7 @@ export default function InvitePage() {
 
       if (!res.ok) {
         if (res.status === 400 && data.error?.includes("Already a member")) {
-          const target = invite?.server._id ? `/channels/${invite.server._id}` : "/channels/me";
+          const target = invite?.server.id ? `/channels/${invite.server.id}` : "/channels/me";
           if (typeof window !== "undefined" && window.location.hostname !== "serika.chat") {
             window.location.href = `https://serika.chat${target}`;
           } else {
@@ -152,7 +152,7 @@ export default function InvitePage() {
     if (!invite) return;
     setIsSubmittingApply(true);
     try {
-      const res = await fetch(`/api/servers/${invite.server._id}/applications`, {
+      const res = await fetch(`/api/servers/${invite.server.id}/applications`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -448,7 +448,7 @@ export default function InvitePage() {
                   {!isExpired && (
                     <ShareInviteButton
                       inviteCode={inviteCode}
-                      serverId={invite.server._id}
+                      serverId={invite.server.id}
                       serverName={invite.server.name}
                     />
                   )}

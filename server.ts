@@ -14,7 +14,6 @@ import { WebSocketServer, type WebSocket } from 'ws';
 import { connectDB } from '@/lib/db';
 import { initializeAPI } from '@/lib/api';
 import { authenticateRequest } from '@/lib/services/auth';
-import { isValidObjectId } from '@/lib/security';
 import {
   GatewayHub,
   subscribeHubToRedis,
@@ -35,7 +34,7 @@ const handle = app.getRequestHandler();
 let registerChannelSSE: ((channelId: string, write: (data: string) => void) => () => void) | null = null;
 let registerDmSSE: ((channelId: string, write: (data: string) => void) => () => void) | null = null;
 let checkChannelAccess: ((userId: string, channelId: string) => Promise<{ hasAccess: boolean; error?: string }>) | null = null;
-let getOrCreateDMChannel: ((userId: string, recipientId: string) => Promise<{ _id: { toString(): string } }>) | null = null;
+let getOrCreateDMChannel: ((userId: string, recipientId: string) => Promise<{ id: string }>) | null = null;
 
 async function main() {
   await app.prepare();
@@ -184,12 +183,7 @@ async function handleSSE(
   // Determine the channel key for SSE registration
   let channelKey: string;
   if (channelId) {
-    if (!isValidObjectId(channelId)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid channel ID' }));
-      return;
-    }
-    const { hasAccess, error } = await checkChannelAccess!(user._id.toString(), channelId);
+    const { hasAccess, error } = await checkChannelAccess!(user.id, channelId);
     if (!hasAccess) {
       res.writeHead(403, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: error || 'Access denied' }));
@@ -197,13 +191,8 @@ async function handleSSE(
     }
     channelKey = channelId;
   } else if (recipientId) {
-    if (!isValidObjectId(recipientId)) {
-      res.writeHead(400, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: 'Invalid recipient ID' }));
-      return;
-    }
-    const dmChannel = await getOrCreateDMChannel!(user._id.toString(), recipientId);
-    channelKey = dmChannel._id.toString();
+    const dmChannel = await getOrCreateDMChannel!(user.id, recipientId);
+    channelKey = dmChannel.id;
   } else {
     res.writeHead(400, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Missing channel or recipient ID' }));

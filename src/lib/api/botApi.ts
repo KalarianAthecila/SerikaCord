@@ -1,40 +1,10 @@
 import { Elysia, t } from 'elysia';
-import { Application } from '@/lib/models';
+import { Application, ChannelWebhook } from '@/lib/models';
 import { Channel, Message, Server, ServerMember, Role, User, ServerEmoji, ServerSticker, Invite, ServerBan } from '@/lib/models';
-import { Types } from 'mongoose';
+import { AppCommand } from '@/lib/models/AppCommand';
 import * as crypto from 'crypto';
 import { config } from '@/lib/config';
-
-// ─── Webhook Model (inline, lightweight) ───────────────────
-import mongoose, { Schema, Document } from 'mongoose';
-
-interface IChannelWebhook extends Document {
-  _id: Types.ObjectId;
-  channelId: Types.ObjectId;
-  serverId?: Types.ObjectId;
-  name: string;
-  avatar?: string;
-  token: string;
-  url: string;
-  creatorId: Types.ObjectId;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
-const ChannelWebhookSchema = new Schema<IChannelWebhook>({
-  channelId: { type: Schema.Types.ObjectId, ref: 'Channel', required: true, index: true },
-  serverId: { type: Schema.Types.ObjectId, ref: 'Server', default: null, index: true },
-  name: { type: String, required: true, trim: true, maxlength: 80 },
-  avatar: { type: String, default: null },
-  token: { type: String, required: true },
-  url: { type: String, required: true },
-  creatorId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-}, { timestamps: true });
-
-const ChannelWebhook = mongoose.models.ChannelWebhook || mongoose.model<IChannelWebhook>('ChannelWebhook', ChannelWebhookSchema);
-
-// ─── Application Command Model (shared) ────────────────────
-import { AppCommand } from '@/lib/models/AppCommand';
+import { isValidObjectId } from '@/lib/security';
 
 // ─── Bot Auth Helper ───────────────────────────────────────
 
@@ -46,27 +16,25 @@ async function authenticateBot(headers: Record<string, string | undefined>) {
   const token = authHeader.startsWith('Bot ') ? authHeader.slice(4) : authHeader;
   if (!token) return null;
 
-  const app = await Application.findOne({ botToken: token }).lean();
+  const app = await Application.findOne({ botToken: token });
   if (!app || !app.botId) return null;
 
   // Get the bot user
-  const botUser = await User.findById(app.botId).lean();
+  const botUser = await User.findById(app.botId);
   if (!botUser) return null;
 
   return { app, botUser };
 }
 
-function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
-  const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
-  const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
-  return str1 === str2;
+function compareIds(id1: string, id2: string): boolean {
+  return id1 === id2;
 }
 
 // ─── Discord-compatible response formatters ────────────────
 
 function formatUser(user: any) {
   return {
-    id: user._id.toString(),
+    id: user.id,
     username: user.username,
     global_name: user.displayName || user.username,
     avatar: user.avatar,
@@ -92,43 +60,43 @@ function formatChannel(channel: any) {
   };
   const isDM = channel.type === 'dm' || channel.type === 'group_dm';
   return {
-    id: channel._id.toString(),
+    id: channel.id,
     type: typeMap[channel.type] ?? 0,
-    guild_id: channel.serverId?.toString() ?? null,
+    guild_id: channel.serverId ?? null,
     name: channel.name ?? null,
     topic: channel.topic ?? null,
     position: channel.position ?? 0,
     nsfw: channel.nsfw ?? false,
     rate_limit_per_user: channel.rateLimitPerUser ?? 0,
-    parent_id: channel.parentId?.toString() ?? null,
+    parent_id: channel.parentId ?? null,
     last_message_id: null,
     bitrate: channel.bitrate ?? undefined,
     user_limit: channel.userLimit ?? undefined,
     rtc_region: channel.rtcRegion ?? undefined,
     recipients: isDM && channel.recipientIds
-      ? channel.recipientIds.map((r: any) => ({ id: r.toString(), username: '' }))
+      ? channel.recipientIds.map((r: any) => ({ id: r, username: '' }))
       : undefined,
   };
 }
 
 function formatMessage(msg: any) {
-  const author = msg.authorId && typeof msg.authorId === 'object' && msg.authorId._id
+  const author = msg.authorId && typeof msg.authorId === 'object' && msg.authorId.id
     ? formatUser(msg.authorId)
     : msg.authorId
-      ? { id: msg.authorId.toString(), username: '' }
+      ? { id: msg.authorId, username: '' }
       : null;
   return {
-    id: msg._id.toString(),
-    channel_id: msg.channelId?.toString() ?? null,
+    id: msg.id,
+    channel_id: msg.channelId ?? null,
     author,
     content: msg.content ?? '',
     timestamp: msg.createdAt ? new Date(msg.createdAt).toISOString() : undefined,
     edited_timestamp: msg.edited ? new Date(msg.updatedAt).toISOString() : null,
     tts: false,
     mention_everyone: msg.mentionEveryone ?? false,
-    mentions: (msg.mentionedUserIds ?? []).map((id: any) => ({ id: id.toString(), username: '' })),
-    mention_roles: (msg.mentionedRoleIds ?? []).map((id: any) => id.toString()),
-    mention_channels: (msg.mentionedChannelIds ?? []).map((id: any) => id.toString()),
+    mentions: (msg.mentionedUserIds ?? []).map((id: any) => ({ id, username: '' })),
+    mention_roles: (msg.mentionedRoleIds ?? []).map((id: any) => id),
+    mention_channels: (msg.mentionedChannelIds ?? []).map((id: any) => id),
     attachments: (msg.attachments ?? []).map((a: any) => ({
       id: a.id,
       filename: a.filename,
@@ -143,7 +111,7 @@ function formatMessage(msg: any) {
     reactions: (msg.reactions ?? []).map((r: any) => ({
       emoji: r.emoji,
       count: r.count,
-      me: r.userIds?.some((uid: any) => uid.toString() === (author as any)?.id) ?? false,
+      me: r.userIds?.some((uid: any) => uid === (author as any)?.id) ?? false,
     })),
     pinned: msg.pinned ?? false,
     type: 0,
@@ -154,9 +122,9 @@ function formatMessage(msg: any) {
 
 async function formatGuild(server: any) {
   const [roles, emojis] = await Promise.all([
-    Role.find({ serverId: server._id }).sort({ position: 1 }).lean().then(rs => rs.map(formatRole)).catch(() => []),
-    ServerEmoji.find({ serverId: server._id }).lean().then(es => es.map((e: any) => ({
-      id: e._id.toString(),
+    Role.find({ serverId: server.id }).then(rs => rs.map(formatRole)).catch(() => []),
+    ServerEmoji.find({ serverId: server.id }).then(es => es.map((e: any) => ({
+      id: e.id,
       name: e.name,
       roles: [],
       user: null,
@@ -167,11 +135,11 @@ async function formatGuild(server: any) {
     }))).catch(() => []),
   ]);
   return {
-    id: server._id.toString(),
+    id: server.id,
     name: server.name,
     icon: server.icon ?? null,
     description: server.description ?? null,
-    owner_id: server.ownerId?.toString() ?? null,
+    owner_id: server.ownerId ?? null,
     verification_level: 0,
     member_count: server.memberCount ?? 0,
     premium_tier: server.premiumTier ?? 0,
@@ -186,7 +154,7 @@ async function formatGuild(server: any) {
 
 function formatRole(role: any) {
   return {
-    id: role._id.toString(),
+    id: role.id,
     name: role.name,
     color: role.color ?? 0,
     hoist: role.hoist ?? false,
@@ -204,7 +172,7 @@ function formatMember(member: any, user: any) {
   return {
     user: user ? formatUser(user) : null,
     nick: member.nickname ?? null,
-    roles: (member.roles ?? []).map((r: any) => r.toString()),
+    roles: (member.roles ?? []).map((r: any) => r),
     joined_at: member.joinedAt ? new Date(member.joinedAt).toISOString() : undefined,
     premium_since: member.premiumSince ? new Date(member.premiumSince).toISOString() : null,
     deaf: member.deaf ?? false,
@@ -223,9 +191,9 @@ function formatMember(member: any, user: any) {
 function formatInvite(invite: any) {
   return {
     code: invite.code,
-    guild: invite.serverId ? { id: invite.serverId.toString(), name: '' } : null,
-    channel: invite.channelId ? { id: invite.channelId.toString(), name: '' } : null,
-    inviter: invite.inviterId ? { id: invite.inviterId.toString() } : null,
+    guild: invite.serverId ? { id: invite.serverId, name: '' } : null,
+    channel: invite.channelId ? { id: invite.channelId, name: '' } : null,
+    inviter: invite.inviterId ? { id: invite.inviterId } : null,
     approximate_member_count: 0,
     approximate_presence_count: 0,
     expires_at: invite.expiresAt ? new Date(invite.expiresAt).toISOString() : null,
@@ -275,8 +243,8 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.userId)) { set.status = 404; return { code: 10013, message: 'Unknown User' }; }
-  const user = await User.findById(params.userId).lean();
+  if (!isValidObjectId(params.userId)) { set.status = 404; return { code: 10013, message: 'Unknown User' }; }
+  const user = await User.findById(params.userId);
   if (!user) { set.status = 404; return { code: 10013, message: 'Unknown User' }; }
   return formatUser(user);
 })
@@ -286,8 +254,8 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const server = await Server.findById(params.guildId).lean();
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const server = await Server.findById(params.guildId);
   if (!server) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
   return await formatGuild(server);
 })
@@ -295,31 +263,30 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
   const server = await Server.findById(params.guildId);
   if (!server) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
 
   const patch = body as any;
-  if (patch.name !== undefined) server.name = patch.name;
-  if (patch.description !== undefined) server.description = patch.description;
-  if (patch.icon !== undefined) server.icon = patch.icon;
-  if (patch.banner !== undefined) server.banner = patch.banner;
-  if (patch.verification_level !== undefined) server.verificationLevel = patch.verification_level;
-  if (patch.default_notifications !== undefined) server.defaultNotifications = patch.default_notifications;
-  await server.save();
-  return await formatGuild(server);
+  const updates: Record<string, unknown> = {};
+  if (patch.name !== undefined) updates.name = patch.name;
+  if (patch.description !== undefined) updates.description = patch.description;
+  if (patch.icon !== undefined) updates.icon = patch.icon;
+  if (patch.banner !== undefined) updates.banner = patch.banner;
+  if (patch.verification_level !== undefined) updates.verificationLevel = patch.verification_level;
+  if (patch.default_notifications !== undefined) updates.defaultNotifications = patch.default_notifications;
+  const updated = await Server.updateById(params.guildId, updates);
+  return await formatGuild(updated || server);
 })
 .get('/guilds/:guildId/preview', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const server = await Server.findById(params.guildId)
-    .select('name icon banner description memberCount onlineCount isPartnered features')
-    .lean();
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const server = await Server.findById(params.guildId);
   if (!server) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
   return {
-    id: server._id.toString(),
+    id: server.id,
     name: server.name,
     icon: server.icon ?? null,
     banner: server.banner ?? null,
@@ -334,51 +301,52 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const channels = await Channel.find({ serverId: params.guildId }).sort({ position: 1 }).lean();
-  return channels.map(formatChannel);
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const channels = await Channel.find({ serverId: params.guildId });
+  return channels.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0)).map(formatChannel);
 })
 .get('/guilds/:guildId/roles', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const roles = await Role.find({ serverId: params.guildId }).sort({ position: 1 }).lean();
-  return roles.map(formatRole);
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const roles = await Role.find({ serverId: params.guildId });
+  return roles.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0)).map(formatRole);
 })
 .get('/guilds/:guildId/members', async ({ headers, params, query, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
   const limit = Math.min(parseInt(query.limit as string) || 100, 1000);
-  const members = await ServerMember.find({ serverId: params.guildId }).limit(limit).lean();
-  const userIds = members.map((m: any) => m.userId);
-  const users = await User.find({ _id: { $in: userIds } }).lean();
-  const userMap = new Map(users.map((u: any) => [u._id.toString(), u]));
+  const members = await ServerMember.find({ serverId: params.guildId });
+  const sliced = members.slice(0, limit);
+  const userIds = sliced.map((m: any) => m.userId);
+  const users = userIds.length > 0 ? await User.find({ id: { in: userIds } }) : [];
+  const userMap = new Map(users.map((u: any) => [u.id, u]));
 
-  return members.map((m: any) => formatMember(m, userMap.get(m.userId?.toString())));
+  return sliced.map((m: any) => formatMember(m, userMap.get(m.userId)));
 })
 .get('/guilds/:guildId/members/:userId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId) || !Types.ObjectId.isValid(params.userId)) {
+  if (!isValidObjectId(params.guildId) || !isValidObjectId(params.userId)) {
     set.status = 404; return { code: 10007, message: 'Unknown Member' };
   }
-  const member = await ServerMember.findOne({ serverId: params.guildId, userId: params.userId }).lean();
+  const member = await ServerMember.findOne({ serverId: params.guildId, userId: params.userId });
   if (!member) { set.status = 404; return { code: 10007, message: 'Unknown Member' }; }
-  const user = await User.findById(params.userId).lean();
+  const user = await User.findById(params.userId);
   return formatMember(member, user);
 })
 .get('/guilds/:guildId/emojis', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const emojis = await ServerEmoji.find({ serverId: params.guildId }).lean();
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const emojis = await ServerEmoji.find({ serverId: params.guildId });
   return emojis.map((e: any) => ({
-    id: e._id.toString(),
+    id: e.id,
     name: e.name,
     roles: [],
     user: null,
@@ -392,19 +360,19 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const bans = await ServerBan.find({ serverId: params.guildId }).lean();
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const bans = await ServerBan.find({ serverId: params.guildId });
   return bans.map((b: any) => ({
     reason: b.reason ?? null,
-    user: { id: b.userId.toString() },
+    user: { id: b.userId },
   }));
 })
 .get('/guilds/:guildId/invites', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const invites = await Invite.find({ serverId: params.guildId }).lean();
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const invites = await Invite.find({ serverId: params.guildId });
   return invites.map(formatInvite);
 })
 
@@ -413,8 +381,8 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
-  const channel = await Channel.findById(params.channelId).lean();
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  const channel = await Channel.findById(params.channelId);
   if (!channel) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
   return formatChannel(channel);
 })
@@ -422,25 +390,26 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
   const channel = await Channel.findById(params.channelId);
   if (!channel) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
 
   const patch = body as any;
-  if (patch.name !== undefined) channel.name = patch.name;
-  if (patch.topic !== undefined) channel.topic = patch.topic;
-  if (patch.nsfw !== undefined) channel.nsfw = patch.nsfw;
-  if (patch.rate_limit_per_user !== undefined) channel.rateLimitPerUser = patch.rate_limit_per_user;
-  await channel.save();
-  return formatChannel(channel);
+  const updates: Record<string, unknown> = {};
+  if (patch.name !== undefined) updates.name = patch.name;
+  if (patch.topic !== undefined) updates.topic = patch.topic;
+  if (patch.nsfw !== undefined) updates.nsfw = patch.nsfw;
+  if (patch.rate_limit_per_user !== undefined) updates.rateLimitPerUser = patch.rate_limit_per_user;
+  const updated = await Channel.updateById(params.channelId, updates);
+  return formatChannel(updated || channel);
 })
 .delete('/channels/:channelId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
-  await Channel.findByIdAndDelete(params.channelId);
-  return formatChannel({ _id: params.channelId });
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  await Channel.deleteById(params.channelId);
+  return formatChannel({ id: params.channelId });
 })
 
 // ─── Messages ──────────────────────────────────────────────
@@ -448,30 +417,30 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
   const limit = Math.min(parseInt(query.limit as string) || 50, 100);
-  const messages = await Message.find({ channelId: params.channelId })
-    .sort({ createdAt: -1 })
-    .limit(limit)
-    .populate('authorId')
-    .lean();
-  return messages.map(formatMessage);
+  const messages = await Message.find({ channelId: params.channelId, _limit: limit });
+  const authorIds = [...new Set(messages.map((m: any) => m.authorId).filter(Boolean))] as string[];
+  const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+  const authorMap = new Map(authors.map((u: any) => [u.id, u]));
+  return messages.map((m: any) => formatMessage({ ...m, authorId: authorMap.get(m.authorId) || m.authorId }));
 })
 .get('/channels/:channelId/messages/:messageId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
-  const msg = await Message.findById(params.messageId).populate('authorId').lean();
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  const msg = await Message.findById(params.messageId);
   if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
-  return formatMessage(msg);
+  const author = msg.authorId ? await User.findById(msg.authorId) : null;
+  return formatMessage({ ...msg, authorId: author || msg.authorId });
 })
 .post('/channels/:channelId/messages', async ({ headers, params, body, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
-  const channel = await Channel.findById(params.channelId).lean();
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  const channel = await Channel.findById(params.channelId);
   if (!channel) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
 
   const { content, embeds, tts, attachments, allowed_mentions, sticker_ids, components, flags } = body as any;
@@ -480,9 +449,9 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   }
 
   const msg = await Message.create({
-    channelId: new Types.ObjectId(params.channelId),
+    channelId: params.channelId,
     serverId: channel.serverId ?? null,
-    authorId: auth.botUser._id,
+    authorId: auth.botUser.id,
     content: content || '',
     embeds: embeds ?? [],
     attachments: attachments ?? [],
@@ -492,73 +461,73 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
     reactions: [],
   });
 
-  const populated = await Message.findById(msg._id).populate('authorId').lean();
+  const populated = await Message.findById(msg.id);
+  const author = populated?.authorId ? await User.findById(populated.authorId) : null;
+  const formattedMsg = populated ? formatMessage({ ...populated, authorId: author || populated.authorId }) : null;
 
   // Deliver to the web client SSE streams and the bot gateway.
   try {
     const { publishToChannel } = await import('@/lib/api/channels');
-    publishToChannel(params.channelId, { type: 'message', message: formatMessage(populated) });
+    publishToChannel(params.channelId, { type: 'message', message: formattedMsg });
   } catch {}
   try {
     const { emitMessageCreate } = await import('@/lib/services/gatewayEvents');
-    const author = populated?.authorId as any;
     await emitMessageCreate({
-      id: msg._id.toString(),
+      id: msg.id,
       content: msg.content ?? '',
       channelId: params.channelId,
-      serverId: channel.serverId?.toString() ?? null,
+      serverId: channel.serverId ?? null,
       createdAt: (populated as any)?.createdAt,
-      author: author && author._id ? {
-        id: author._id.toString(),
+      author: author ? {
+        id: author.id,
         username: author.username,
-        displayName: author.displayName,
+        displayName: author.displayName ?? undefined,
         avatar: author.avatar,
-        isBot: author.isBot,
-        isSystem: author.isSystem,
+        isBot: author.isBot ?? undefined,
+        isSystem: author.isSystem ?? undefined,
       } : null,
       attachments: (msg.attachments ?? []) as any,
     });
   } catch {}
 
-  return formatMessage(populated);
+  return formattedMsg;
 })
 .patch('/channels/:channelId/messages/:messageId', async ({ headers, params, body, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
   const msg = await Message.findById(params.messageId);
   if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   // Only the author can edit
-  if (!compareIds(msg.authorId, auth.botUser._id)) {
+  if (!compareIds(msg.authorId, auth.botUser.id)) {
     set.status = 403; return { code: 50003, message: 'Cannot edit a message authored by another user' };
   }
 
   const { content, embeds } = body as any;
-  if (content !== undefined) msg.content = content;
-  if (embeds !== undefined) msg.embeds = embeds;
-  msg.edited = true;
-  await msg.save();
-
-  const populated = await Message.findById(msg._id).populate('authorId').lean();
-  return formatMessage(populated);
+  const updates: Record<string, unknown> = { edited: true };
+  if (content !== undefined) updates.content = content;
+  if (embeds !== undefined) updates.embeds = embeds;
+  const updated = await Message.updateById(params.messageId, updates);
+  const author = updated?.authorId ? await User.findById(updated.authorId) : null;
+  return formatMessage({ ...(updated || msg), authorId: author || (updated || msg).authorId });
 })
 .delete('/channels/:channelId/messages/:messageId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
   const msg = await Message.findById(params.messageId);
   if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   // Author or manage messages permission
-  const isAuthor = compareIds(msg.authorId, auth.botUser._id);
+  const isAuthor = compareIds(msg.authorId, auth.botUser.id);
   if (!isAuthor) {
     // TODO: check MANAGE_MESSAGES permission via server member roles
   }
 
-  await msg.deleteOne();
+  await Message.deleteById(params.messageId);
   set.status = 204;
   return '';
 })
@@ -571,7 +540,9 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
     set.status = 400; return { code: 50016, message: 'Invalid number of messages (2-100)' };
   }
 
-  await Message.deleteMany({ _id: { $in: messages.map((id: string) => new Types.ObjectId(id)) } });
+  for (const id of messages) {
+    await Message.deleteById(id);
+  }
   return { deleted_messages: messages };
 })
 
@@ -580,21 +551,22 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
   const msg = await Message.findById(params.messageId);
   if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   const emojiKey = params.emoji;
-  let reaction = msg.reactions.find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
+  const reactions = [...((msg.reactions as any[]) || [])];
+  let reaction = reactions.find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
   if (!reaction) {
     reaction = { emoji: { name: emojiKey }, count: 0, userIds: [] as any[] };
-    msg.reactions.push(reaction);
+    reactions.push(reaction);
   }
-  if (!reaction.userIds.some((uid: any) => uid.toString() === auth.botUser._id.toString())) {
-    reaction.userIds.push(auth.botUser._id);
+  if (!reaction.userIds.some((uid: any) => uid === auth.botUser.id)) {
+    reaction.userIds.push(auth.botUser.id);
     reaction.count = reaction.userIds.length;
   }
-  await msg.save();
+  await Message.updateById(params.messageId, { reactions });
   set.status = 204;
   return '';
 })
@@ -602,19 +574,21 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
   const msg = await Message.findById(params.messageId);
   if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   const emojiKey = params.emoji;
-  const reaction = msg.reactions.find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
+  const reactions = [...((msg.reactions as any[]) || [])];
+  const reaction = reactions.find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
   if (reaction) {
-    reaction.userIds = reaction.userIds.filter((uid: any) => uid.toString() !== auth.botUser._id.toString());
+    reaction.userIds = reaction.userIds.filter((uid: any) => uid !== auth.botUser.id);
     reaction.count = reaction.userIds.length;
     if (reaction.count === 0) {
-      msg.reactions = msg.reactions.filter((r: any) => r !== reaction);
+      const idx = reactions.indexOf(reaction);
+      if (idx >= 0) reactions.splice(idx, 1);
     }
-    await msg.save();
+    await Message.updateById(params.messageId, { reactions });
   }
   set.status = 204;
   return '';
@@ -623,19 +597,21 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
   const msg = await Message.findById(params.messageId);
   if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   const emojiKey = params.emoji;
-  const reaction = msg.reactions.find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
+  const reactions = [...((msg.reactions as any[]) || [])];
+  const reaction = reactions.find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
   if (reaction) {
-    reaction.userIds = reaction.userIds.filter((uid: any) => uid.toString() !== params.userId);
+    reaction.userIds = reaction.userIds.filter((uid: any) => uid !== params.userId);
     reaction.count = reaction.userIds.length;
     if (reaction.count === 0) {
-      msg.reactions = msg.reactions.filter((r: any) => r !== reaction);
+      const idx = reactions.indexOf(reaction);
+      if (idx >= 0) reactions.splice(idx, 1);
     }
-    await msg.save();
+    await Message.updateById(params.messageId, { reactions });
   }
   set.status = 204;
   return '';
@@ -644,25 +620,25 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
-  const msg = await Message.findById(params.messageId).lean();
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  const msg = await Message.findById(params.messageId);
   if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   const emojiKey = params.emoji;
-  const reaction = msg.reactions.find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
+  const reaction = ((msg.reactions as any[]) || []).find((r: any) => r.emoji.name === emojiKey || r.emoji.id === emojiKey);
   if (!reaction) return [];
 
   const limit = Math.min(parseInt(query.limit as string) || 25, 100);
   const userIds = reaction.userIds.slice(0, limit);
-  const users = await User.find({ _id: { $in: userIds } }).lean();
+  const users = userIds.length > 0 ? await User.find({ id: { in: userIds } }) : [];
   return users.map(formatUser);
 })
 .delete('/channels/:channelId/messages/:messageId/reactions', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
-  await Message.updateOne({ _id: params.messageId }, { reactions: [] });
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  await Message.updateById(params.messageId, { reactions: [] });
   set.status = 204;
   return '';
 })
@@ -672,17 +648,20 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
-  const messages = await Message.find({ channelId: params.channelId, pinned: true })
-    .populate('authorId').lean();
-  return messages.map(formatMessage);
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  const messages = await Message.find({ channelId: params.channelId });
+  const pinned = messages.filter((m: any) => m.pinned);
+  const authorIds = [...new Set(pinned.map((m: any) => m.authorId).filter(Boolean))] as string[];
+  const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+  const authorMap = new Map(authors.map((u: any) => [u.id, u]));
+  return pinned.map((m: any) => formatMessage({ ...m, authorId: authorMap.get(m.authorId) || m.authorId }));
 })
 .put('/channels/:channelId/pins/:messageId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
-  await Message.updateOne({ _id: params.messageId }, { pinned: true });
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  await Message.updateById(params.messageId, { pinned: true });
   set.status = 204;
   return '';
 })
@@ -690,8 +669,8 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
-  await Message.updateOne({ _id: params.messageId }, { pinned: false });
+  if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  await Message.updateById(params.messageId, { pinned: false });
   set.status = 204;
   return '';
 })
@@ -708,9 +687,9 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
 .get('/applications/:appId/commands', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
-  const cmds = await AppCommand.find({ applicationId: params.appId, guildId: null }).lean();
+  const cmds = await AppCommand.find({ applicationId: params.appId, guildId: null });
   return cmds.map((c: any) => ({
-    id: c._id.toString(),
+    id: c.id,
     application_id: params.appId,
     name: c.name,
     description: c.description,
@@ -725,20 +704,25 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
   // Bulk overwrite global commands.
   const commands = (body as any[]) ?? [];
-  await AppCommand.deleteMany({ applicationId: params.appId, guildId: null });
-  const created = commands.length
-    ? await AppCommand.insertMany(commands.map((c: any) => ({
-        applicationId: new Types.ObjectId(params.appId),
-        guildId: null,
-        name: c.name,
-        description: c.description ?? '',
-        options: c.options ?? [],
-        defaultPermission: c.default_permission ?? true,
-        type: c.type ?? 1,
-      })))
-    : [];
+  const existing = await AppCommand.find({ applicationId: params.appId, guildId: null });
+  for (const cmd of existing) {
+    await AppCommand.deleteById(cmd.id);
+  }
+  const created: any[] = [];
+  for (const c of commands) {
+    const row = await AppCommand.create({
+      applicationId: params.appId,
+      guildId: null,
+      name: c.name,
+      description: c.description ?? '',
+      options: c.options ?? [],
+      defaultPermission: c.default_permission ?? true,
+      type: c.type ?? 1,
+    });
+    created.push(row);
+  }
   return created.map((c: any) => ({
-    id: c._id.toString(),
+    id: c.id,
     application_id: params.appId,
     name: c.name,
     description: c.description,
@@ -759,7 +743,7 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  const invite = await Invite.findOne({ code: params.code }).lean();
+  const invite = await Invite.findOne({ code: params.code });
   if (!invite) { set.status = 404; return { code: 10006, message: 'Unknown Invite' }; }
   return formatInvite(invite);
 })
@@ -767,8 +751,9 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  const invite = await Invite.findOneAndDelete({ code: params.code }).lean();
+  const invite = await Invite.findOne({ code: params.code });
   if (!invite) { set.status = 404; return { code: 10006, message: 'Unknown Invite' }; }
+  await Invite.deleteById(invite.id);
   return formatInvite(invite);
 })
 
@@ -777,10 +762,10 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
 
-  const channelCount = await Channel.countDocuments({ serverId: params.guildId });
-  if (channelCount >= config.MAX_CHANNELS_PER_SERVER) {
+  const existingChannels = await Channel.find({ serverId: params.guildId });
+  if (existingChannels.length >= config.MAX_CHANNELS_PER_SERVER) {
     set.status = 400;
     return { code: 30013, message: 'Maximum number of guild channels reached' };
   }
@@ -788,18 +773,18 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const { name, type, topic, nsfw, parent_id, rate_limit_per_user, position } = body as any;
   if (!name) { set.status = 400; return { code: 50035, message: 'Name is required' }; }
 
-  const typeReverseMap: Record<number, string> = {
+  const typeReverseMap: Record<number, 'text' | 'voice' | 'category' | 'announcement' | 'stage' | 'forum'> = {
     0: 'text', 2: 'voice', 4: 'category', 5: 'announcement',
     13: 'stage', 15: 'forum',
   };
 
   const channel = await Channel.create({
-    serverId: new Types.ObjectId(params.guildId),
+    serverId: params.guildId,
     name,
     type: typeReverseMap[type] ?? 'text',
     topic: topic ?? '',
     nsfw: nsfw ?? false,
-    parentId: parent_id ? new Types.ObjectId(parent_id) : undefined,
+    parentId: parent_id ?? undefined,
     rateLimitPerUser: rate_limit_per_user ?? 0,
     position: position ?? 0,
     bitrate: 64000,
@@ -817,20 +802,21 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!channel) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
 
   const patch = body as any;
-  if (patch.name !== undefined) channel.name = patch.name;
-  if (patch.topic !== undefined) channel.topic = patch.topic;
-  if (patch.nsfw !== undefined) channel.nsfw = patch.nsfw;
-  if (patch.position !== undefined) channel.position = patch.position;
-  if (patch.rate_limit_per_user !== undefined) channel.rateLimitPerUser = patch.rate_limit_per_user;
-  if (patch.parent_id !== undefined) channel.parentId = patch.parent_id ? new Types.ObjectId(patch.parent_id) : undefined;
-  await channel.save();
-  return formatChannel(channel);
+  const updates: Record<string, unknown> = {};
+  if (patch.name !== undefined) updates.name = patch.name;
+  if (patch.topic !== undefined) updates.topic = patch.topic;
+  if (patch.nsfw !== undefined) updates.nsfw = patch.nsfw;
+  if (patch.position !== undefined) updates.position = patch.position;
+  if (patch.rate_limit_per_user !== undefined) updates.rateLimitPerUser = patch.rate_limit_per_user;
+  if (patch.parent_id !== undefined) updates.parentId = patch.parent_id ?? undefined;
+  const updated = await Channel.updateById(params.channelId, updates);
+  return formatChannel(updated || channel);
 })
 .delete('/guilds/:guildId/channels/:channelId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  await Channel.findByIdAndDelete(params.channelId);
+  await Channel.deleteById(params.channelId);
   set.status = 204;
   return '';
 })
@@ -840,11 +826,11 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
   const { name, color, hoist, permissions, mentionable, icon, unicode_emoji } = body as any;
 
   const role = await Role.create({
-    serverId: new Types.ObjectId(params.guildId),
+    serverId: params.guildId,
     name: name ?? 'new role',
     color: color ?? 0,
     hoist: hoist ?? false,
@@ -863,20 +849,21 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!role) { set.status = 404; return { code: 10011, message: 'Unknown Role' }; }
 
   const patch = body as any;
-  if (patch.name !== undefined) role.name = patch.name;
-  if (patch.color !== undefined) role.color = patch.color;
-  if (patch.hoist !== undefined) role.hoist = patch.hoist;
-  if (patch.permissions !== undefined) role.permissions = patch.permissions;
-  if (patch.mentionable !== undefined) role.mentionable = patch.mentionable;
-  if (patch.position !== undefined) role.position = patch.position;
-  await role.save();
-  return formatRole(role);
+  const updates: Record<string, unknown> = {};
+  if (patch.name !== undefined) updates.name = patch.name;
+  if (patch.color !== undefined) updates.color = patch.color;
+  if (patch.hoist !== undefined) updates.hoist = patch.hoist;
+  if (patch.permissions !== undefined) updates.permissions = patch.permissions;
+  if (patch.mentionable !== undefined) updates.mentionable = patch.mentionable;
+  if (patch.position !== undefined) updates.position = patch.position;
+  const updated = await Role.updateById(params.roleId, updates);
+  return formatRole(updated || role);
 })
 .delete('/guilds/:guildId/roles/:roleId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  await Role.findByIdAndDelete(params.roleId);
+  await Role.deleteById(params.roleId);
   set.status = 204;
   return '';
 })
@@ -886,46 +873,48 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId) || !Types.ObjectId.isValid(params.userId)) {
+  if (!isValidObjectId(params.guildId) || !isValidObjectId(params.userId)) {
     set.status = 404; return { code: 10007, message: 'Unknown Member' };
   }
   const member = await ServerMember.findOne({ serverId: params.guildId, userId: params.userId });
   if (!member) { set.status = 404; return { code: 10007, message: 'Unknown Member' }; }
 
   const patch = body as any;
-  if (patch.nick !== undefined) member.nickname = patch.nick;
-  if (patch.roles !== undefined) member.roles = patch.roles.map((r: string) => new Types.ObjectId(r));
-  if (patch.deaf !== undefined) member.deaf = patch.deaf;
-  if (patch.mute !== undefined) member.mute = patch.mute;
+  const updates: Record<string, unknown> = {};
+  if (patch.nick !== undefined) updates.nickname = patch.nick;
+  if (patch.roles !== undefined) updates.roles = patch.roles;
+  if (patch.deaf !== undefined) updates.deaf = patch.deaf;
+  if (patch.mute !== undefined) updates.mute = patch.mute;
   if (patch.communication_disabled_until !== undefined) {
-    member.communicationDisabledUntil = patch.communication_disabled_until ? new Date(patch.communication_disabled_until) : undefined;
+    updates.communicationDisabledUntil = patch.communication_disabled_until ? new Date(patch.communication_disabled_until) : undefined;
   }
-  await member.save();
+  const updated = await ServerMember.updateById(member.id, updates);
 
-  const user = await User.findById(params.userId).lean();
-  return formatMember(member, user);
+  const user = await User.findById(params.userId);
+  return formatMember(updated || member, user);
 })
 .patch('/guilds/:guildId/members/@me/nick', async ({ headers, params, body, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  const member = await ServerMember.findOne({ serverId: params.guildId, userId: auth.botUser._id });
+  const member = await ServerMember.findOne({ serverId: params.guildId, userId: auth.botUser.id });
   if (!member) { set.status = 404; return { code: 10007, message: 'Unknown Member' }; }
 
   const { nick } = body as any;
-  member.nickname = nick;
-  await member.save();
+  await ServerMember.updateById(member.id, { nickname: nick });
   return nick;
 })
 .delete('/guilds/:guildId/members/:userId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId) || !Types.ObjectId.isValid(params.userId)) {
+  if (!isValidObjectId(params.guildId) || !isValidObjectId(params.userId)) {
     set.status = 404; return { code: 10007, message: 'Unknown Member' };
   }
-  await ServerMember.deleteOne({ serverId: params.guildId, userId: params.userId });
-  await Server.updateOne({ _id: params.guildId }, { $inc: { memberCount: -1 } });
+  const member = await ServerMember.findOne({ serverId: params.guildId, userId: params.userId });
+  if (member) await ServerMember.deleteById(member.id);
+  const server = await Server.findById(params.guildId);
+  if (server) await Server.updateById(params.guildId, { memberCount: Math.max(0, (server.memberCount ?? 1) - 1) });
   set.status = 204;
   return '';
 })
@@ -935,21 +924,23 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId) || !Types.ObjectId.isValid(params.userId)) {
+  if (!isValidObjectId(params.guildId) || !isValidObjectId(params.userId)) {
     set.status = 404; return { code: 10004, message: 'Unknown Guild' };
   }
   const { reason } = body as any;
 
   // Remove member if exists
-  await ServerMember.deleteOne({ serverId: params.guildId, userId: params.userId });
+  const member = await ServerMember.findOne({ serverId: params.guildId, userId: params.userId });
+  if (member) await ServerMember.deleteById(member.id);
   // Create ban
   await ServerBan.create({
-    serverId: new Types.ObjectId(params.guildId),
-    userId: new Types.ObjectId(params.userId),
-    bannedBy: auth.botUser._id,
+    serverId: params.guildId,
+    userId: params.userId,
+    bannedBy: auth.botUser.id,
     reason: reason ?? null,
   });
-  await Server.updateOne({ _id: params.guildId }, { $inc: { memberCount: -1 } });
+  const server = await Server.findById(params.guildId);
+  if (server) await Server.updateById(params.guildId, { memberCount: Math.max(0, (server.memberCount ?? 1) - 1) });
   set.status = 204;
   return '';
 })
@@ -957,15 +948,16 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  const ban = await ServerBan.findOne({ serverId: params.guildId, userId: params.userId }).lean();
+  const ban = await ServerBan.findOne({ serverId: params.guildId, userId: params.userId });
   if (!ban) { set.status = 404; return { code: 10026, message: 'Unknown Ban' }; }
-  return { reason: ban.reason ?? null, user: { id: ban.userId.toString() } };
+  return { reason: ban.reason ?? null, user: { id: ban.userId } };
 })
 .delete('/guilds/:guildId/bans/:userId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  await ServerBan.deleteOne({ serverId: params.guildId, userId: params.userId });
+  const ban = await ServerBan.findOne({ serverId: params.guildId, userId: params.userId });
+  if (ban) await ServerBan.deleteById(ban.id);
   set.status = 204;
   return '';
 })
@@ -975,11 +967,11 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.emojiId)) { set.status = 404; return { code: 10011, message: 'Unknown Emoji' }; }
-  const emoji = await ServerEmoji.findById(params.emojiId).lean();
+  if (!isValidObjectId(params.emojiId)) { set.status = 404; return { code: 10011, message: 'Unknown Emoji' }; }
+  const emoji = await ServerEmoji.findById(params.emojiId);
   if (!emoji) { set.status = 404; return { code: 10011, message: 'Unknown Emoji' }; }
   return {
-    id: emoji._id.toString(),
+    id: emoji.id,
     name: emoji.name,
     roles: [],
     user: null,
@@ -993,12 +985,12 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
   const { name, image, roles } = body as any;
   if (!name || !image) { set.status = 400; return { code: 50035, message: 'Name and image are required' }; }
 
   const emoji = await ServerEmoji.create({
-    serverId: new Types.ObjectId(params.guildId),
+    serverId: params.guildId,
     name,
     imageUrl: image,
     animated: image.startsWith('data:image/gif'),
@@ -1006,10 +998,10 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
     managed: false,
     requireColons: true,
     roles: [],
-    uploadedBy: auth.botUser._id,
+    uploadedBy: auth.botUser.id,
   });
   return {
-    id: emoji._id.toString(),
+    id: emoji.id,
     name: emoji.name,
     roles: [],
     user: null,
@@ -1027,16 +1019,18 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!emoji) { set.status = 404; return { code: 10011, message: 'Unknown Emoji' }; }
 
   const { name, roles } = body as any;
-  if (name !== undefined) emoji.name = name;
-  await emoji.save();
+  const updates: Record<string, unknown> = {};
+  if (name !== undefined) updates.name = name;
+  const updated = await ServerEmoji.updateById(params.emojiId, updates);
+  const result = updated || emoji;
   return {
-    id: emoji._id.toString(),
-    name: emoji.name,
+    id: result.id,
+    name: result.name,
     roles: [],
     user: null,
     require_colons: true,
     managed: false,
-    animated: emoji.animated,
+    animated: result.animated,
     available: true,
   };
 })
@@ -1044,7 +1038,7 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  await ServerEmoji.findByIdAndDelete(params.emojiId);
+  await ServerEmoji.deleteById(params.emojiId);
   set.status = 204;
   return '';
 })
@@ -1054,10 +1048,10 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const stickers = await ServerSticker.find({ serverId: params.guildId }).lean();
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const stickers = await ServerSticker.find({ serverId: params.guildId });
   return stickers.map((s: any) => ({
-    id: s._id.toString(),
+    id: s.id,
     name: s.name,
     description: s.description ?? null,
     tags: s.tags ?? [],
@@ -1072,11 +1066,11 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.stickerId)) { set.status = 404; return { code: 10011, message: 'Unknown Sticker' }; }
-  const sticker = await ServerSticker.findById(params.stickerId).lean();
+  if (!isValidObjectId(params.stickerId)) { set.status = 404; return { code: 10011, message: 'Unknown Sticker' }; }
+  const sticker = await ServerSticker.findById(params.stickerId);
   if (!sticker) { set.status = 404; return { code: 10011, message: 'Unknown Sticker' }; }
   return {
-    id: sticker._id.toString(),
+    id: sticker.id,
     name: sticker.name,
     description: sticker.description ?? null,
     tags: sticker.tags ?? [],
@@ -1093,42 +1087,42 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  const webhooks = await ChannelWebhook.find({ serverId: params.guildId }).lean();
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const webhooks = await ChannelWebhook.find({ serverId: params.guildId });
   return webhooks.map((w: any) => ({
-    id: w._id.toString(),
+    id: w.id,
     type: 1,
     guild_id: params.guildId,
-    channel_id: w.channelId.toString(),
+    channel_id: w.channelId,
     name: w.name,
     avatar: w.avatar,
     token: w.token,
-    creator_id: w.creatorId.toString(),
+    creator_id: w.creatorId,
   }));
 })
 .get('/channels/:channelId/webhooks', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
-  const webhooks = await ChannelWebhook.find({ channelId: params.channelId }).lean();
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  const webhooks = await ChannelWebhook.find({ channelId: params.channelId });
   return webhooks.map((w: any) => ({
-    id: w._id.toString(),
+    id: w.id,
     type: 1,
-    guild_id: w.serverId?.toString() ?? null,
+    guild_id: w.serverId ?? null,
     channel_id: params.channelId,
     name: w.name,
     avatar: w.avatar,
     token: w.token,
-    creator_id: w.creatorId.toString(),
+    creator_id: w.creatorId,
   }));
 })
 .post('/channels/:channelId/webhooks', async ({ headers, params, body, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
-  const channel = await Channel.findById(params.channelId).lean();
+  if (!isValidObjectId(params.channelId)) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
+  const channel = await Channel.findById(params.channelId);
   if (!channel) { set.status = 404; return { code: 10003, message: 'Unknown Channel' }; }
 
   const { name, avatar } = body as any;
@@ -1136,48 +1130,48 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
 
   const token = crypto.randomBytes(24).toString('hex');
   const webhook = await ChannelWebhook.create({
-    channelId: new Types.ObjectId(params.channelId),
+    channelId: params.channelId,
     serverId: channel.serverId ?? undefined,
     name,
     avatar: avatar ?? null,
     token,
     url: `${config.API_BASE_URL}/api/webhooks/${params.channelId}/${token}`,
-    creatorId: auth.botUser._id,
+    creatorId: auth.botUser.id,
   });
   return {
-    id: webhook._id.toString(),
+    id: webhook.id,
     type: 1,
-    guild_id: channel.serverId?.toString() ?? null,
+    guild_id: channel.serverId ?? null,
     channel_id: params.channelId,
     name: webhook.name,
     avatar: webhook.avatar,
     token: webhook.token,
-    creator_id: auth.botUser._id.toString(),
+    creator_id: auth.botUser.id,
   };
 })
 .get('/webhooks/:webhookId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.webhookId)) { set.status = 404; return { code: 10015, message: 'Unknown Webhook' }; }
-  const webhook = await ChannelWebhook.findById(params.webhookId).lean();
+  if (!isValidObjectId(params.webhookId)) { set.status = 404; return { code: 10015, message: 'Unknown Webhook' }; }
+  const webhook = await ChannelWebhook.findById(params.webhookId);
   if (!webhook) { set.status = 404; return { code: 10015, message: 'Unknown Webhook' }; }
   return {
-    id: webhook._id.toString(),
+    id: webhook.id,
     type: 1,
-    guild_id: webhook.serverId?.toString() ?? null,
-    channel_id: webhook.channelId.toString(),
+    guild_id: webhook.serverId ?? null,
+    channel_id: webhook.channelId,
     name: webhook.name,
     avatar: webhook.avatar,
     token: webhook.token,
-    creator_id: webhook.creatorId.toString(),
+    creator_id: webhook.creatorId,
   };
 })
 .delete('/webhooks/:webhookId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  await ChannelWebhook.findByIdAndDelete(params.webhookId);
+  await ChannelWebhook.deleteById(params.webhookId);
   set.status = 204;
   return '';
 })
@@ -1187,16 +1181,17 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
   const { AdminLog } = await import('@/lib/models');
   const limit = Math.min(parseInt(query.limit as string) || 50, 100);
-  const logs = await AdminLog.find({ targetId: params.guildId }).sort({ createdAt: -1 }).limit(limit).lean();
+  const logs = await AdminLog.find({ targetId: params.guildId });
+  const sorted = logs.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()).slice(0, limit);
   return {
-    audit_log_entries: logs.map((l: any) => ({
-      id: l._id.toString(),
+    audit_log_entries: sorted.map((l: any) => ({
+      id: l.id,
       action_type: l.action ?? 0,
-      user_id: l.adminId?.toString() ?? null,
-      target_id: l.targetId?.toString() ?? null,
+      user_id: l.adminId ?? null,
+      target_id: l.targetId ?? null,
       reason: l.reason ?? null,
       changes: [],
       created_at: l.createdAt ? new Date(l.createdAt).toISOString() : undefined,
@@ -1209,10 +1204,12 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  const dmChannels = await Channel.find({
-    type: { $in: ['dm', 'group_dm'] },
-    recipientIds: auth.botUser._id,
-  }).lean();
+  const allChannels = await Channel.find({});
+  const dmChannels = allChannels.filter((c: any) =>
+    (c.type === 'dm' || c.type === 'group_dm') &&
+    Array.isArray(c.recipientIds) &&
+    c.recipientIds.includes(auth.botUser.id)
+  );
   return dmChannels.map(formatChannel);
 })
 .post('/users/@me/channels', async ({ headers, body, set }) => {
@@ -1220,20 +1217,23 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
   const { recipient_id } = body as any;
-  if (!recipient_id || !Types.ObjectId.isValid(recipient_id)) {
+  if (!recipient_id || !isValidObjectId(recipient_id)) {
     set.status = 400; return { code: 50035, message: 'Invalid recipient_id' };
   }
 
   // Check if DM channel already exists
-  let dm = await Channel.findOne({
-    type: 'dm',
-    recipientIds: { $all: [auth.botUser._id, new Types.ObjectId(recipient_id)] },
-  }).lean();
+  const allChannels = await Channel.find({});
+  let dm = allChannels.find((c: any) =>
+    c.type === 'dm' &&
+    Array.isArray(c.recipientIds) &&
+    c.recipientIds.includes(auth.botUser.id) &&
+    c.recipientIds.includes(recipient_id)
+  );
 
   if (!dm) {
     dm = await Channel.create({
       type: 'dm',
-      recipientIds: [auth.botUser._id, new Types.ObjectId(recipient_id)],
+      recipientIds: [auth.botUser.id, recipient_id],
       name: '',
       position: 0,
       rateLimitPerUser: 0,
@@ -1251,9 +1251,11 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
-  await ServerMember.deleteOne({ serverId: params.guildId, userId: auth.botUser._id });
-  await Server.updateOne({ _id: params.guildId }, { $inc: { memberCount: -1 } });
+  if (!isValidObjectId(params.guildId)) { set.status = 404; return { code: 10004, message: 'Unknown Guild' }; }
+  const member = await ServerMember.findOne({ serverId: params.guildId, userId: auth.botUser.id });
+  if (member) await ServerMember.deleteById(member.id);
+  const server = await Server.findById(params.guildId);
+  if (server) await Server.updateById(params.guildId, { memberCount: Math.max(0, (server.memberCount ?? 1) - 1) });
   set.status = 204;
   return '';
 })
@@ -1263,12 +1265,12 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.commandId)) { set.status = 404; return { code: 10063, message: 'Unknown Command' }; }
-  const cmd = await AppCommand.findById(params.commandId).lean();
+  if (!isValidObjectId(params.commandId)) { set.status = 404; return { code: 10063, message: 'Unknown Command' }; }
+  const cmd = await AppCommand.findById(params.commandId);
   if (!cmd) { set.status = 404; return { code: 10063, message: 'Unknown Command' }; }
   return {
-    id: cmd._id.toString(),
-    application_id: cmd.applicationId.toString(),
+    id: cmd.id,
+    application_id: cmd.applicationId,
     name: cmd.name,
     description: cmd.description,
     options: cmd.options ?? [],
@@ -1285,7 +1287,7 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!name || !description) { set.status = 400; return { code: 50035, message: 'Name and description are required' }; }
 
   const cmd = await AppCommand.create({
-    applicationId: new Types.ObjectId(params.appId),
+    applicationId: params.appId,
     name,
     description,
     options: options ?? [],
@@ -1293,7 +1295,7 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
     type: type ?? 1,
   });
   return {
-    id: cmd._id.toString(),
+    id: cmd.id,
     application_id: params.appId,
     name: cmd.name,
     description: cmd.description,
@@ -1311,27 +1313,29 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!cmd) { set.status = 404; return { code: 10063, message: 'Unknown Command' }; }
 
   const { name, description, options, default_permission } = body as any;
-  if (name !== undefined) cmd.name = name;
-  if (description !== undefined) cmd.description = description;
-  if (options !== undefined) cmd.options = options;
-  if (default_permission !== undefined) cmd.defaultPermission = default_permission;
-  await cmd.save();
+  const updates: Record<string, unknown> = {};
+  if (name !== undefined) updates.name = name;
+  if (description !== undefined) updates.description = description;
+  if (options !== undefined) updates.options = options;
+  if (default_permission !== undefined) updates.defaultPermission = default_permission;
+  const updated = await AppCommand.updateById(params.commandId, updates);
+  const result = updated || cmd;
   return {
-    id: cmd._id.toString(),
+    id: result.id,
     application_id: params.appId,
-    name: cmd.name,
-    description: cmd.description,
-    options: cmd.options,
-    default_permission: cmd.defaultPermission,
-    type: cmd.type,
-    version: cmd.version,
+    name: result.name,
+    description: result.description,
+    options: result.options,
+    default_permission: result.defaultPermission,
+    type: result.type,
+    version: result.version,
   };
 })
 .delete('/applications/:appId/commands/:commandId', async ({ headers, params, set }) => {
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  await AppCommand.findByIdAndDelete(params.commandId);
+  await AppCommand.deleteById(params.commandId);
   set.status = 204;
   return '';
 })
@@ -1341,9 +1345,9 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const auth = await authenticateBot(headers);
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
-  const cmds = await AppCommand.find({ applicationId: params.appId, guildId: params.guildId }).lean();
+  const cmds = await AppCommand.find({ applicationId: params.appId, guildId: params.guildId });
   return cmds.map((c: any) => ({
-    id: c._id.toString(),
+    id: c.id,
     application_id: params.appId,
     guild_id: params.guildId,
     name: c.name,
@@ -1360,18 +1364,25 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
 
   // Bulk overwrite guild commands
   const commands = body as any[];
-  await AppCommand.deleteMany({ applicationId: params.appId, guildId: params.guildId });
-  const created = await AppCommand.insertMany(commands.map((c: any) => ({
-    applicationId: new Types.ObjectId(params.appId),
-    guildId: new Types.ObjectId(params.guildId),
-    name: c.name,
-    description: c.description,
-    options: c.options ?? [],
-    defaultPermission: c.default_permission ?? true,
-    type: c.type ?? 1,
-  })));
+  const existing = await AppCommand.find({ applicationId: params.appId, guildId: params.guildId });
+  for (const cmd of existing) {
+    await AppCommand.deleteById(cmd.id);
+  }
+  const created: any[] = [];
+  for (const c of commands) {
+    const row = await AppCommand.create({
+      applicationId: params.appId,
+      guildId: params.guildId,
+      name: c.name,
+      description: c.description,
+      options: c.options ?? [],
+      defaultPermission: c.default_permission ?? true,
+      type: c.type ?? 1,
+    });
+    created.push(row);
+  }
   return created.map((c: any) => ({
-    id: c._id.toString(),
+    id: c.id,
     application_id: params.appId,
     guild_id: params.guildId,
     name: c.name,

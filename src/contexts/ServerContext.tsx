@@ -105,7 +105,7 @@ function lsSet(key: string, value: unknown) {
 }
 
 export function ServerProvider({ children }: { children: ReactNode }) {
-  const [servers, setServers] = useState<Server[]>(() => lsGet<Server[]>(LS_SERVERS) || []);
+  const [servers, setServers] = useState<Server[]>([]);
   const [currentServer, setCurrentServerState] = useState<Server | null>(null);
   const [channels, setChannels] = useState<Channel[]>([]);
   const [currentChannel, setCurrentChannel] = useState<Channel | null>(null);
@@ -392,7 +392,7 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     const data = await response.json();
     if (data.channels) {
       const transformedChannels: Channel[] = data.channels.map((c: any) => ({
-        id: c._id || c.id,
+        id: c.id || c._id,
         name: c.name,
         type: c.type,
         serverId: c.serverId,
@@ -406,6 +406,15 @@ export function ServerProvider({ children }: { children: ReactNode }) {
       channelCacheRef.current.set(serverId, transformedChannels);
     }
   };
+
+  // Load cached servers from localStorage on mount (client-only) to paint
+  // instantly while the network refetch happens in the background.
+  useEffect(() => {
+    const cached = lsGet<Server[]>(LS_SERVERS);
+    if (cached && cached.length > 0) {
+      setServers(cached);
+    }
+  }, []);
 
   useEffect(() => {
     fetchServers();

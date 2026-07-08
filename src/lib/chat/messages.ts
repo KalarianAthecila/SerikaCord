@@ -137,7 +137,7 @@ export function applyReactionToMessages<M extends ChatMessage>(
 
     if (index === -1) {
       if (!isAdd) return msg;
-      const customMatch = emoji.match(/^<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>$/);
+      const customMatch = emoji.match(/^<(a)?:([a-zA-Z0-9_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>$/);
       let emojiObj: MessageReaction["emoji"];
       if (customMatch) {
         const [, animated, name, id] = customMatch;

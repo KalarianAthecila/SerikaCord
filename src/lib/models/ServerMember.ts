@@ -1,93 +1,63 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId, buildCondition } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export interface IServerMember extends Document {
-  _id: Types.ObjectId;
-  serverId: Types.ObjectId;
-  userId: Types.ObjectId;
-  
-  nickname?: string;
-  avatar?: string; // Server-specific avatar
-  banner?: string; // Server-specific banner
-  
-  roles: Types.ObjectId[];
-  
-  // Timeouts
-  communicationDisabledUntil?: Date;
-  
-  // Flags
-  deaf: boolean;
-  mute: boolean;
-  pending: boolean; // Pending membership screening
-  
-  // Timestamps
-  joinedAt: Date;
-  premiumSince?: Date; // Boosting since
-  
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IServerMember = typeof schema.serverMembers.$inferSelect;
 
-const ServerMemberSchema = new Schema<IServerMember>({
-  serverId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Server',
-    required: true,
-    index: true,
-  },
-  userId: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    index: true,
-  },
-  nickname: {
-    type: String,
-    trim: true,
-    maxlength: 32,
-    default: null,
-  },
-  avatar: {
-    type: String,
-    default: null,
-  },
-  banner: {
-    type: String,
-    default: null,
-  },
-  roles: [{
-    type: Schema.Types.ObjectId,
-    ref: 'Role',
-  }],
-  communicationDisabledUntil: {
-    type: Date,
-    default: null,
-  },
-  deaf: {
-    type: Boolean,
-    default: false,
-  },
-  mute: {
-    type: Boolean,
-    default: false,
-  },
-  pending: {
-    type: Boolean,
-    default: false,
-  },
-  joinedAt: {
-    type: Date,
-    default: Date.now,
-  },
-  premiumSince: {
-    type: Date,
-    default: null,
-  },
-}, {
-  timestamps: true,
-});
+export const ServerMember = {
+  table: schema.serverMembers,
 
-// Ensure unique member per server
-ServerMemberSchema.index({ serverId: 1, userId: 1 }, { unique: true });
-ServerMemberSchema.index({ serverId: 1, joinedAt: -1 });
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.serverMembers).where(eq(schema.serverMembers.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-export const ServerMember = mongoose.models.ServerMember || mongoose.model<IServerMember>('ServerMember', ServerMemberSchema);
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(buildCondition(schema.serverMembers.id, value, true)); break;
+        case 'serverId': conditions.push(buildCondition(schema.serverMembers.serverId, value, true)); break;
+        case 'userId': conditions.push(buildCondition(schema.serverMembers.userId, value, true)); break;
+      }
+    }
+    let query = db.select().from(schema.serverMembers);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
+
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(buildCondition(schema.serverMembers.id, value, true)); break;
+        case 'serverId': conditions.push(buildCondition(schema.serverMembers.serverId, value, true)); break;
+        case 'userId': conditions.push(buildCondition(schema.serverMembers.userId, value, true)); break;
+      }
+    }
+    let query = db.select().from(schema.serverMembers);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.serverMembers.$inferInsert) {
+    const [row] = await db.insert(schema.serverMembers).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.serverMembers.$inferInsert>) {
+    const [row] = await db.update(schema.serverMembers).set({ ...data, updatedAt: new Date() }).where(eq(schema.serverMembers.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.serverMembers).where(eq(schema.serverMembers.id, normalizeId(id)));
+  },
+};

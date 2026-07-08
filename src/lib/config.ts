@@ -25,10 +25,9 @@ export const config = {
   // Public frontend base URL (used for OAuth redirects back to the UI)
   FRONTEND_URL: process.env.FRONTEND_URL || process.env.NEXT_PUBLIC_APP_URL || '',
   
-  // Database
-  MONGO_URI: process.env.MONGO_URI || 'mongodb://localhost:27017/serikacord',
-  MONGO_DB_NAME: process.env.MONGO_DB_NAME || 'serikacord',
-  MONGO_MAX_POOL_SIZE: process.env.MONGO_MAX_POOL_SIZE ? parseInt(process.env.MONGO_MAX_POOL_SIZE, 10) : undefined,
+  // Database (PostgreSQL)
+  POSTGRES_URI: process.env.POSTGRES_URI || 'postgres://localhost:5432/serikacord',
+  POSTGRES_MAX_POOL_SIZE: process.env.POSTGRES_MAX_POOL_SIZE ? parseInt(process.env.POSTGRES_MAX_POOL_SIZE, 10) : undefined,
 
   // Redis
   REDIS_URL: process.env.REDIS_URL || 'redis://localhost:6379',

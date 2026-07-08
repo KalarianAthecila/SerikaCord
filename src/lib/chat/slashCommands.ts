@@ -392,7 +392,7 @@ export function parseSlashCommand(input: string): ParsedCommand | null {
  * Returns null if the string is not a valid mention.
  */
 export function parseUserMention(text: string): string | null {
-  const match = text.match(/^<@!?(\w+)>$/);
+  const match = text.match(/^<@!?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>$/);
   return match ? match[1] : null;
 }
 

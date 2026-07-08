@@ -2,79 +2,25 @@ import { Elysia, t } from 'elysia';
 import { Channel, Message, Role, Server, ServerMember, ServerSticker, User } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
 import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
-import { checkRateLimit, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage, rejectInvalidObjectIdParams } from '@/lib/security';
+import { checkRateLimit, sanitizeInput, validateMessageContent, encryptForStorage, decryptFromStorage } from '@/lib/security';
 import { decodeHtmlEntities } from '@/lib/chat/messages';
 import { cache, getPublisher } from '@/lib/db';
 import { config } from '@/lib/config';
-import { Types } from 'mongoose';
 import { randomUUID } from 'crypto';
 
-// Helper to safely compare IDs (handles both ObjectId and string)
-function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
-  const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
-  const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
-  return str1 === str2;
+// Helper to safely compare IDs
+function compareIds(id1: string, id2: string): boolean {
+  return id1 === id2;
 }
 
-interface PopulatedAuthor {
-  _id: Types.ObjectId;
-  username: string;
-  displayName?: string;
-  avatar?: string;
-  status?: string;
-  customization?: {
-    profileColor?: string;
-    profileAccentColor?: string;
-    profileGradient?: string[];
-    displayNameStyle?: {
-      font?: string;
-      effect?: string;
-      color?: string;
-      gradient?: string[];
-    };
-  } | null;
-}
+// Permission bits
+const PERM_ADMINISTRATOR = 1n << 3n;
+const PERM_MANAGE_MESSAGES = 1n << 13n;
 
-interface ReferencedMessageRaw {
-  _id: Types.ObjectId;
-  content?: string;
-  authorId?: PopulatedAuthor | Types.ObjectId | string | null;
-  createdAt?: Date;
-}
-
-interface RawLeanMessage {
-  _id: Types.ObjectId;
-  content?: string;
-  authorId?: PopulatedAuthor | Types.ObjectId | string | null;
-  referencedMessageId?: ReferencedMessageRaw | Types.ObjectId | string | null;
-  channelId: Types.ObjectId;
-  serverId?: Types.ObjectId;
-  createdAt: Date;
-  updatedAt: Date;
-  attachments?: unknown[];
-  edited?: boolean;
-  type?: string;
-  pinned?: boolean;
-  reactions?: unknown[];
-  mentionEveryone?: boolean;
-  mentionedUserIds?: Array<Types.ObjectId | string>;
-  mentionedRoleIds?: Array<Types.ObjectId | string>;
-  mentionedChannelIds?: Array<Types.ObjectId | string>;
-  sticker?: { id: string; name: string; imageUrl: string };
-}
-
-function isPopulatedAuthor(value: unknown): value is PopulatedAuthor {
-  return Boolean(value) && typeof value === 'object' && '_id' in (value as Record<string, unknown>);
-}
-
-function isReferencedMessageRaw(value: unknown): value is ReferencedMessageRaw {
-  return Boolean(value) && typeof value === 'object' && '_id' in (value as Record<string, unknown>) && !(value instanceof Types.ObjectId);
-}
-
-const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#(?:[0-9a-fA-F]{24})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>|<t:-?\d{1,13}(?::[tTdDfFRC](?:\[[^\]]*\])?)?>|<t:-?\d{1,13}>/g;
-const USER_MENTION_REGEX = /<@!?([0-9a-fA-F]{24})>/g;
-const ROLE_MENTION_REGEX = /<@&([0-9a-fA-F]{24})>/g;
-const CHANNEL_MENTION_REGEX = /<#([0-9a-fA-F]{24})>/g;
+const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>|<@&[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>|<#(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>|<t:-?\d{1,13}(?::[tTdDfFRC](?:\[[^\]]*\])?)?>|<t:-?\d{1,13}>/g;
+const USER_MENTION_REGEX = /<@!?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/g;
+const ROLE_MENTION_REGEX = /<@&([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/g;
+const CHANNEL_MENTION_REGEX = /<#([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/g;
 
 function sanitizeMessageContent(content: string): string {
   const preservedTokens = new Map<string, string>();
@@ -101,7 +47,7 @@ function sanitizeMessageContent(content: string): string {
 
 async function extractMentionsFromContent(
   content: string,
-  serverId?: Types.ObjectId | string | null
+  serverId?: string | null
 ): Promise<{
   mentionEveryone: boolean;
   mentionedUserIds: string[];
@@ -116,23 +62,17 @@ async function extractMentionsFromContent(
 
   USER_MENTION_REGEX.lastIndex = 0;
   while ((match = USER_MENTION_REGEX.exec(content)) !== null) {
-    if (isValidObjectId(match[1])) {
-      mentionedUserIds.push(match[1]);
-    }
+    mentionedUserIds.push(match[1]);
   }
 
   ROLE_MENTION_REGEX.lastIndex = 0;
   while ((match = ROLE_MENTION_REGEX.exec(content)) !== null) {
-    if (isValidObjectId(match[1])) {
-      mentionedRoleIds.push(match[1]);
-    }
+    mentionedRoleIds.push(match[1]);
   }
 
   CHANNEL_MENTION_REGEX.lastIndex = 0;
   while ((match = CHANNEL_MENTION_REGEX.exec(content)) !== null) {
-    if (isValidObjectId(match[1])) {
-      mentionedChannelIds.push(match[1]);
-    }
+    mentionedChannelIds.push(match[1]);
   }
 
   const dedupedUsers = Array.from(new Set(mentionedUserIds));
@@ -149,34 +89,34 @@ async function extractMentionsFromContent(
     };
   }
 
-  const normalizedServerId = typeof serverId === 'string' ? serverId : serverId.toString();
+  const normalizedServerId = serverId;
 
   const [memberRows, roleRows, channelRows] = await Promise.all([
     dedupedUsers.length
       ? ServerMember.find({
           serverId: normalizedServerId,
-          userId: { $in: dedupedUsers.map((id) => new Types.ObjectId(id)) },
-        }).select('userId')
+          userId: { in: dedupedUsers },
+        })
       : Promise.resolve([]),
     dedupedRoles.length
       ? Role.find({
           serverId: normalizedServerId,
-          _id: { $in: dedupedRoles.map((id) => new Types.ObjectId(id)) },
-        }).select('_id')
+          id: { in: dedupedRoles },
+        })
       : Promise.resolve([]),
     dedupedChannels.length
       ? Channel.find({
           serverId: normalizedServerId,
-          _id: { $in: dedupedChannels.map((id) => new Types.ObjectId(id)) },
-        }).select('_id')
+          id: { in: dedupedChannels },
+        })
       : Promise.resolve([]),
   ]);
 
   return {
     mentionEveryone,
-    mentionedUserIds: memberRows.map((row) => row.userId.toString()),
-    mentionedRoleIds: roleRows.map((row) => row._id.toString()),
-    mentionedChannelIds: channelRows.map((row) => row._id.toString()),
+    mentionedUserIds: (memberRows as any[]).map((row) => row.userId),
+    mentionedRoleIds: (roleRows as any[]).map((row) => row.id),
+    mentionedChannelIds: (channelRows as any[]).map((row) => row.id),
   };
 }
 
@@ -275,19 +215,17 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
 
 // Helper to check channel access.
 //
-// `opts.lean` returns a plain (non-hydrated) channel object — much cheaper and
-// correct for the many read-only callers. Callers that mutate + `.save()` the
-// channel (e.g. PATCH /:channelId) must omit it to get a live document.
+// `opts.lean` is kept for API compat but has no effect with Drizzle — all
+// callers get a plain object back. Callers that mutate must use `updateById`.
 //
 // The resolved `membership` doc is returned so callers don't re-query it.
 export async function checkChannelAccess(userId: string, channelId: string, opts: { lean?: boolean } = {}): Promise<{
   hasAccess: boolean;
-  channel?: ReturnType<typeof Channel.prototype.toObject>;
-  membership?: { roles?: Types.ObjectId[]; nickname?: string | null } | null;
+  channel?: any;
+  membership?: { roles?: string[] | null; nickname?: string | null } | null;
   error?: string;
 }> {
-  const channelQuery = Channel.findById(channelId);
-  const channel = opts.lean ? await channelQuery.lean() : await channelQuery;
+  const channel = await Channel.findById(channelId);
 
   if (!channel) {
     return { hasAccess: false, error: 'Channel not found' };
@@ -295,7 +233,7 @@ export async function checkChannelAccess(userId: string, channelId: string, opts
 
   // DM channels
   if (channel.type === 'dm' || channel.type === 'group_dm') {
-    if (!channel.recipientIds.some((r: Types.ObjectId | string) => compareIds(r, userId))) {
+    if (!channel.recipientIds?.some((r: string) => compareIds(r, userId))) {
       return { hasAccess: false, error: 'You do not have access to this channel' };
     }
     return { hasAccess: true, channel };
@@ -306,7 +244,7 @@ export async function checkChannelAccess(userId: string, channelId: string, opts
     const membership = await ServerMember.findOne({
       serverId: channel.serverId,
       userId,
-    }).select('roles nickname').lean();
+    });
 
     if (!membership) {
       return { hasAccess: false, error: 'You are not a member of this server' };
@@ -315,17 +253,17 @@ export async function checkChannelAccess(userId: string, channelId: string, opts
     // Private threads / tickets: only the creator, explicit members, holders of a
     // configured ticket-access role, or server staff (owner) may view.
     if (channel.type === 'private_thread') {
-      const isOwner = compareIds(channel.ownerId, userId);
-      const isMember = (channel.threadMemberIds || []).some((m: Types.ObjectId | string) => compareIds(m, userId));
+      const isOwner = compareIds(channel.ownerId ?? '', userId);
+      const isMember = (channel.threadMemberIds || []).some((m: string) => compareIds(m, userId));
       if (!isOwner && !isMember) {
-        const server = await Server.findById(channel.serverId).select('ownerId');
+        const server = await Server.findById(channel.serverId);
         const isServerOwner = server ? compareIds(server.ownerId, userId) : false;
         let hasAccessRole = false;
         if (!isServerOwner && channel.parentId) {
-          const parent = await Channel.findById(channel.parentId).select('ticketAccessRoleIds');
-          const accessRoles = (parent?.ticketAccessRoleIds || []).map((r: Types.ObjectId) => r.toString());
+          const parent = await Channel.findById(channel.parentId);
+          const accessRoles = (parent?.ticketAccessRoleIds || []).map((r: string) => r);
           if (accessRoles.length) {
-            const memberRoles = (membership.roles || []).map((r: Types.ObjectId) => r.toString());
+            const memberRoles = (membership.roles || []).map((r: string) => r);
             hasAccessRole = memberRoles.some((r: string) => accessRoles.includes(r));
           }
         }
@@ -346,21 +284,19 @@ export async function checkChannelAccess(userId: string, channelId: string, opts
  * ticket-mode forum — i.e. server owner or holder of a configured access role.
  */
 async function canAccessAllTickets(
-  serverId: Types.ObjectId | string,
+  serverId: string,
   userId: string,
-  memberRoleIds: (Types.ObjectId | string)[],
-  ticketAccessRoleIds: (Types.ObjectId | string)[],
+  memberRoleIds: string[],
+  ticketAccessRoleIds: string[],
 ): Promise<boolean> {
-  const server = await Server.findById(serverId).select('ownerId');
+  const server = await Server.findById(serverId);
   if (server && compareIds(server.ownerId, userId)) return true;
-  const access = (ticketAccessRoleIds || []).map((r) => r.toString());
-  const mine = (memberRoleIds || []).map((r) => r.toString());
+  const access = (ticketAccessRoleIds || []).map((r) => r);
+  const mine = (memberRoleIds || []).map((r) => r);
   return mine.some((r) => access.includes(r));
 }
 
 export const channelRoutes = new Elysia({ prefix: '/channels' })
-  // Reject malformed ObjectId route params before any handler runs
-  .onBeforeHandle(rejectInvalidObjectIdParams)
   // Get channel
   .get('/:channelId', async ({ headers, cookie, params, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -369,13 +305,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.channelId)) {
-      set.status = 400;
-      return { error: 'Invalid channel ID' };
-    }
-
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -387,11 +318,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Expose the parent forum name for thread channels so the client can
     // render the forum post list alongside the open thread.
     if (channel && (channel.type === 'public_thread' || channel.type === 'private_thread') && channel.parentId) {
-      const parent = await Channel.findById(channel.parentId).select('name').lean();
-      const channelObj = channel.toObject();
-      const enriched = channelObj as typeof channelObj & { parentName?: string; parentId?: string };
-      enriched.parentName = parent?.name;
-      enriched.parentId = channel.parentId.toString?.() || channel.parentId;
+      const parent = await Channel.findById(channel.parentId);
+      const enriched = { ...channel, parentName: parent?.name, parentId: channel.parentId };
       return { channel: enriched };
     }
 
@@ -410,7 +338,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -426,8 +354,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     let isServerOwner = false;
     if (channel.serverId) {
       const server = await Server.findById(channel.serverId);
-      isServerOwner = !!server?.ownerId.equals(user._id);
-      const isThreadOwner = isThread && compareIds(channel.ownerId, user._id);
+      isServerOwner = !!server && compareIds(server.ownerId, user.id);
+      const isThreadOwner = isThread && compareIds(channel.ownerId, user.id);
       if (!isServerOwner && !isThreadOwner) {
         set.status = 403;
         return { error: 'You do not have permission to edit this channel' };
@@ -436,23 +364,24 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     const { name, topic, nsfw, rateLimitPerUser, bitrate, userLimit, parentId, position, permissionOverwrites, type, forumMode, ticketAccessRoleIds, availableTags, archived, locked } = body;
 
-    if (name !== undefined) channel.name = sanitizeInput(name);
-    if (topic !== undefined) channel.topic = sanitizeInput(topic);
-    if (nsfw !== undefined) channel.nsfw = nsfw;
+    const updateData: Record<string, any> = {};
+    if (name !== undefined) updateData.name = sanitizeInput(name);
+    if (topic !== undefined) updateData.topic = sanitizeInput(topic);
+    if (nsfw !== undefined) updateData.nsfw = nsfw;
     // Only text ⇄ announcement conversions are allowed (voice/category are fixed)
     if (type !== undefined && (channel.type === 'text' || channel.type === 'announcement')) {
       if (type === 'text' || type === 'announcement') {
-        channel.type = type;
+        updateData.type = type;
       }
     }
-    if (rateLimitPerUser !== undefined) channel.rateLimitPerUser = rateLimitPerUser;
-    if (bitrate !== undefined) channel.bitrate = bitrate;
-    if (userLimit !== undefined) channel.userLimit = userLimit;
-    if (position !== undefined) channel.position = position;
+    if (rateLimitPerUser !== undefined) updateData.rateLimitPerUser = rateLimitPerUser;
+    if (bitrate !== undefined) updateData.bitrate = bitrate;
+    if (userLimit !== undefined) updateData.userLimit = userLimit;
+    if (position !== undefined) updateData.position = position;
 
     if (permissionOverwrites !== undefined) {
-      channel.permissionOverwrites = permissionOverwrites.map((o: { id: string; type: 'role' | 'member'; allow: string; deny: string }) => ({
-        id: new Types.ObjectId(o.id),
+      updateData.permissionOverwrites = permissionOverwrites.map((o: { id: string; type: 'role' | 'member'; allow: string; deny: string }) => ({
+        id: o.id,
         type: o.type,
         allow: o.allow,
         deny: o.deny,
@@ -461,44 +390,38 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     if (parentId !== undefined) {
       if (parentId === null) {
-        channel.parentId = null;
+        updateData.parentId = null;
       } else {
         if (channel.type === 'category') {
           set.status = 400;
           return { error: 'A category cannot have a parent category' };
-        }
-        if (!isValidObjectId(parentId)) {
-          set.status = 400;
-          return { error: 'Invalid parent ID' };
         }
         const parentChannel = await Channel.findById(parentId);
         if (!parentChannel || parentChannel.type !== 'category') {
           set.status = 400;
           return { error: 'Invalid parent category' };
         }
-        channel.parentId = new Types.ObjectId(parentId);
+        updateData.parentId = parentId;
       }
     }
 
     // Thread self-management
     if (isThread) {
-      if (archived !== undefined) channel.archived = Boolean(archived);
-      if (locked !== undefined && isServerOwner) channel.locked = Boolean(locked);
+      if (archived !== undefined) updateData.archived = Boolean(archived);
+      if (locked !== undefined && isServerOwner) updateData.locked = Boolean(locked);
     }
 
     // Forum configuration (server owner only)
     if (channel.type === 'forum' && isServerOwner) {
       if (forumMode !== undefined && (forumMode === 'posts' || forumMode === 'tickets')) {
-        channel.forumMode = forumMode;
+        updateData.forumMode = forumMode;
       }
       if (ticketAccessRoleIds !== undefined) {
-        channel.ticketAccessRoleIds = ticketAccessRoleIds
-          .filter((id: string) => isValidObjectId(id))
-          .map((id: string) => new Types.ObjectId(id));
+        updateData.ticketAccessRoleIds = ticketAccessRoleIds;
       }
       if (availableTags !== undefined) {
-        channel.availableTags = availableTags.map((tag: { id?: string; name: string; moderated?: boolean; emojiName?: string }) => ({
-          id: tag.id || new Types.ObjectId().toString(),
+        updateData.availableTags = availableTags.map((tag: { id?: string; name: string; moderated?: boolean; emojiName?: string }) => ({
+          id: tag.id || randomUUID(),
           name: tag.name,
           moderated: Boolean(tag.moderated),
           emojiName: tag.emojiName,
@@ -506,19 +429,20 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       }
     }
 
-    await channel.save();
+    await Channel.updateById(channel.id, updateData);
+    const updated = await Channel.findById(channel.id);
 
     // Publish update event
     const publisher = getPublisher();
     if (publisher) {
       await publisher.publish('channel:update', JSON.stringify({
-        channelId: channel._id,
+        channelId: channel.id,
         serverId: channel.serverId,
         updates: body,
       }));
     }
 
-    return { success: true, channel };
+    return { success: true, channel: updated };
   }, {
     params: t.Object({
       channelId: t.String(),
@@ -560,7 +484,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -578,19 +502,17 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Check permissions
     if (channel.serverId) {
       const server = await Server.findById(channel.serverId);
-      if (!server?.ownerId.equals(user._id)) {
+      if (!server || !compareIds(server.ownerId, user.id)) {
         set.status = 403;
         return { error: 'You do not have permission to delete this channel' };
       }
     }
 
     // Soft delete messages
-    await Message.updateMany(
-      { channelId: channel._id },
-      { isDeleted: true, deletedAt: new Date() }
-    );
+    const messages = await Message.find({ channelId: channel.id });
+    await Promise.all(messages.map(m => Message.updateById(m.id, { isDeleted: true, deletedAt: new Date() })));
 
-    await channel.deleteOne();
+    await Channel.deleteById(channel.id);
 
     // Publish delete event
     const publisher = getPublisher();
@@ -616,7 +538,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const { hasAccess, channel, error } = await checkChannelAccess(user._id.toString(), params.channelId);
+    const { hasAccess, channel, error } = await checkChannelAccess(user.id, params.channelId);
     if (!hasAccess || !channel) {
       set.status = 403;
       return { error: error || 'Access denied' };
@@ -627,87 +549,79 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const includeArchived = (query as { archived?: string }).archived === 'true';
-    const filter: Record<string, unknown> = {
-      parentId: channel._id,
-      type: { $in: ['public_thread', 'private_thread'] },
-    };
-    if (!includeArchived) filter.archived = false;
-
-    let threads = await Channel.find(filter)
-      .sort({ lastMessageId: -1, createdAt: -1 })
-      .limit(100)
-      .lean();
+    const allThreads = await Channel.find({ parentId: channel.id });
+    let threads = allThreads
+      .filter((t: any) => t.type === 'public_thread' || t.type === 'private_thread')
+      .filter((t: any) => includeArchived || !t.archived)
+      .sort((a: any, b: any) => {
+        const aLast = a.lastMessageId || a.createdAt;
+        const bLast = b.lastMessageId || b.createdAt;
+        return new Date(bLast).getTime() - new Date(aLast).getTime();
+      })
+      .slice(0, 100);
 
     // Ticket forums: hide tickets the requester isn't a party to (unless staff / access role).
     if (channel.forumMode === 'tickets') {
-      const membership = await ServerMember.findOne({ serverId: channel.serverId, userId: user._id }).select('roles');
+      const membership = await ServerMember.findOne({ serverId: channel.serverId, userId: user.id });
       const canSeeAll = await canAccessAllTickets(
         channel.serverId,
-        user._id.toString(),
-        (membership?.roles || []) as Types.ObjectId[],
-        (channel.ticketAccessRoleIds || []) as Types.ObjectId[],
+        user.id,
+        (membership?.roles || []) as string[],
+        (channel.ticketAccessRoleIds || []) as string[],
       );
       if (!canSeeAll) {
-        threads = threads.filter((t) =>
-          compareIds(t.ownerId, user._id.toString()) ||
-          (t.threadMemberIds || []).some((m: Types.ObjectId) => compareIds(m, user._id.toString())),
+        threads = threads.filter((t: any) =>
+          compareIds(t.ownerId, user.id) ||
+          (t.threadMemberIds || []).some((m: string) => compareIds(m, user.id)),
         );
       }
     }
 
-    const ownerIds = threads.map((t) => t.ownerId).filter(Boolean);
-    const owners = await User.find({ _id: { $in: ownerIds } }).select('username displayName avatar').lean();
-    const ownerMap = new Map(owners.map((o) => [o._id.toString(), o]));
+    const ownerIds = threads.map((t: any) => t.ownerId).filter(Boolean);
+    const owners = ownerIds.length > 0 ? await User.find({ id: { in: ownerIds } }) : [];
+    const ownerMap = new Map(owners.map((o: any) => [o.id, o]));
 
     // Load the first message of each thread for preview / reaction metadata.
-    const threadIds = threads.map((t) => t._id);
-    const firstMessages = threadIds.length
-      ? await Message.aggregate([
-          { $match: { channelId: { $in: threadIds }, isDeleted: false } },
-          { $sort: { createdAt: 1 } },
-          {
-            $group: {
-              _id: '$channelId',
-              message: { $first: '$$ROOT' },
-            },
-          },
-        ])
-      : [];
-    const firstMessageMap = new Map(
-      await Promise.all(
-        firstMessages.map(async (row) => {
-          const rawContent = row.message.content || '';
+    const threadIds = threads.map((t: any) => t.id);
+    const firstMessageMap = new Map<string, { content: string; reactionCount: number; createdAt: Date }>();
+    if (threadIds.length > 0) {
+      // Fetch only the first (oldest) message per thread using _orderAsc + _limit:1
+      const firstMsgs = await Promise.all(
+        threadIds.map(tid => Message.find({ channelId: tid, isDeleted: false, _limit: 1, _orderAsc: true }))
+      );
+      for (let i = 0; i < threadIds.length; i++) {
+        const threadMsgs = firstMsgs[i];
+        if (threadMsgs.length > 0) {
+          const first = threadMsgs[0];
+          const rawContent = first.content || '';
           const content = rawContent ? await decryptFromStorage(rawContent) : '';
-          const reactions = row.message.reactions || [];
+          const reactions = (first.reactions as any[]) || [];
           const reactionCount = reactions.reduce((sum: number, r: { count?: number }) => sum + (r.count || 0), 0);
-          return [
-            row._id.toString(),
-            { content, reactionCount, createdAt: row.message.createdAt },
-          ] as const;
-        })
-      )
-    );
+          firstMessageMap.set(threadIds[i], { content, reactionCount, createdAt: first.createdAt ?? new Date() });
+        }
+      }
+    }
 
     return {
       forumMode: channel.forumMode,
       availableTags: channel.availableTags || [],
-      threads: threads.map((t) => {
-        const owner = t.ownerId ? ownerMap.get(t.ownerId.toString()) : null;
-        const first = firstMessageMap.get(t._id.toString());
+      threads: threads.map((t: any) => {
+        const owner = t.ownerId ? ownerMap.get(t.ownerId) : null;
+        const first = firstMessageMap.get(t.id);
         return {
-          id: t._id.toString(),
+          id: t.id,
           name: t.name,
           type: t.type,
           archived: t.archived,
           locked: t.locked,
           appliedTags: t.appliedTags || [],
           messageCount: t.messageCount || 0,
-          lastMessageId: t.lastMessageId?.toString() || null,
+          lastMessageId: t.lastMessageId || null,
           createdAt: t.createdAt,
           firstMessagePreview: first?.content || '',
           reactionCount: first?.reactionCount || 0,
           owner: owner ? {
-            id: owner._id.toString(),
+            id: owner.id,
             username: owner.username,
             displayName: owner.displayName,
             avatar: owner.avatar,
@@ -727,7 +641,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const { hasAccess, channel: forum, error } = await checkChannelAccess(user._id.toString(), params.channelId);
+    const { hasAccess, channel: forum, error } = await checkChannelAccess(user.id, params.channelId);
     if (!hasAccess || !forum) {
       set.status = 403;
       return { error: error || 'Access denied' };
@@ -759,27 +673,26 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const validTagIds = new Set((forum.availableTags || []).map((tag: { id: string }) => tag.id));
     const tags = (appliedTags || []).filter((id: string) => validTagIds.has(id));
 
-    const thread = new Channel({
+    const thread = await Channel.create({
       serverId: forum.serverId,
       name: trimmedName,
       type: isTicket ? 'private_thread' : 'public_thread',
-      parentId: forum._id,
-      ownerId: user._id,
+      parentId: forum.id,
+      ownerId: user.id,
       position: 0,
       appliedTags: tags,
-      threadMemberIds: [user._id],
+      threadMemberIds: [user.id],
       messageCount: 1,
     });
-    await thread.save();
 
     // Initial post message lives in the thread channel.
     let sanitizedContent = normalizeEmojiFormat(sanitizeMessageContent(content));
     const mentionData = await extractMentionsFromContent(sanitizedContent, forum.serverId || null);
     const encryptedContent = await encryptForStorage(sanitizedContent);
-    const message = new Message({
-      channelId: thread._id,
+    const message = await Message.create({
+      channelId: thread.id,
       serverId: forum.serverId,
-      authorId: user._id,
+      authorId: user.id,
       content: encryptedContent,
       type: 'default',
       mentionEveryone: mentionData.mentionEveryone,
@@ -787,15 +700,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       mentionedRoleIds: mentionData.mentionedRoleIds,
       mentionedChannelIds: mentionData.mentionedChannelIds,
     });
-    await message.save();
-    thread.lastMessageId = message._id;
-    await thread.save();
+    await Channel.updateById(thread.id, { lastMessageId: message.id });
 
     const publisher = getPublisher();
     if (publisher) {
       await publisher.publish('thread:create', JSON.stringify({
-        channelId: forum._id,
-        threadId: thread._id,
+        channelId: forum.id,
+        threadId: thread.id,
         serverId: forum.serverId,
       }));
     }
@@ -803,11 +714,11 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     return {
       success: true,
       thread: {
-        id: thread._id.toString(),
+        id: thread.id,
         name: thread.name,
         type: thread.type,
-        parentId: forum._id.toString(),
-        serverId: forum.serverId?.toString(),
+        parentId: forum.id,
+        serverId: forum.serverId,
         appliedTags: thread.appliedTags,
         archived: false,
         locked: false,
@@ -830,7 +741,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId,
       { lean: true }
     );
@@ -841,62 +752,87 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     // Fetch server ownerId for isOwner flag on authors
-    let serverOwnerId: Types.ObjectId | null = null;
+    let serverOwnerId: string | null = null;
     let nicknameMap: Map<string, string> = new Map();
-    if (channel?.serverId) {
-      const [server, members] = await Promise.all([
-        Server.findById(channel.serverId).select('ownerId').lean(),
-        ServerMember.find({
-          serverId: channel.serverId,
-          nickname: { $exists: true, $nin: [null, ''] },
-        }).select('userId nickname').lean(),
-      ]);
-      serverOwnerId = server?.ownerId ?? null;
-      for (const m of members) {
-        nicknameMap.set(m.userId.toString(), m.nickname!);
-      }
-    }
+    const serverId = channel?.serverId;
 
     const limit = Math.min(parseInt(query.limit || '50'), config.MAX_MESSAGES_PER_FETCH);
     const before = query.before;
     const after = query.after;
     const around = query.around;
 
-    const filter: Record<string, unknown> = {
+    // Build cursor-based DB query — avoid loading all messages
+    const msgFilter: Record<string, unknown> = {
       channelId: params.channelId,
       isDeleted: false,
+      _limit: limit,
     };
 
     if (before) {
-      filter._id = { $lt: before };
+      // Fetch the before message to get its createdAt, then query messages older than it
+      const beforeMsg = await Message.findById(before);
+      if (beforeMsg) {
+        msgFilter.createdAtBefore = beforeMsg.createdAt;
+      }
     } else if (after) {
-      filter._id = { $gt: after };
+      const afterMsg = await Message.findById(after);
+      if (afterMsg) {
+        msgFilter.createdAtAfter = afterMsg.createdAt;
+      }
     } else if (around) {
-      filter._id = { $lte: around };
+      const aroundMsg = await Message.findById(around);
+      if (aroundMsg) {
+        msgFilter.createdAtBefore = aroundMsg.createdAt;
+        msgFilter._limit = limit;
+      }
     }
 
-    const messages = await Message.find(filter)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .populate('authorId', 'username displayName avatar status badges isSystem customization')
-      .populate({
-        path: 'referencedMessageId',
-        select: '_id content authorId createdAt',
-        populate: {
-          path: 'authorId',
-          select: 'username displayName avatar badges isSystem customization',
-        },
-      })
-      .lean();
+    const messages = await Message.find(msgFilter);
+    messages.reverse(); // oldest first for display
 
-    messages.reverse();
+    // Now fetch server owner and nicknames only for the authors in this page
+    if (serverId) {
+      const authorIds = [...new Set(messages.map((m: any) => m.authorId).filter(Boolean))];
+      const [server, authorMembers] = await Promise.all([
+        Server.findById(serverId),
+        authorIds.length > 0 ? ServerMember.find({ serverId, userId: { in: authorIds } }) : [],
+      ]);
+      serverOwnerId = server?.ownerId ?? null;
+      for (const m of authorMembers as any[]) {
+        if (m.nickname) {
+          nicknameMap.set(m.userId, m.nickname);
+        }
+      }
+    }
 
-    // Transform for frontend - return array directly and map _id to id
+    // Batch fetch authors
+    const authorIds = Array.from(new Set(messages.map((m: any) => m.authorId).filter(Boolean))) as string[];
+    const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+    const authorMap = new Map(authors.map((a: any) => [a.id, a]));
+
+    // Batch fetch referenced messages
+    const refIds = Array.from(new Set(messages.map((m: any) => m.referencedMessageId).filter(Boolean))) as string[];
+    const refMessages = refIds.length > 0 ? await Message.find({ id: { in: refIds } }) : [];
+    const refMap = new Map(refMessages.map((r: any) => [r.id, r]));
+    // Batch fetch referenced message authors
+    const refAuthorIds = Array.from(new Set(refMessages.map((r: any) => r.authorId).filter(Boolean))) as string[];
+    const refAuthors = refAuthorIds.length > 0 ? await User.find({ id: { in: refAuthorIds } }) : [];
+    const refAuthorMap = new Map(refAuthors.map((a: any) => [a.id, a]));
+
+    // Transform for frontend - return array directly and map id
     // Decrypt messages
-    const decryptedMessages = await Promise.all((messages as RawLeanMessage[]).map(async (msg) => {
-      const author = msg.authorId as PopulatedAuthor | Types.ObjectId | string | null;
-      const populatedAuthor =
-        isPopulatedAuthor(author) ? author : null;
+    const decryptedMessages = await Promise.all((messages as any[]).map(async (msg) => {
+      const authorData = msg.authorId ? authorMap.get(msg.authorId) : null;
+      const populatedAuthor = authorData ? {
+        id: authorData.id,
+        username: authorData.username,
+        displayName: authorData.displayName,
+        avatar: authorData.avatar,
+        status: authorData.status,
+        customization: authorData.customization,
+        badges: authorData.badges,
+        isSystem: authorData.isSystem,
+      } : null;
       const decryptedContent = await decryptFromStorage(msg.content || '');
 
       // Parse custom emojis from the decrypted content. No server restriction
@@ -910,7 +846,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         url: e.url,
       }));
 
-      const referencedRaw = msg.referencedMessageId;
+      const refId = msg.referencedMessageId;
       let referencedMessage:
         | {
             id: string;
@@ -925,58 +861,54 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           }
         | undefined;
 
-      if (isReferencedMessageRaw(referencedRaw)) {
-        const referencedAuthor = referencedRaw.authorId as PopulatedAuthor | Types.ObjectId | string | null;
-        const populatedReferencedAuthor =
-          isPopulatedAuthor(referencedAuthor) ? referencedAuthor : null;
-        referencedMessage = {
-          id: referencedRaw._id.toString(),
-          content: referencedRaw.content ? await decryptFromStorage(referencedRaw.content) : '',
-          author: populatedReferencedAuthor
-            ? {
-                id: populatedReferencedAuthor._id.toString(),
-                username: populatedReferencedAuthor.username,
-                displayName: populatedReferencedAuthor.displayName || populatedReferencedAuthor.username,
-                avatar: populatedReferencedAuthor.avatar,
-              }
-            : undefined,
-          createdAt: referencedRaw.createdAt,
-        };
+      if (refId) {
+        const refMsg = refMap.get(refId);
+        if (refMsg) {
+          const refAuthorData = refMsg.authorId ? refAuthorMap.get(refMsg.authorId) : null;
+          referencedMessage = {
+            id: refMsg.id,
+            content: refMsg.content ? await decryptFromStorage(refMsg.content) : '',
+            author: refAuthorData ? {
+              id: refAuthorData.id,
+              username: refAuthorData.username,
+              displayName: refAuthorData.displayName || refAuthorData.username,
+              avatar: refAuthorData.avatar,
+            } : undefined,
+            createdAt: refMsg.createdAt,
+          };
+        }
       }
 
       return {
-        id: msg._id.toString(),
+        id: msg.id,
         content: decryptedContent,
-        authorId: populatedAuthor?._id?.toString() || msg.authorId,
+        authorId: populatedAuthor?.id || msg.authorId,
         author: populatedAuthor ? {
-          id: populatedAuthor._id.toString(),
+          id: populatedAuthor.id,
           username: populatedAuthor.username,
-          displayName: nicknameMap.get(populatedAuthor._id.toString()) || populatedAuthor.displayName || populatedAuthor.username,
+          displayName: nicknameMap.get(populatedAuthor.id) || populatedAuthor.displayName || populatedAuthor.username,
           avatar: populatedAuthor.avatar,
           status: populatedAuthor.status,
-          badges: (populatedAuthor as PopulatedAuthor & { badges?: string[] }).badges || [],
-          isOwner: serverOwnerId ? serverOwnerId.equals(populatedAuthor._id as unknown as Types.ObjectId) : false,
-          isSystem: (populatedAuthor as PopulatedAuthor & { isSystem?: boolean }).isSystem || false,
+          badges: populatedAuthor.badges || [],
+          isOwner: serverOwnerId ? compareIds(serverOwnerId, populatedAuthor.id) : false,
+          isSystem: populatedAuthor.isSystem || false,
           customization: populatedAuthor.customization || null,
         } : null,
-        channelId: msg.channelId.toString(),
-        serverId: msg.serverId?.toString(),
+        channelId: msg.channelId,
+        serverId: msg.serverId,
         createdAt: msg.createdAt,
         updatedAt: msg.updatedAt,
         attachments: msg.attachments || [],
         edited: msg.edited,
         type: msg.type,
-        referencedMessageId:
-          typeof msg.referencedMessageId === 'object' && msg.referencedMessageId?._id
-            ? msg.referencedMessageId._id.toString()
-            : msg.referencedMessageId?.toString?.(),
+        referencedMessageId: msg.referencedMessageId,
         referencedMessage,
         pinned: msg.pinned,
         reactions: msg.reactions || [],
         mentionEveryone: Boolean(msg.mentionEveryone),
-        mentionedUserIds: (msg.mentionedUserIds || []).map((id: Types.ObjectId | string) => id.toString()),
-        mentionedRoleIds: (msg.mentionedRoleIds || []).map((id: Types.ObjectId | string) => id.toString()),
-        mentionedChannelIds: (msg.mentionedChannelIds || []).map((id: Types.ObjectId | string) => id.toString()),
+        mentionedUserIds: msg.mentionedUserIds || [],
+        mentionedRoleIds: msg.mentionedRoleIds || [],
+        mentionedChannelIds: msg.mentionedChannelIds || [],
         customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
         sticker: msg.sticker || undefined,
       };
@@ -1003,7 +935,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1023,36 +955,37 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const candidates = await Message.find({
       channelId: params.channelId,
       isDeleted: false,
-    })
-      .sort({ createdAt: -1 })
-      .limit(searchLimit)
-      .populate('authorId', 'username displayName avatar status')
-      .lean();
+      _limit: searchLimit,
+    });
+    const sortedCandidates = candidates;
+
+    // Batch fetch authors
+    const authorIds = Array.from(new Set(sortedCandidates.map((m: any) => m.authorId).filter(Boolean))) as string[];
+    const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+    const authorMap = new Map(authors.map((a: any) => [a.id, a]));
 
     const lowered = rawQuery.toLowerCase();
     const results: Array<Record<string, unknown>> = [];
 
-    for (const msg of candidates as RawLeanMessage[]) {
+    for (const msg of sortedCandidates as any[]) {
       const decrypted = await decryptFromStorage(msg.content || '');
       if (!decrypted.toLowerCase().includes(lowered)) continue;
 
-      const author = msg.authorId as PopulatedAuthor | Types.ObjectId | string | null;
-      const populatedAuthor =
-        isPopulatedAuthor(author) ? author : null;
+      const authorData = msg.authorId ? authorMap.get(msg.authorId) : null;
 
       results.push({
-        id: msg._id.toString(),
+        id: msg.id,
         content: decrypted,
-        authorId: populatedAuthor?._id?.toString() || msg.authorId,
-        author: populatedAuthor
+        authorId: authorData?.id || msg.authorId,
+        author: authorData
           ? {
-              id: populatedAuthor._id.toString(),
-              username: populatedAuthor.username,
-              displayName: populatedAuthor.displayName || populatedAuthor.username,
-              avatar: populatedAuthor.avatar,
+              id: authorData.id,
+              username: authorData.username,
+              displayName: authorData.displayName || authorData.username,
+              avatar: authorData.avatar,
             }
           : null,
-        channelId: msg.channelId.toString(),
+        channelId: msg.channelId,
         createdAt: msg.createdAt,
         updatedAt: msg.updatedAt,
         pinned: msg.pinned,
@@ -1081,7 +1014,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, membership, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId,
       { lean: true }
     );
@@ -1093,41 +1026,53 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     // ownerId for the isOwner flag; the sender's nickname is reused from the
     // membership already resolved by checkChannelAccess (one fewer query).
-    let serverOwnerId: Types.ObjectId | null = null;
+    let serverOwnerId: string | null = null;
     const senderNickname: string | null = membership?.nickname || null;
     if (channel.serverId) {
-      const server = await Server.findById(channel.serverId).select('ownerId').lean();
+      const server = await Server.findById(channel.serverId);
       serverOwnerId = server?.ownerId ?? null;
     }
 
     // Rate limit messages
-    const rateLimit = await checkRateLimit('message', `${user._id}:${params.channelId}`);
+    const rateLimit = await checkRateLimit('message', `${user.id}:${params.channelId}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Message rate limited', retryAfter: rateLimit.retryAfter };
     }
 
     // Global rate limit
-    const globalRateLimit = await checkRateLimit('messageGlobal', user._id.toString());
+    const globalRateLimit = await checkRateLimit('messageGlobal', user.id);
     if (!globalRateLimit.success) {
       set.status = 429;
       return { error: 'Global message rate limited', retryAfter: globalRateLimit.retryAfter };
     }
 
-    // Check slowmode
-    if (channel.rateLimitPerUser > 0) {
-      const lastMessage = await Message.findOne({
-        channelId: params.channelId,
-        authorId: user._id,
-        isDeleted: false,
-      }).sort({ createdAt: -1 });
+    // Check slowmode (bypass for server owner and users with Manage Messages)
+    if (channel.rateLimitPerUser > 0 && serverOwnerId !== user.id) {
+      let hasManageMessages = false;
+      if (membership?.roles?.length) {
+        const roles = await Role.find({ id: { in: membership.roles }, serverId: channel.serverId });
+        hasManageMessages = roles.some((r: any) => {
+          const perms = BigInt(r.permissions || '0');
+          return (perms & PERM_MANAGE_MESSAGES) === PERM_MANAGE_MESSAGES || (perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR;
+        });
+      }
+      if (!hasManageMessages) {
+        const allUserMsgs = await Message.find({
+          channelId: params.channelId,
+          authorId: user.id,
+          isDeleted: false,
+          _limit: 1,
+        });
+        const lastMessage = allUserMsgs[0];
 
-      if (lastMessage) {
-        const timeSinceLastMessage = Date.now() - lastMessage.createdAt.getTime();
-        if (timeSinceLastMessage < channel.rateLimitPerUser * 1000) {
-          const waitTime = Math.ceil((channel.rateLimitPerUser * 1000 - timeSinceLastMessage) / 1000);
-          set.status = 429;
-          return { error: `Slowmode enabled. Wait ${waitTime} seconds.`, retryAfter: waitTime };
+        if (lastMessage) {
+          const timeSinceLastMessage = Date.now() - new Date(lastMessage.createdAt ?? 0).getTime();
+          if (timeSinceLastMessage < channel.rateLimitPerUser * 1000) {
+            const waitTime = Math.ceil((channel.rateLimitPerUser * 1000 - timeSinceLastMessage) / 1000);
+            set.status = 429;
+            return { error: `Slowmode enabled. Wait ${waitTime} seconds.`, retryAfter: waitTime };
+          }
         }
       }
     }
@@ -1137,22 +1082,18 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Validate sticker if provided
     let stickerData: { id: string; name: string; imageUrl: string; serverId?: string; serverName?: string } | undefined;
     if (sticker?.id) {
-      if (!isValidObjectId(sticker.id)) {
-        set.status = 400;
-        return { error: 'Invalid sticker ID' };
-      }
-      const stickerDoc = await ServerSticker.findById(sticker.id).populate('serverId', 'name').lean();
+      const stickerDoc = await ServerSticker.findById(sticker.id);
       if (!stickerDoc || !stickerDoc.available) {
         set.status = 400;
         return { error: 'Sticker not found' };
       }
-      const populatedServer = stickerDoc.serverId as unknown as { _id: Types.ObjectId; name: string } | null;
+      const stickerServer = stickerDoc.serverId ? await Server.findById(stickerDoc.serverId) : null;
       stickerData = {
-        id: stickerDoc._id.toString(),
+        id: stickerDoc.id,
         name: stickerDoc.name,
         imageUrl: stickerDoc.imageUrl,
-        serverId: populatedServer?._id.toString(),
-        serverName: populatedServer?.name,
+        serverId: stickerDoc.serverId,
+        serverName: stickerServer?.name,
       };
     }
 
@@ -1177,8 +1118,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     // Get user's servers for emoji validation
-    const userServerMemberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
-    const userServerIds = userServerMemberships.map(m => m.serverId);
+    const userServerMemberships = await ServerMember.find({ userId: user.id });
+    const userServerIds = userServerMemberships.map((m: any) => m.serverId);
 
     // Parse and validate custom emojis
     const emojiResult = await parseCustomEmojis(sanitizedContent, channel.serverId, userServerIds);
@@ -1197,10 +1138,10 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const encryptedContent = sanitizedContent ? await encryptForStorage(sanitizedContent) : '';
 
     // Create message
-    const message = new Message({
+    const message = await Message.create({
       channelId: params.channelId,
       serverId: channel.serverId,
-      authorId: user._id,
+      authorId: user.id,
       content: encryptedContent,
       type: replyTo ? 'reply' : 'default',
       referencedMessageId: replyTo,
@@ -1212,19 +1153,11 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       mentionedChannelIds: mentionData.mentionedChannelIds,
     });
 
-    await message.save();
+    // Update channel's last message
+    await Channel.updateById(channel.id, { lastMessageId: message.id });
 
-    // Update channel's last message with a targeted write instead of
-    // re-saving the whole (hydrated) channel document.
-    await Channel.updateOne({ _id: channel._id }, { $set: { lastMessageId: message._id } });
-
-    // Populate author for response
-    await message.populate('authorId', 'username displayName avatar status badges isSystem customization');
-
-    // Transform message for frontend (return original sanitized content, not encrypted)
-    const author = message.authorId as PopulatedAuthor | Types.ObjectId | string | null;
-    const populatedAuthor =
-      isPopulatedAuthor(author) ? author : null;
+    // Fetch author for response
+    const author = await User.findById(user.id);
     let referencedMessage:
       | {
           id: string;
@@ -1240,60 +1173,54 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       | undefined;
 
     if (message.referencedMessageId) {
-      const reference = await Message.findById(message.referencedMessageId)
-        .populate('authorId', 'username displayName avatar')
-        .lean();
+      const reference = await Message.findById(message.referencedMessageId);
       if (reference) {
-        const referenceAuthor = reference.authorId as PopulatedAuthor | Types.ObjectId | string | null;
-        const populatedReferenceAuthor =
-          isPopulatedAuthor(referenceAuthor) ? referenceAuthor : null;
+        const refAuthor = reference.authorId ? await User.findById(reference.authorId) : null;
         referencedMessage = {
-          id: reference._id.toString(),
+          id: reference.id,
           content: reference.content ? await decryptFromStorage(reference.content) : '',
-          author: populatedReferenceAuthor
-            ? {
-                id: populatedReferenceAuthor._id.toString(),
-                username: populatedReferenceAuthor.username,
-                displayName: populatedReferenceAuthor.displayName || populatedReferenceAuthor.username,
-                avatar: populatedReferenceAuthor.avatar,
-              }
-            : undefined,
-          createdAt: reference.createdAt,
+          author: refAuthor ? {
+            id: refAuthor.id,
+            username: refAuthor.username,
+            displayName: refAuthor.displayName || refAuthor.username,
+            avatar: refAuthor.avatar ?? undefined,
+          } : undefined,
+          createdAt: reference.createdAt ?? undefined,
         };
       }
     }
 
     const messageResponse = {
-      id: message._id.toString(),
+      id: message.id,
       content: sanitizedContent, // Return original content, not encrypted
-      authorId: populatedAuthor?._id?.toString() || message.authorId,
-      author: populatedAuthor ? {
-        id: populatedAuthor._id.toString(),
-        username: populatedAuthor.username,
-        displayName: senderNickname || populatedAuthor.displayName || populatedAuthor.username,
-        avatar: populatedAuthor.avatar,
-        status: populatedAuthor.status,
-        badges: (populatedAuthor as PopulatedAuthor & { badges?: string[] }).badges || [],
-        isOwner: serverOwnerId ? serverOwnerId.equals(populatedAuthor._id as unknown as Types.ObjectId) : false,
-        isSystem: (populatedAuthor as PopulatedAuthor & { isSystem?: boolean }).isSystem || false,
-        customization: populatedAuthor.customization || null,
+      authorId: author?.id || message.authorId,
+      author: author ? {
+        id: author.id,
+        username: author.username,
+        displayName: senderNickname || author.displayName || author.username,
+        avatar: author.avatar,
+        status: author.status,
+        badges: author.badges || [],
+        isOwner: serverOwnerId ? compareIds(serverOwnerId, author.id) : false,
+        isSystem: author.isSystem || false,
+        customization: author.customization || null,
       } : null,
-      channelId: message.channelId.toString(),
-      serverId: message.serverId?.toString(),
+      channelId: message.channelId,
+      serverId: message.serverId,
       createdAt: message.createdAt,
       updatedAt: message.updatedAt,
       attachments: message.attachments || [],
       edited: message.edited,
       type: message.type,
-      referencedMessageId: message.referencedMessageId?.toString(),
+      referencedMessageId: message.referencedMessageId,
       referencedMessage,
       pinned: message.pinned,
       reactions: message.reactions || [],
       mentionEveryone: message.mentionEveryone,
-      mentionedUserIds: message.mentionedUserIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
-      mentionedRoleIds: message.mentionedRoleIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
-      mentionedChannelIds: message.mentionedChannelIds?.map((id: Types.ObjectId | string) => id.toString()) || [],
-      customEmojis: customEmojis.length > 0 ? customEmojis : undefined, // Include parsed emoji data
+      mentionedUserIds: message.mentionedUserIds || [],
+      mentionedRoleIds: message.mentionedRoleIds || [],
+      mentionedChannelIds: message.mentionedChannelIds || [],
+      customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
       sticker: message.sticker || undefined,
     };
 
@@ -1355,7 +1282,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1365,21 +1292,23 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const limit = Math.min(parseInt(query.limit || '50', 10), 100);
-    const pinnedMessages = await Message.find({
+    const allPinned = await Message.find({
       channelId: params.channelId,
       pinned: true,
       isDeleted: false,
-    })
-      .sort({ updatedAt: -1 })
-      .limit(limit)
-      .populate('authorId', 'username displayName avatar status')
-      .lean();
+    });
+    const pinnedMessages = allPinned
+      .sort((a: any, b: any) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime())
+      .slice(0, limit);
+
+    // Batch fetch authors
+    const authorIds = Array.from(new Set(pinnedMessages.map((m: any) => m.authorId).filter(Boolean))) as string[];
+    const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+    const authorMap = new Map(authors.map((a: any) => [a.id, a]));
 
     const messages = await Promise.all(
-      (pinnedMessages as RawLeanMessage[]).map(async (msg) => {
-        const author = msg.authorId as PopulatedAuthor | Types.ObjectId | string | null;
-        const populatedAuthor =
-          isPopulatedAuthor(author) ? author : null;
+      (pinnedMessages as any[]).map(async (msg) => {
+        const authorData = msg.authorId ? authorMap.get(msg.authorId) : null;
         const decryptedContent = msg.content ? await decryptFromStorage(msg.content) : '';
         // No server restriction: cross-server emojis must render on fetch
         const emojiResult = await parseCustomEmojis(decryptedContent);
@@ -1390,19 +1319,19 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           url: e.url,
         }));
         return {
-          id: msg._id.toString(),
+          id: msg.id,
           content: decryptedContent,
-          authorId: populatedAuthor?._id?.toString() || msg.authorId,
-          author: populatedAuthor
+          authorId: authorData?.id || msg.authorId,
+          author: authorData
             ? {
-                id: populatedAuthor._id.toString(),
-                username: populatedAuthor.username,
-                displayName: populatedAuthor.displayName || populatedAuthor.username,
-                avatar: populatedAuthor.avatar,
-                status: populatedAuthor.status,
+                id: authorData.id,
+                username: authorData.username,
+                displayName: authorData.displayName || authorData.username,
+                avatar: authorData.avatar,
+                status: authorData.status,
               }
             : null,
-          channelId: msg.channelId.toString(),
+          channelId: msg.channelId,
           createdAt: msg.createdAt,
           updatedAt: msg.updatedAt,
           pinned: true,
@@ -1430,7 +1359,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1440,7 +1369,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const message = await Message.findOne({
-      _id: params.messageId,
+      id: params.messageId,
       channelId: params.channelId,
       isDeleted: false,
     });
@@ -1450,14 +1379,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: 'Message not found' };
     }
 
-    message.pinned = true;
-    await message.save();
+    await Message.updateById(message.id, { pinned: true });
 
     publishToChannel(params.channelId, {
       type: 'pin_update',
       messageId: params.messageId,
       pinned: true,
-      updatedBy: user._id.toString(),
+      updatedBy: user.id,
     });
 
     const publisher = getPublisher();
@@ -1486,7 +1414,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1496,7 +1424,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const message = await Message.findOne({
-      _id: params.messageId,
+      id: params.messageId,
       channelId: params.channelId,
       isDeleted: false,
     });
@@ -1506,14 +1434,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: 'Message not found' };
     }
 
-    message.pinned = false;
-    await message.save();
+    await Message.updateById(message.id, { pinned: false });
 
     publishToChannel(params.channelId, {
       type: 'pin_update',
       messageId: params.messageId,
       pinned: false,
-      updatedBy: user._id.toString(),
+      updatedBy: user.id,
     });
 
     const publisher = getPublisher();
@@ -1542,7 +1469,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1552,7 +1479,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const message = await Message.findOne({
-      _id: params.messageId,
+      id: params.messageId,
       channelId: params.channelId,
       isDeleted: false,
     });
@@ -1563,7 +1490,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     // Only author can edit their own messages
-    if (!message.authorId.equals(user._id)) {
+    if (!compareIds(message.authorId, user.id)) {
       set.status = 403;
       return { error: 'You can only edit your own messages' };
     }
@@ -1571,6 +1498,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const { content } = body;
 
     let sanitizedEditContent = '';
+    const updateData: Record<string, any> = {};
     if (content) {
       const validation = validateMessageContent(content);
       if (!validation.valid) {
@@ -1581,17 +1509,17 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       sanitizedEditContent = sanitizeMessageContent(content);
       sanitizedEditContent = normalizeEmojiFormat(sanitizedEditContent);
       const mentionData = await extractMentionsFromContent(sanitizedEditContent, channel.serverId || null);
-      message.mentionEveryone = mentionData.mentionEveryone;
-      message.mentionedUserIds = mentionData.mentionedUserIds.map((id) => new Types.ObjectId(id));
-      message.mentionedRoleIds = mentionData.mentionedRoleIds.map((id) => new Types.ObjectId(id));
-      message.mentionedChannelIds = mentionData.mentionedChannelIds.map((id) => new Types.ObjectId(id));
+      updateData.mentionEveryone = mentionData.mentionEveryone;
+      updateData.mentionedUserIds = mentionData.mentionedUserIds;
+      updateData.mentionedRoleIds = mentionData.mentionedRoleIds;
+      updateData.mentionedChannelIds = mentionData.mentionedChannelIds;
       // Encrypt content for storage
-      message.content = await encryptForStorage(sanitizedEditContent);
-      message.edited = true;
-      message.editedTimestamp = new Date();
+      updateData.content = await encryptForStorage(sanitizedEditContent);
+      updateData.edited = true;
+      updateData.editedTimestamp = new Date();
     }
 
-    await message.save();
+    await Message.updateById(message.id, updateData);
 
     // Publish update event with decrypted content for SSE
     const publisher = getPublisher();
@@ -1601,11 +1529,12 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         serverId: channel.serverId,
         messageId: params.messageId,
         content: sanitizedEditContent, // Send decrypted for SSE
-        editedTimestamp: message.editedTimestamp,
+        editedTimestamp: updateData.editedTimestamp,
       }));
     }
 
-    return { success: true, message: { ...message.toObject(), content: sanitizedEditContent } };
+    const updatedMessage = await Message.findById(message.id);
+    return { success: true, message: { ...updatedMessage, content: sanitizedEditContent } };
   }, {
     params: t.Object({
       channelId: t.String(),
@@ -1624,7 +1553,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1634,7 +1563,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const message = await Message.findOne({
-      _id: params.messageId,
+      id: params.messageId,
       channelId: params.channelId,
       isDeleted: false,
     });
@@ -1645,12 +1574,12 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     // Check if user can delete (author or has manage messages permission)
-    const isAuthor = message.authorId.equals(user._id);
+    const isAuthor = compareIds(message.authorId, user.id);
     let hasPermission = isAuthor;
 
     if (!isAuthor && channel.serverId) {
       const server = await Server.findById(channel.serverId);
-      hasPermission = server?.ownerId.equals(user._id) || false;
+      hasPermission = !!server && compareIds(server.ownerId, user.id);
     }
 
     if (!hasPermission) {
@@ -1659,9 +1588,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     // Soft delete
-    message.isDeleted = true;
-    message.deletedAt = new Date();
-    await message.save();
+    await Message.updateById(message.id, { isDeleted: true, deletedAt: new Date() });
 
     // Publish delete event
     const publisher = getPublisher();
@@ -1694,13 +1621,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.channelId) || !isValidObjectId(params.messageId)) {
-      set.status = 400;
-      return { error: 'Invalid ID' };
-    }
-
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1710,9 +1632,9 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const message = await Message.findOne({
-      _id: params.messageId,
+      id: params.messageId,
       channelId: params.channelId,
-      isDeleted: { $ne: true },
+      isDeleted: false,
     });
 
     if (!message) {
@@ -1735,25 +1657,28 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
     
     // Find or create reaction - match by ID for custom emojis, name for unicode
-    const existingReaction = message.reactions.find(
-      (r: { emoji: { name: string; id?: string } }) => 
+    const reactions = (message.reactions || []) as Array<{ emoji: { name: string; id?: string; url?: string; animated?: boolean }; count: number; userIds: string[] }>;
+    const existingReaction = reactions.find(
+      (r) => 
         (emojiData.id && r.emoji.id === emojiData.id) || 
         (!emojiData.id && r.emoji.name === emojiData.name)
     );
 
+    let reactionCount: number;
     if (existingReaction) {
       // Check if user already reacted
-      if (!existingReaction.userIds.some((id: Types.ObjectId | string) => compareIds(id, user._id))) {
-        existingReaction.userIds.push(user._id);
+      if (!existingReaction.userIds.some((id: string) => compareIds(id, user.id))) {
+        existingReaction.userIds.push(user.id);
         existingReaction.count++;
         // Ensure url is populated for custom emoji reactions
         if (emojiData.url) {
           existingReaction.emoji.url = emojiData.url;
         }
       }
+      reactionCount = existingReaction.count;
     } else {
       // Add new reaction with full emoji data
-      message.reactions.push({
+      reactions.push({
         emoji: {
           name: emojiData.name,
           id: emojiData.id,
@@ -1761,19 +1686,20 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           url: emojiData.url,
         },
         count: 1,
-        userIds: [user._id],
+        userIds: [user.id],
       });
+      reactionCount = 1;
     }
 
-    await message.save();
+    await Message.updateById(message.id, { reactions });
 
     // Publish reaction event
     publishToChannel(params.channelId, {
       type: 'reaction_add',
       messageId: params.messageId,
       emoji: decodedEmoji,
-      userId: user._id,
-      count: existingReaction ? existingReaction.count : 1,
+      userId: user.id,
+      count: reactionCount,
     });
 
     return { success: true };
@@ -1794,13 +1720,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.channelId) || !isValidObjectId(params.messageId)) {
-      set.status = 400;
-      return { error: 'Invalid ID' };
-    }
-
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1810,9 +1731,9 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const message = await Message.findOne({
-      _id: params.messageId,
+      id: params.messageId,
       channelId: params.channelId,
-      isDeleted: { $ne: true },
+      isDeleted: false,
     });
 
     if (!message) {
@@ -1829,7 +1750,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Parse emoji to get ID for custom emojis
     const emojiData = await getReactionEmoji(decodedEmoji);
     
-    const reactions = message.reactions as Array<{ emoji: { name: string; id?: string }; count: number; userIds: Types.ObjectId[] }>;
+    const reactions = (message.reactions || []) as Array<{ emoji: { name: string; id?: string }; count: number; userIds: string[] }>;
     const reactionIndex = reactions.findIndex(r => 
       (emojiData?.id && r.emoji.id === emojiData.id) || 
       (!emojiData?.id && r.emoji.name === (emojiData?.name || decodedEmoji))
@@ -1837,14 +1758,14 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     if (reactionIndex !== -1) {
       const reaction = reactions[reactionIndex];
-      reaction.userIds = reaction.userIds.filter((id: Types.ObjectId | string) => !compareIds(id, user._id));
+      reaction.userIds = reaction.userIds.filter((id: string) => !compareIds(id, user.id));
       reaction.count = reaction.userIds.length;
 
       if (reaction.count === 0) {
-        message.reactions.splice(reactionIndex, 1);
+        reactions.splice(reactionIndex, 1);
       }
 
-      await message.save();
+      await Message.updateById(message.id, { reactions });
     }
 
     // Publish reaction removal event
@@ -1852,7 +1773,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       type: 'reaction_remove',
       messageId: params.messageId,
       emoji: emojiData?.id || decodedEmoji,
-      userId: user._id,
+      userId: user.id,
     });
 
     return { success: true };
@@ -1874,7 +1795,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const { hasAccess, channel, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 
@@ -1884,7 +1805,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     // Set typing in Redis
-    await cache.setTyping(params.channelId, user._id.toString());
+    await cache.setTyping(params.channelId, user.id);
 
     // Publish typing event
     const publisher = getPublisher();
@@ -1892,7 +1813,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       await publisher.publish('typing:start', JSON.stringify({
         channelId: params.channelId,
         serverId: channel.serverId,
-        userId: user._id,
+        userId: user.id,
         username: user.username,
       }));
     }
@@ -1900,7 +1821,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Send to SSE connections
     publishToChannel(params.channelId, {
       type: 'typing',
-      userId: user._id,
+      userId: user.id,
       username: user.username,
     });
 
@@ -1931,18 +1852,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return new Response(errorStream, { headers: sseHeaders });
     }
 
-    if (!isValidObjectId(params.channelId)) {
-      const errorStream = new ReadableStream({
-        start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: 'Invalid channel ID' })}\n\n`));
-          controller.close();
-        },
-      });
-      return new Response(errorStream, { headers: sseHeaders });
-    }
-
     const { hasAccess, error } = await checkChannelAccess(
-      user._id.toString(),
+      user.id,
       params.channelId
     );
 

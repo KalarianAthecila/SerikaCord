@@ -1,12 +1,11 @@
 import { User, type IUser } from '@/lib/models/User';
-import { Types } from 'mongoose';
 
-// System user IDs (using ObjectId format but predictable)
+// System user IDs (fixed UUIDs for consistency)
 export const SYSTEM_USERS = {
-  SERIKA_BROADCAST: '000000000000000000000001',
-  SERIKA_SYSTEM: '000000000000000000000002',
-  SERIKA_WELCOME: '000000000000000000000003',
-  SERIKA_SUPPORT: '000000000000000000000004',
+  SERIKA_BROADCAST: '00000000-0000-0000-0000-000000000001',
+  SERIKA_SYSTEM: '00000000-0000-0000-0000-000000000002',
+  SERIKA_WELCOME: '00000000-0000-0000-0000-000000000003',
+  SERIKA_SUPPORT: '00000000-0000-0000-0000-000000000004',
 } as const;
 
 export type SystemUserId = typeof SYSTEM_USERS[keyof typeof SYSTEM_USERS];
@@ -62,57 +61,72 @@ export async function ensureSystemUsers(): Promise<void> {
       const existingUser = await User.findById(id);
       
       if (!existingUser) {
-        // Create system user
-        await User.create({
-          _id: new Types.ObjectId(id),
-          username: config.username,
-          displayName: config.displayName,
-          avatar: config.avatar,
-          bio: config.bio,
-          badges: config.badges,
-          isBot: true,
-          isSystem: true,
-          isVerified: true,
-          isStaff: true,
-          staffRole: 'admin',
-          status: 'online',
-          settings: {
-            theme: 'dark',
-            locale: 'en-US',
-            notifications: {
-              desktop: false,
-              sounds: false,
-              mentions: false,
+        // Check if a user with the same username already exists (from migration)
+        const migratedUser = await User.findOne({ username: config.username });
+        if (migratedUser) {
+          // Update the migrated user to be a system user
+          await User.updateById(migratedUser.id, {
+            isBot: true,
+            isSystem: true,
+            isVerified: true,
+            isStaff: true,
+            staffRole: 'admin',
+            displayName: config.displayName,
+            avatar: config.avatar,
+            bio: config.bio,
+            badges: config.badges,
+            status: 'online',
+          });
+          console.log(`[System] Updated migrated user to system user: ${config.displayName} (id: ${migratedUser.id})`);
+        } else {
+          // Create new system user
+          await User.create({
+            id,
+            username: config.username,
+            displayName: config.displayName,
+            avatar: config.avatar,
+            bio: config.bio,
+            badges: config.badges,
+            isBot: true,
+            isSystem: true,
+            isVerified: true,
+            isStaff: true,
+            staffRole: 'admin',
+            status: 'online',
+            settings: {
+              theme: 'dark',
+              locale: 'en-US',
+              notifications: {
+                desktop: false,
+                sounds: false,
+                mentions: false,
+              },
+              privacy: {
+                directMessages: 'everyone',
+                friendRequests: 'none' as any,
+              },
             },
-            privacy: {
-              directMessages: 'everyone',
-              friendRequests: 'none' as any,
-            },
-          },
-        });
-        
-        console.log(`[System] Created system user: ${config.displayName}`);
+          });
+          console.log(`[System] Created system user: ${config.displayName}`);
+        }
       } else {
         // Update system user if needed
-        let needsUpdate = false;
+        const updateFields: Record<string, any> = {};
         
         if (existingUser.displayName !== config.displayName) {
-          existingUser.displayName = config.displayName;
-          needsUpdate = true;
+          updateFields.displayName = config.displayName;
         }
         
         if (existingUser.avatar !== config.avatar) {
-          existingUser.avatar = config.avatar;
-          needsUpdate = true;
+          updateFields.avatar = config.avatar;
         }
         
         if (!existingUser.isSystem) {
-          existingUser.isSystem = true;
-          needsUpdate = true;
+          updateFields.isSystem = true;
         }
         
-        if (needsUpdate) {
-          await existingUser.save();
+        if (Object.keys(updateFields).length > 0) {
+          await User.updateById(id, updateFields);
           console.log(`[System] Updated system user: ${config.displayName}`);
         }
       }

@@ -1,9 +1,8 @@
 import { User } from '@/lib/models/User';
 import { connectDB } from '@/lib/db';
-import mongoose from 'mongoose';
 
-// Serika Broadcast system user ID - fixed ObjectId
-export const SERIKA_BROADCAST_ID = new mongoose.Types.ObjectId('000000000000000000000001');
+// Serika Broadcast system user ID - fixed UUID
+export const SERIKA_BROADCAST_ID = '00000000-0000-0000-0000-000000000001';
 
 export interface ISerikaBroadcast {
   id: string;
@@ -16,10 +15,10 @@ export interface ISerikaBroadcast {
 }
 
 export const SERIKA_BROADCAST_USER: ISerikaBroadcast = {
-  id: SERIKA_BROADCAST_ID.toString(),
+  id: SERIKA_BROADCAST_ID,
   username: 'serika',
   displayName: 'Serika',
-  avatar: '/serika-avatar.png', // System avatar
+  avatar: '/serika-avatar.png',
   isSystem: true,
   isBot: true,
   badges: ['staff', 'admin'],
@@ -37,7 +36,7 @@ export async function ensureSerikaBroadcastUser(): Promise<void> {
     if (!existingUser) {
       try {
         await User.create({
-          _id: SERIKA_BROADCAST_ID,
+          id: SERIKA_BROADCAST_ID,
           username: 'serika',
           displayName: 'Serika',
           avatar: '/serika-avatar.png',
@@ -62,40 +61,33 @@ export async function ensureSerikaBroadcastUser(): Promise<void> {
         });
         console.log('✅ Serika Broadcast system user created');
       } catch (createError: any) {
-        // Handle duplicate key error - user exists but wasn't found (race condition)
-        if (createError.code === 11000) {
+        if (createError.code === '23505') {
           console.log('ℹ️ Serika Broadcast user already exists');
         } else {
           throw createError;
         }
       }
     } else {
-      // Update existing user if name changed
-      let needsUpdate = false;
+      const updateFields: Record<string, any> = {};
       if (existingUser.displayName !== 'Serika') {
-        existingUser.displayName = 'Serika';
-        needsUpdate = true;
+        updateFields.displayName = 'Serika';
       }
       if (existingUser.username !== 'serika') {
-        existingUser.username = 'serika';
-        needsUpdate = true;
+        updateFields.username = 'serika';
       }
       if (!existingUser.isSystem) {
-        existingUser.isSystem = true;
-        needsUpdate = true;
+        updateFields.isSystem = true;
       }
       if (existingUser.avatar !== '/serika-avatar.png') {
-        existingUser.avatar = '/serika-avatar.png';
-        needsUpdate = true;
+        updateFields.avatar = '/serika-avatar.png';
       }
-      if (needsUpdate) {
-        await existingUser.save();
+      if (Object.keys(updateFields).length > 0) {
+        await User.updateById(existingUser.id, updateFields);
         console.log('✅ Serika Broadcast system user updated');
       }
     }
   } catch (error) {
     console.error('⚠️ Failed to ensure Serika Broadcast user:', error);
-    // Don't throw - this shouldn't break the app startup
   }
 }
 
@@ -110,5 +102,5 @@ export function getSerikaBroadcastUser(): ISerikaBroadcast {
  * Check if a user ID is the Serika Broadcast system user
  */
 export function isSerikaBroadcast(userId: string): boolean {
-  return userId === SERIKA_BROADCAST_ID.toString();
+  return userId === SERIKA_BROADCAST_ID;
 }

@@ -257,9 +257,9 @@ export function getClientIP(request: Request): string {
   return 'unknown';
 }
 
-// Validate ObjectId format
+// Validate UUID format (PostgreSQL primary keys)
 export function isValidObjectId(id: string): boolean {
-  return /^[0-9a-fA-F]{24}$/.test(id);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
 // Generate secure random tokens
@@ -281,7 +281,7 @@ export function secureCompare(a: string, b: string): boolean {
 // Re-export encryption utilities
 export { encryptMessage, decryptMessage, encryptForStorage, decryptFromStorage, isEncrypted } from './encryption';
 
-// Route param names that must always be Mongo ObjectIds. Composite ids like
+// Route param names that must always be UUIDs. Composite ids like
 // voice roomIds ("channel-<id>", "dm:<id>") are intentionally excluded.
 const OBJECT_ID_PARAM_NAMES = new Set([
   'serverId', 'channelId', 'messageId', 'recipientId', 'userId',
@@ -289,9 +289,8 @@ const OBJECT_ID_PARAM_NAMES = new Set([
 ]);
 
 /**
- * Elysia beforeHandle guard: rejects requests whose ObjectId-typed route
- * params are malformed, so handlers never pass garbage to Mongoose (which
- * would throw a CastError and surface as an unhandled 500).
+ * Elysia beforeHandle guard: rejects requests whose UUID-typed route
+ * params are malformed, so handlers never pass garbage to the database.
  */
 export function rejectInvalidObjectIdParams({
   params,

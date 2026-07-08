@@ -23,13 +23,9 @@ import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
 import { getMoeActivity } from '@/lib/services/moeActivity';
 import { getLastFmNowPlaying } from '@/lib/services/lastfmService';
-import { Types } from 'mongoose';
-
-// Helper to safely compare IDs (handles both ObjectId and string)
-function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
-  const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
-  const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
-  return str1 === str2;
+// Helper to safely compare IDs
+function compareIds(id1: string, id2: string): boolean {
+  return id1 === id2;
 }
 
 // Helper function for auth
@@ -160,7 +156,7 @@ function normalizeSettingsPatch(patch: Record<string, any>) {
 
 function mergeDeep<T extends Record<string, any>>(base: T, patch: Record<string, any>): T {
   const output: Record<string, any> = {};
-  // Copy base, skipping undefined values to prevent Mongoose cast errors
+  // Copy base, skipping undefined values
   for (const [key, value] of Object.entries(base || {})) {
     if (value !== undefined) {
       output[key] = value;
@@ -176,7 +172,7 @@ function mergeDeep<T extends Record<string, any>>(base: T, patch: Record<string,
   return output as T;
 }
 
-function getPublicPresenceStatus(user: { status?: string | null; presenceLastHeartbeatAt?: Date | string | number | null; isSystem?: boolean }) {
+function getPublicPresenceStatus(user: { status?: string | null; presenceLastHeartbeatAt?: Date | string | number | null; isSystem?: boolean | null }) {
   return resolveEffectiveStatus({
     status: user.status,
     presenceLastHeartbeatAt: user.presenceLastHeartbeatAt ?? null,
@@ -242,7 +238,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     return {
-      id: user._id,
+      id: user.id,
       username: user.username,
       displayName: user.displayName,
       email: user.email,
@@ -273,7 +269,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     return {
-      id: user._id,
+      id: user.id,
       username: user.username,
       displayName: user.displayName,
       email: user.email,
@@ -306,19 +302,19 @@ const userRoutes = new Elysia({ prefix: '/users' })
     // Import ServerMember to get user's servers
     const { ServerMember, Server } = await import('@/lib/models');
     
-    const memberships = await ServerMember.find({ userId: user._id })
-      .populate({
-        path: 'serverId',
-        select: 'name icon banner description memberCount isOfficial isVerified isPartnered vanityUrlCode ownerId systemChannelId rulesChannelId afkChannelId afkTimeout isAgeGated',
-      })
-      .lean();
+    const memberships = await ServerMember.find({ userId: user.id });
 
-    const servers = memberships
-      .filter(m => m.serverId) // Filter out any null references
+    // Batch fetch servers
+    const serverIds = memberships.map(m => m.serverId);
+    const servers = serverIds.length > 0 ? await Server.find({ id: { in: serverIds } }) : [];
+    const serverMap = new Map(servers.map(s => [s.id, s]));
+
+    const result = memberships
+      .filter(m => serverMap.has(m.serverId))
       .map(m => {
-        const server = m.serverId as any;
+        const server = serverMap.get(m.serverId) as any;
         return {
-          id: server._id,
+          id: server.id,
           name: server.name,
           icon: server.icon,
           banner: server.banner ?? null,
@@ -328,11 +324,11 @@ const userRoutes = new Elysia({ prefix: '/users' })
           isVerified: server.isVerified,
           isPartnered: Boolean(server.isPartnered),
           vanityUrlCode: server.vanityUrlCode,
-          ownerId: server.ownerId?.toString() ?? null,
-          isOwner: server.ownerId?.toString() === user._id.toString(),
-          systemChannelId: server.systemChannelId?.toString() ?? null,
-          rulesChannelId: server.rulesChannelId?.toString() ?? null,
-          afkChannelId: server.afkChannelId?.toString() ?? null,
+          ownerId: server.ownerId ?? null,
+          isOwner: server.ownerId === user.id,
+          systemChannelId: server.systemChannelId ?? null,
+          rulesChannelId: server.rulesChannelId ?? null,
+          afkChannelId: server.afkChannelId ?? null,
           afkTimeout: server.afkTimeout ?? 300,
           isAgeGated: server.isAgeGated ?? false,
           joinedAt: m.joinedAt,
@@ -341,7 +337,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
         };
       });
 
-    return servers;
+    return result;
   })
   .get('/@me/mentions', async ({ headers, cookie, set, query }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -351,10 +347,10 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     try {
-      const { ServerMember, Message, Channel } = await import('@/lib/models');
+      const { ServerMember, Message, Channel, User } = await import('@/lib/models');
 
       // Get all servers the user is a member of, plus their role IDs per server
-      const memberships = await ServerMember.find({ userId: user._id }).select('serverId roles').lean();
+      const memberships = await ServerMember.find({ userId: user.id });
       const serverIds = memberships.map(m => m.serverId);
 
       if (serverIds.length === 0) {
@@ -364,19 +360,19 @@ const userRoutes = new Elysia({ prefix: '/users' })
       // Map serverId -> user's role IDs (for role mention matching)
       const serverToRoles = new Map<string, string[]>();
       for (const m of memberships) {
-        serverToRoles.set(m.serverId.toString(), (m.roles || []).map((r: { toString(): string }) => r.toString()));
+        serverToRoles.set(m.serverId, (m.roles || []).map((r: string) => r));
       }
 
       // Get all channels in those servers
-      const channels = await Channel.find({ serverId: { $in: serverIds } }).select('_id serverId name').lean();
-      const channelIds = channels.map(c => c._id);
+      const channels = await Channel.find({ serverId: { in: serverIds } });
+      const channelIds = channels.map(c => c.id);
 
       // Map channelId -> { serverId, name }
       const channelToServer = new Map<string, string>();
       const channelToName = new Map<string, string>();
       for (const c of channels) {
-        channelToServer.set(c._id.toString(), c.serverId.toString());
-        channelToName.set(c._id.toString(), c.name);
+        channelToServer.set(c.id, c.serverId ?? '');
+        channelToName.set(c.id, c.name);
       }
 
       // Build mention query: direct user mentions, @everyone, or role mentions
@@ -388,53 +384,58 @@ const userRoutes = new Elysia({ prefix: '/users' })
         for (const rid of roleIds) allUserRoleIds.add(rid);
       }
 
-      const orConditions: Record<string, unknown>[] = [
-        { mentionedUserIds: user._id },
-        { mentionEveryone: true },
-      ];
-      if (allUserRoleIds.size > 0) {
-        orConditions.push({ mentionedRoleIds: { $in: Array.from(allUserRoleIds) } });
-      }
-
       // Optional server filter
       const serverFilter = (query as { serverId?: string })?.serverId;
       let filterChannelIds = channelIds;
       if (serverFilter) {
-        filterChannelIds = channels.filter(c => c.serverId.toString() === serverFilter).map(c => c._id);
+        filterChannelIds = channels.filter(c => c.serverId === serverFilter).map(c => c.id);
       }
 
+      // Fetch recent mentioned messages - use DB-level date filter and limit
       const mentionedMessages = await Message.find({
-        channelId: { $in: filterChannelIds },
+        channelId: { in: filterChannelIds },
         isDeleted: false,
-        createdAt: { $gte: sevenDaysAgo },
-        $or: orConditions,
-      })
-        .select('content channelId createdAt authorId')
-        .sort({ createdAt: -1 })
-        .limit(50)
-        .populate('authorId', 'username displayName avatar')
-        .lean();
+        createdAtAfter: sevenDaysAgo,
+        _limit: 200,
+      });
+
+      // Filter by mention conditions in JS (can't do OR easily in Drizzle)
+      const filteredMessages = mentionedMessages
+        .filter(msg => {
+          const mentionedUsers = (msg as any).mentionedUserIds || [];
+          const mentionEveryone = (msg as any).mentionEveryone || false;
+          const mentionedRoles = (msg as any).mentionedRoleIds || [];
+          if (mentionedUsers.includes(user.id)) return true;
+          if (mentionEveryone) return true;
+          if (allUserRoleIds.size > 0 && mentionedRoles.some((r: string) => allUserRoleIds.has(r))) return true;
+          return false;
+        })
+        .slice(0, 50);
+
+      // Batch fetch authors
+      const authorIds = [...new Set(filteredMessages.map(m => m.authorId))];
+      const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+      const authorMap = new Map(authors.map(a => [a.id, a]));
 
       // Map channel -> serverId for filtering
       const serversWithMentions = new Set<string>();
-      const mentions = await Promise.all(mentionedMessages.map(async (msg) => {
-        const sid = channelToServer.get(msg.channelId.toString()) || '';
+      const mentions = await Promise.all(filteredMessages.map(async (msg) => {
+        const sid = channelToServer.get(msg.channelId) || '';
         if (sid) serversWithMentions.add(sid);
-        const author = msg.authorId as unknown as { _id?: string; username?: string; displayName?: string; avatar?: string } | null;
-        const isPopulatedAuthor = author && typeof author === 'object' && 'username' in author;
+        const author = authorMap.get(msg.authorId);
         const decryptedContent = await decryptFromStorage(msg.content || '');
         return {
-          id: (msg as { _id: { toString(): string } })._id.toString(),
+          id: msg.id,
           content: decryptedContent,
-          channelId: msg.channelId.toString(),
-          channelName: channelToName.get(msg.channelId.toString()) || '',
+          channelId: msg.channelId,
+          channelName: channelToName.get(msg.channelId) || '',
           serverId: sid,
           createdAt: msg.createdAt instanceof Date ? msg.createdAt.toISOString() : String(msg.createdAt),
-          author: isPopulatedAuthor ? {
-            id: author!._id?.toString() || '',
-            username: author!.username || '',
-            displayName: author!.displayName || author!.username || '',
-            avatar: author!.avatar,
+          author: author ? {
+            id: author.id,
+            username: author.username || '',
+            displayName: author.displayName || author.username || '',
+            avatar: author.avatar,
           } : null,
         };
       }));
@@ -459,7 +460,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       const { ServerMember, ServerEmoji, Server } = await import('@/lib/models');
 
       // Get all servers the user is a member of
-      const memberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
+      const memberships = await ServerMember.find({ userId: user.id });
       const serverIds = memberships.map(m => m.serverId);
 
       if (serverIds.length === 0) {
@@ -468,22 +469,22 @@ const userRoutes = new Elysia({ prefix: '/users' })
 
       // Get all emojis from all servers the user is in
       const emojis = await ServerEmoji.find({
-        serverId: { $in: serverIds },
+        serverId: { in: serverIds },
         available: true,
-      }).lean();
+      });
 
       // Get server names for grouping
-      const servers = await Server.find({ _id: { $in: serverIds } }).select('name').lean();
-      const serverNameMap = new Map(servers.map(s => [s._id.toString(), s.name]));
+      const servers = await Server.find({ id: { in: serverIds } });
+      const serverNameMap = new Map(servers.map(s => [s.id, s.name]));
 
       return {
         emojis: emojis.map(e => ({
-          id: e._id.toString(),
+          id: e.id,
           name: e.name,
           url: e.imageUrl,
           animated: e.animated,
-          serverId: e.serverId.toString(),
-          serverName: serverNameMap.get(e.serverId.toString()) || 'Unknown',
+          serverId: e.serverId,
+          serverName: serverNameMap.get(e.serverId) || 'Unknown',
         })),
       };
     } catch (error) {
@@ -502,7 +503,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       const { ServerMember, ServerSticker, Server } = await import('@/lib/models');
 
       // Get all servers the user is a member of
-      const memberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
+      const memberships = await ServerMember.find({ userId: user.id });
       const serverIds = memberships.map(m => m.serverId);
 
       if (serverIds.length === 0) {
@@ -511,23 +512,25 @@ const userRoutes = new Elysia({ prefix: '/users' })
 
       // Get all stickers from all servers the user is in
       const stickers = await ServerSticker.find({
-        serverId: { $in: serverIds },
+        serverId: { in: serverIds },
         available: true,
-      }).sort({ createdAt: -1 }).lean();
+      });
+      // Sort by createdAt desc
+      stickers.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
 
       // Get server names for grouping
-      const servers = await Server.find({ _id: { $in: serverIds } }).select('name').lean();
-      const serverNameMap = new Map(servers.map(s => [s._id.toString(), s.name]));
+      const servers = await Server.find({ id: { in: serverIds } });
+      const serverNameMap = new Map(servers.map(s => [s.id, s.name]));
 
       return {
         stickers: stickers.map(s => ({
-          id: s._id.toString(),
+          id: s.id,
           name: s.name,
           description: s.description,
           imageUrl: s.imageUrl,
           tags: s.tags || [],
-          serverId: s.serverId.toString(),
-          serverName: serverNameMap.get(s.serverId.toString()) || 'Unknown',
+          serverId: s.serverId,
+          serverName: serverNameMap.get(s.serverId) || 'Unknown',
         })),
       };
     } catch (error) {
@@ -543,8 +546,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     try {
-      // Fetch the actual Mongoose document for the user (authUser might be from external API)
-      const userId = authUser._id || (authUser as unknown as { id: string }).id;
+      // Fetch the actual user document
+      const userId = (authUser as any).id || (authUser as any)._id;
       const user = await User.findById(userId);
       
       if (!user) {
@@ -555,19 +558,20 @@ const userRoutes = new Elysia({ prefix: '/users' })
       const { displayName, bio, pronouns, customStatus, status, settings, customization, gifFavorites, timezone, showTimezone } = body as Record<string, any>;
       const prevStatus = user.status;
 
-      if (displayName !== undefined) user.displayName = displayName;
-      if (bio !== undefined) user.bio = bio;
-      if (pronouns !== undefined) user.pronouns = pronouns;
-      if (timezone !== undefined) user.timezone = timezone || null;
-      if (showTimezone !== undefined) user.showTimezone = Boolean(showTimezone);
-      if (customStatus !== undefined) user.customStatus = customStatus;
+      const updateFields: Record<string, any> = {};
+      if (displayName !== undefined) updateFields.displayName = displayName;
+      if (bio !== undefined) updateFields.bio = bio;
+      if (pronouns !== undefined) updateFields.pronouns = pronouns;
+      if (timezone !== undefined) updateFields.timezone = timezone || null;
+      if (showTimezone !== undefined) updateFields.showTimezone = Boolean(showTimezone);
+      if (customStatus !== undefined) updateFields.customStatus = customStatus;
       if (status !== undefined) {
-        user.status = status;
+        updateFields.status = status;
         if (status === 'offline' || status === 'invisible') {
-          user.presenceLastDisconnectAt = new Date();
+          updateFields.presenceLastDisconnectAt = new Date();
         } else {
-          user.presenceLastDisconnectAt = null;
-          user.presenceLastHeartbeatAt = new Date();
+          updateFields.presenceLastDisconnectAt = null;
+          updateFields.presenceLastHeartbeatAt = new Date();
         }
       }
       if (settings !== undefined) {
@@ -577,13 +581,13 @@ const userRoutes = new Elysia({ prefix: '/users' })
           set.status = 400;
           return { error: normalizedPatch.error };
         }
-        user.settings = normalizeUserSettingsShape(mergeDeep(currentSettings, normalizedPatch.patch || {})) as any;
+        updateFields.settings = normalizeUserSettingsShape(mergeDeep(currentSettings, normalizedPatch.patch || {})) as any;
       }
       if (customization !== undefined && typeof customization === 'object') {
-        user.customization = mergeDeep((user.customization || {}) as Record<string, any>, customization) as any;
+        updateFields.customization = mergeDeep((user.customization || {}) as Record<string, any>, customization) as any;
       }
       if (gifFavorites !== undefined && Array.isArray(gifFavorites)) {
-        user.gifFavorites = gifFavorites.slice(0, 200).map((f: any) => ({
+        updateFields.gifFavorites = gifFavorites.slice(0, 200).map((f: any) => ({
           url: String(f?.url || ''),
           title: String(f?.title || ''),
           source: String(f?.source || ''),
@@ -591,53 +595,48 @@ const userRoutes = new Elysia({ prefix: '/users' })
         })).filter((f: any) => f.url);
       }
 
-      await user.save();
+      const updatedUser = await User.updateById(userId, updateFields);
       
       // Invalidate user cache so fresh data is fetched
-      await invalidateUserCache(userId.toString());
+      await invalidateUserCache(userId);
 
+      const finalUser = updatedUser || user;
       const changedProfile = customStatus !== undefined || displayName !== undefined || customization !== undefined || (status !== undefined && status !== prevStatus);
       if (changedProfile) {
-        const friendIds = (user.friends || []).map((f: Types.ObjectId | string) =>
-          f instanceof Types.ObjectId ? f.toString() : f
-        );
+        const friendIds = (finalUser.friends || []).map((f: string) => f);
         emitFriendEvent(friendIds, {
           type: 'presence:update',
-          userId: user._id.toString(),
-          status: getPublicPresenceStatus(user),
-          customStatus: user.customStatus || null,
-          displayName: user.displayName || user.username,
-          customization: user.customization || null,
+          userId: finalUser.id,
+          status: getPublicPresenceStatus(finalUser),
+          customStatus: finalUser.customStatus || null,
+          displayName: finalUser.displayName || finalUser.username,
+          customization: finalUser.customization || null,
           timestamp: Date.now(),
         });
       }
 
-      // Return the same hand-built shape as GET /@me so the client's
-      // updateUser() receives every profile field. Returning the raw Mongoose
-      // document serialized inconsistently and dropped fields (bio/pronouns/
-      // timezone), which made the settings form appear to reset after saving.
       const freshUser = {
-        id: user._id,
-        username: user.username,
-        displayName: user.displayName,
-        email: user.email,
-        avatar: user.avatar,
-        banner: user.banner,
-        bio: user.bio,
-        pronouns: user.pronouns,
-        timezone: user.timezone,
-        showTimezone: user.showTimezone,
-        status: user.status,
-        customStatus: user.customStatus,
-        isPremium: user.isPremium,
-        premiumSince: user.premiumSince,
-        premiumTier: user.premiumTier,
-        badges: user.badges || [],
-        isVerified: user.isVerified,
-        settings: user.settings,
-        customization: user.customization || {},
-        gifFavorites: user.gifFavorites || [],
-        createdAt: user.createdAt,
+        id: finalUser.id,
+        username: finalUser.username,
+        displayName: finalUser.displayName,
+        email: finalUser.email,
+        avatar: finalUser.avatar,
+        banner: finalUser.banner,
+        bio: finalUser.bio,
+        pronouns: finalUser.pronouns,
+        timezone: finalUser.timezone,
+        showTimezone: finalUser.showTimezone,
+        status: finalUser.status,
+        customStatus: finalUser.customStatus,
+        isPremium: finalUser.isPremium,
+        premiumSince: finalUser.premiumSince,
+        premiumTier: finalUser.premiumTier,
+        badges: finalUser.badges || [],
+        isVerified: finalUser.isVerified,
+        settings: finalUser.settings,
+        customization: finalUser.customization || {},
+        gifFavorites: finalUser.gifFavorites || [],
+        createdAt: finalUser.createdAt,
       };
       return { success: true, user: freshUser };
     } catch (error) {
@@ -677,27 +676,27 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const user = await User.findById(authUser._id || (authUser as unknown as { id: string }).id);
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
     }
 
     const previousStatus = getPublicPresenceStatus(user);
-    user.presenceLastHeartbeatAt = new Date();
+    const updateFields: Record<string, any> = {
+      presenceLastHeartbeatAt: new Date(),
+    };
     if (user.status !== 'offline' && user.status !== 'invisible') {
-      user.presenceLastDisconnectAt = null;
+      updateFields.presenceLastDisconnectAt = null;
     }
-    await user.save();
+    const updatedUser = await User.updateById(user.id, updateFields) || user;
 
-    const nextStatus = getPublicPresenceStatus(user);
+    const nextStatus = getPublicPresenceStatus(updatedUser);
     if (previousStatus !== nextStatus) {
-      const friendIds = (user.friends || []).map((friend: Types.ObjectId | string) =>
-        friend instanceof Types.ObjectId ? friend.toString() : friend
-      );
+      const friendIds = (updatedUser.friends || []).map((friend: string) => friend);
       emitFriendEvent(friendIds, {
         type: 'presence:update',
-        userId: user._id.toString(),
+        userId: updatedUser.id,
         status: nextStatus,
         timestamp: Date.now(),
       });
@@ -712,7 +711,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const user = await User.findById(authUser._id || (authUser as unknown as { id: string }).id);
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -729,7 +728,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const user = await User.findById(authUser._id || (authUser as unknown as { id: string }).id);
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -751,13 +750,13 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: normalizedPatch.error };
     }
 
-    user.settings = normalizeUserSettingsShape(mergeDeep(currentSettings, normalizedPatch.patch || {})) as any;
-    await user.save();
-    await invalidateUserCache(user._id.toString());
+    const newSettings = normalizeUserSettingsShape(mergeDeep(currentSettings, normalizedPatch.patch || {})) as any;
+    const updatedUser = await User.updateById(user.id, { settings: newSettings });
+    await invalidateUserCache(user.id);
 
     return {
       success: true,
-      settings: user.settings,
+      settings: newSettings,
     };
   }, {
     body: t.Object({}, { additionalProperties: true }),
@@ -769,7 +768,9 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const apps = await AuthorizedApp.find({ userId: authUser._id }).sort({ updatedAt: -1 });
+    const apps = await AuthorizedApp.find({ userId: (authUser as any).id || (authUser as any)._id });
+    // Sort by updatedAt desc
+    apps.sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
     return { apps };
   })
   .post('/me/authorized-apps', async ({ headers, cookie, body, set }) => {
@@ -781,7 +782,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
 
     const payload = body as Record<string, any>;
     const app = await AuthorizedApp.create({
-      userId: authUser._id,
+      userId: (authUser as any).id || (authUser as any)._id,
       name: payload.name,
       description: payload.description || null,
       icon: payload.icon || null,
@@ -806,7 +807,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    await AuthorizedApp.deleteOne({ _id: params.appId, userId: authUser._id });
+    await AuthorizedApp.deleteById(params.appId);
     return { success: true };
   }, {
     params: t.Object({
@@ -821,10 +822,11 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     const userAgent = request.headers.get('user-agent') || 'Unknown Device';
-    const existingCurrent = await UserDeviceSession.findOne({ userId: authUser._id, current: true });
+    const userId = (authUser as any).id || (authUser as any)._id;
+    const existingCurrent = await UserDeviceSession.findOne({ userId, current: true });
     if (!existingCurrent) {
       await UserDeviceSession.create({
-        userId: authUser._id,
+        userId,
         deviceName: userAgent.slice(0, 120),
         platform: userAgent.includes('Mobile') ? 'Mobile' : 'Desktop',
         browser: userAgent.slice(0, 80),
@@ -833,11 +835,11 @@ const userRoutes = new Elysia({ prefix: '/users' })
         lastActiveAt: new Date(),
       });
     } else {
-      existingCurrent.lastActiveAt = new Date();
-      await existingCurrent.save();
+      await UserDeviceSession.updateById(existingCurrent.id, { lastActiveAt: new Date() });
     }
 
-    const devices = await UserDeviceSession.find({ userId: authUser._id }).sort({ lastActiveAt: -1 });
+    const devices = await UserDeviceSession.find({ userId });
+    devices.sort((a, b) => new Date(b.lastActiveAt ?? 0).getTime() - new Date(a.lastActiveAt ?? 0).getTime());
     return { devices };
   })
   .delete('/me/devices/:deviceId', async ({ headers, cookie, params, set }) => {
@@ -847,7 +849,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    await UserDeviceSession.deleteOne({ _id: params.deviceId, userId: authUser._id, current: false });
+    await UserDeviceSession.deleteById(params.deviceId);
     return { success: true };
   }, {
     params: t.Object({
@@ -861,7 +863,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const connections = await UserConnection.find({ userId: authUser._id }).sort({ createdAt: -1 });
+    const connections = await UserConnection.find({ userId: (authUser as any).id || (authUser as any)._id });
+    connections.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
     return { connections };
   })
   .post('/me/connections', async ({ headers, cookie, body, set }) => {
@@ -872,18 +875,31 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     const payload = body as Record<string, any>;
-    const connection = await UserConnection.findOneAndUpdate(
-      { userId: authUser._id, provider: payload.provider, accountId: payload.accountId },
-      {
-        $set: {
-          username: payload.username || null,
-          displayName: payload.displayName || null,
-          avatar: payload.avatar || null,
-          metadata: payload.metadata || null,
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    const userId = (authUser as any).id || (authUser as any)._id;
+    // Check if connection already exists
+    let connection = await UserConnection.findOne({
+      userId,
+      provider: payload.provider,
+      accountId: payload.accountId,
+    });
+    if (connection) {
+      connection = await UserConnection.updateById(connection.id, {
+        username: payload.username || null,
+        displayName: payload.displayName || null,
+        avatar: payload.avatar || null,
+        metadata: payload.metadata || null,
+      }) || connection;
+    } else {
+      connection = await UserConnection.create({
+        userId,
+        provider: payload.provider,
+        accountId: payload.accountId,
+        username: payload.username || null,
+        displayName: payload.displayName || null,
+        avatar: payload.avatar || null,
+        metadata: payload.metadata || null,
+      });
+    }
 
     return { connection };
   }, {
@@ -918,7 +934,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    await UserConnection.deleteOne({ _id: params.connectionId, userId: authUser._id });
+    await UserConnection.deleteById(params.connectionId);
     return { success: true };
   }, {
     params: t.Object({
@@ -938,11 +954,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       update.visible = Boolean(payload.visible);
     }
 
-    const connection = await UserConnection.findOneAndUpdate(
-      { _id: params.connectionId, userId: authUser._id },
-      { $set: update },
-      { new: true }
-    );
+    const connection = await UserConnection.updateById(params.connectionId, update);
 
     if (!connection) {
       set.status = 404;
@@ -959,7 +971,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }),
   })
   .get('/:userId', async ({ params, headers, cookie, set }) => {
-    const targetUser = await User.findById(params.userId).select('-blockedUsers -pendingFriendRequests');
+    const targetUser = await User.findById(params.userId);
 
     if (!targetUser) {
       set.status = 404;
@@ -973,23 +985,21 @@ const userRoutes = new Elysia({ prefix: '/users' })
     try {
       const { user: requester } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
       if (requester) {
-        isFriend = (requester.friends as Types.ObjectId[]).some((f) => compareIds(f, targetUser._id));
-        const outgoing = (requester.pendingFriendRequests?.outgoing as Types.ObjectId[]) || [];
-        friendRequestSent = outgoing.some((f) => compareIds(f, targetUser._id));
-        isSelf = compareIds(requester._id, targetUser._id);
+        isFriend = (requester.friends || []).some((f: string) => compareIds(f, targetUser.id));
+        const outgoing = ((requester as any).pendingFriendRequests?.outgoing || []) as string[];
+        friendRequestSent = outgoing.some((f: string) => compareIds(f, targetUser.id));
+        isSelf = compareIds(requester.id, targetUser.id);
       }
     } catch {
       // Not authenticated — leave isFriend false
     }
 
     // Public connections — strip sensitive metadata (e.g. session keys)
-    const connQuery: any = { userId: targetUser._id };
+    let connQuery: Record<string, any> = { userId: targetUser.id };
     if (!isSelf) {
-      connQuery.visible = { $ne: false };
+      connQuery.visible = true;
     }
-    const rawConnections = await UserConnection.find(connQuery)
-      .select('provider accountId username displayName avatar visible')
-      .lean();
+    const rawConnections = await UserConnection.find(connQuery);
     const connections = rawConnections.map((c) => ({
       provider: c.provider,
       accountId: c.accountId,
@@ -1000,7 +1010,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }));
 
     return {
-      id: targetUser._id,
+      id: targetUser.id,
       username: targetUser.username,
       displayName: targetUser.displayName,
       avatar: targetUser.avatar,
@@ -1032,22 +1042,20 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const targetUser = await User.findById(params.userId).select('friends');
+    const targetUser = await User.findById(params.userId);
     if (!targetUser) {
       set.status = 404;
       return { error: 'User not found' };
     }
 
-    const mutualFriendIds = (requester.friends || []).filter((f1: any) =>
-      (targetUser.friends || []).some((f2: any) => compareIds(f1, f2))
+    const mutualFriendIds = (requester.friends || []).filter((f1: string) =>
+      (targetUser.friends || []).some((f2: string) => compareIds(f1, f2))
     );
 
-    const friends = await User.find({ _id: { $in: mutualFriendIds } })
-      .select('username displayName avatar status customStatus customization presenceLastHeartbeatAt isSystem')
-      .lean();
+    const friends = await User.find({ id: { in: mutualFriendIds } });
 
     return friends.map((f) => ({
-      id: f._id,
+      id: f.id,
       username: f.username,
       displayName: f.displayName,
       avatar: f.avatar,
@@ -1074,26 +1082,22 @@ const userRoutes = new Elysia({ prefix: '/users' })
     }
 
     const { ServerMember, Server } = await import('@/lib/models');
-    const requesterMemberships = await ServerMember.find({ userId: requester._id }).select('serverId').lean();
-    const targetMemberships = await ServerMember.find({ userId: targetUser._id }).select('serverId').lean();
+    const requesterMemberships = await ServerMember.find({ userId: requester.id });
+    const targetMemberships = await ServerMember.find({ userId: targetUser.id });
 
-    const requesterServerIds = requesterMemberships.map((m) => m.serverId.toString());
+    const requesterServerIds = requesterMemberships.map((m) => m.serverId);
     const mutualServerIds = targetMemberships
-      .map((m) => m.serverId.toString())
+      .map((m) => m.serverId)
       .filter((id) => requesterServerIds.includes(id));
 
-    const servers = await Server.find({ _id: { $in: mutualServerIds } })
-      .select('name icon description memberCount isOfficial isVerified isPartnered')
-      .lean();
+    const servers = await Server.find({ id: { in: mutualServerIds } });
 
     return servers.map((s) => ({
-      id: s._id,
+      id: s.id,
       name: s.name,
       icon: s.icon,
       description: s.description,
       memberCount: s.memberCount,
-      isOfficial: s.isOfficial,
-      isVerified: s.isVerified,
       isPartnered: s.isPartnered,
     }));
   }, {
@@ -1104,25 +1108,29 @@ const userRoutes = new Elysia({ prefix: '/users' })
   // Live activity for a user: "now watching" (serika.moe), Last.fm scrobble, and game/rich presence.
   // Respects the target user's "show activity" privacy setting.
   .get('/:userId/activity', async ({ params, set }) => {
-    const targetUser = await User.findById(params.userId).select('settings');
+    const targetUser = await User.findById(params.userId);
     if (!targetUser) {
       set.status = 404;
       return { error: 'User not found' };
     }
 
-    const showActivity = targetUser.settings?.privacy?.showActivity ?? true;
+    const showActivity = (targetUser.settings as any)?.privacy?.showActivity ?? true;
     if (!showActivity) {
       return { activity: null, music: null, game: null, activities: [] };
     }
 
-    const userId = params.userId.toString();
+    const userId = params.userId;
 
     // Fetch all three in parallel
+    const now = new Date();
     const [watchActivity, richPresenceDocs, lastfmConnection] = await Promise.all([
       getMoeActivity(userId),
-      RichPresence.find({ userId: targetUser._id, expiresAt: { $gt: new Date() } }).lean(),
-      UserConnection.findOne({ userId: targetUser._id, provider: 'lastfm' }).lean(),
+      RichPresence.find({ userId: targetUser.id }),
+      UserConnection.findOne({ userId: targetUser.id, provider: 'lastfm' }),
     ]);
+
+    // Filter non-expired rich presence
+    const activeRichPresence = richPresenceDocs.filter((doc: any) => doc.expiresAt && new Date(doc.expiresAt) > now);
 
     // Fetch Last.fm now playing if connected
     let music: import('@/lib/services/lastfmService').LastFmTrack | null = null;
@@ -1130,7 +1138,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       music = await getLastFmNowPlaying(lastfmConnection.accountId);
     }
 
-    const activities = (richPresenceDocs as any[]).map((doc) => ({
+    const activities = (activeRichPresence as any[]).map((doc) => ({
       type: doc.type,
       name: doc.name,
       details: doc.details ?? null,
@@ -1169,65 +1177,53 @@ const userRoutes = new Elysia({ prefix: '/users' })
 
     // Desktop app sends a heartbeat every 15s; TTL = 60s gives 3 missed beats before expiry
     const expiresAt = new Date(Date.now() + 60_000);
+    const authUserId = (authUser as any).id || (authUser as any)._id;
     const activeKeys = new Set<string>();
 
-    const ops = incoming.map((item: any) => {
+    // Upsert each activity individually
+    for (const item of incoming) {
       const type = item.type || 'other';
       const name = item.name;
       activeKeys.add(`${type}:${name}`);
-      return {
-        updateOne: {
-          filter: { userId: authUser._id, type, name },
-          update: {
-            $set: {
-              type,
-              name,
-              details: item.details ?? null,
-              state: item.state ?? null,
-              largeImageUrl: item.largeImageUrl ?? null,
-              largeImageText: item.largeImageText ?? null,
-              smallImageUrl: item.smallImageUrl ?? null,
-              smallImageText: item.smallImageText ?? null,
-              startedAt: item.startedAt ? new Date(item.startedAt) : null,
-              endsAt: item.endsAt ? new Date(item.endsAt) : null,
-              expiresAt,
-            },
-          },
-          upsert: true,
-        },
-      };
-    });
-
-    // One round-trip for all activities. `ordered: false` lets the rest apply
-    // even if one op conflicts.
-    if (ops.length) {
-      try {
-        await RichPresence.bulkWrite(ops, { ordered: false });
-      } catch (err: any) {
-        // A stale legacy unique index on `userId` alone (from when only one
-        // presence per user was allowed) rejects a user's 2nd+ activity with
-        // E11000. Drop it once and retry; multi-activity is intentional now.
-        if (err?.code === 11000) {
-          try {
-            await RichPresence.collection.dropIndex('userId_1');
-          } catch { /* already gone or different name */ }
-          try {
-            await RichPresence.bulkWrite(ops, { ordered: false });
-          } catch { /* best-effort */ }
-        } else {
-          throw err;
-        }
+      
+      const existing = await RichPresence.findOne({ userId: authUserId, type, name });
+      if (existing) {
+        await RichPresence.updateById(existing.id, {
+          details: item.details ?? null,
+          state: item.state ?? null,
+          largeImageUrl: item.largeImageUrl ?? null,
+          largeImageText: item.largeImageText ?? null,
+          smallImageUrl: item.smallImageUrl ?? null,
+          smallImageText: item.smallImageText ?? null,
+          startedAt: item.startedAt ? new Date(item.startedAt) : null,
+          endsAt: item.endsAt ? new Date(item.endsAt) : null,
+          expiresAt,
+        });
+      } else {
+        await RichPresence.create({
+          userId: authUserId,
+          type,
+          name,
+          details: item.details ?? null,
+          state: item.state ?? null,
+          largeImageUrl: item.largeImageUrl ?? null,
+          largeImageText: item.largeImageText ?? null,
+          smallImageUrl: item.smallImageUrl ?? null,
+          smallImageText: item.smallImageText ?? null,
+          startedAt: item.startedAt ? new Date(item.startedAt) : null,
+          endsAt: item.endsAt ? new Date(item.endsAt) : null,
+          expiresAt,
+        });
       }
     }
 
     // Anything not reported in this batch is no longer active.
-    if (incoming.length) {
-      await RichPresence.deleteMany({
-        userId: authUser._id,
-        $nor: incoming.map((item: any) => ({ type: item.type || 'other', name: item.name })),
-      });
-    } else {
-      await RichPresence.deleteMany({ userId: authUser._id });
+    const allPresence = await RichPresence.find({ userId: authUserId });
+    const toDelete = allPresence.filter((p: any) => {
+      return !incoming.some((item: any) => (item.type || 'other') === p.type && item.name === p.name);
+    });
+    for (const p of toDelete) {
+      await RichPresence.deleteById(p.id);
     }
 
     return { ok: true };
@@ -1268,7 +1264,11 @@ const userRoutes = new Elysia({ prefix: '/users' })
       set.status = 401;
       return { error: authError || 'Unauthorized' };
     }
-    await RichPresence.deleteMany({ userId: authUser._id });
+    const authUserId = (authUser as any).id || (authUser as any)._id;
+    const allPresence = await RichPresence.find({ userId: authUserId });
+    for (const p of allPresence) {
+      await RichPresence.deleteById(p.id);
+    }
     return { ok: true };
   });
 
@@ -1282,54 +1282,50 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const populatedUser = await User.findById(user._id)
-      .populate('friends', 'username displayName avatar status customStatus isPremium badges createdAt presenceLastHeartbeatAt')
-      .populate('pendingFriendRequests.incoming', 'username displayName avatar status customStatus isPremium badges createdAt presenceLastHeartbeatAt')
-      .populate('pendingFriendRequests.outgoing', 'username displayName avatar status customStatus isPremium badges createdAt presenceLastHeartbeatAt')
-      .populate('blockedUsers', 'username displayName avatar');
+    // Batch fetch friends, pending requests, and blocked users
+    const friendIds = (user.friends || []) as string[];
+    const incomingIds = ((user as any).pendingFriendRequests?.incoming || []) as string[];
+    const outgoingIds = ((user as any).pendingFriendRequests?.outgoing || []) as string[];
+    const blockedIds = (user.blockedUsers || []) as string[];
     
-    return {
-      friends: (populatedUser?.friends || []).map((friend: any) => ({
-        id: friend._id,
-        username: friend.username,
-        displayName: friend.displayName,
-        avatar: friend.avatar,
-        status: getPublicPresenceStatus(friend),
-        customStatus: friend.customStatus,
-        isPremium: friend.isPremium,
-        badges: friend.badges || [],
-        createdAt: friend.createdAt,
-      })),
-      pending: {
-        incoming: (populatedUser?.pendingFriendRequests?.incoming || []).map((u: any) => ({
-          id: u._id,
-          username: u.username,
-          displayName: u.displayName,
-          avatar: u.avatar,
-          status: getPublicPresenceStatus(u),
-          customStatus: u.customStatus,
-          isPremium: u.isPremium,
-          badges: u.badges || [],
-          createdAt: u.createdAt,
-        })),
-        outgoing: (populatedUser?.pendingFriendRequests?.outgoing || []).map((u: any) => ({
-          id: u._id,
-          username: u.username,
-          displayName: u.displayName,
-          avatar: u.avatar,
-          status: getPublicPresenceStatus(u),
-          customStatus: u.customStatus,
-          isPremium: u.isPremium,
-          badges: u.badges || [],
-          createdAt: u.createdAt,
-        })),
-      },
-      blocked: (populatedUser?.blockedUsers || []).map((u: any) => ({
-        id: u._id,
+    const allIds = [...new Set([...friendIds, ...incomingIds, ...outgoingIds, ...blockedIds])];
+    const allUsers = allIds.length > 0 ? await User.find({ id: { in: allIds } }) : [];
+    const userMap = new Map(allUsers.map(u => [u.id, u]));
+    
+    const mapUser = (id: string) => {
+      const u = userMap.get(id);
+      if (!u) return null;
+      return {
+        id: u.id,
         username: u.username,
         displayName: u.displayName,
         avatar: u.avatar,
-      })),
+        status: getPublicPresenceStatus(u),
+        customStatus: u.customStatus,
+        isPremium: u.isPremium,
+        badges: u.badges || [],
+        createdAt: u.createdAt,
+      };
+    };
+    
+    const mapBlockedUser = (id: string) => {
+      const u = userMap.get(id);
+      if (!u) return null;
+      return {
+        id: u.id,
+        username: u.username,
+        displayName: u.displayName,
+        avatar: u.avatar,
+      };
+    };
+    
+    return {
+      friends: friendIds.map(mapUser).filter(Boolean),
+      pending: {
+        incoming: incomingIds.map(mapUser).filter(Boolean),
+        outgoing: outgoingIds.map(mapUser).filter(Boolean),
+      },
+      blocked: blockedIds.map(mapBlockedUser).filter(Boolean),
     };
   })
   .get('/stream', async ({ headers, cookie }) => {
@@ -1353,7 +1349,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
 
     let controllerRef: ReadableStreamDefaultController | null = null;
     let pingInterval: NodeJS.Timeout | null = null;
-    const userKey = user._id.toString();
+    const userKey = user.id;
 
     const stream = new ReadableStream({
       start(controller) {
@@ -1399,30 +1395,35 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
 
     // Rate limit friend requests
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('friendRequest', `${authUser._id}:${ip}`);
+    const authUserId = (authUser as any).id || (authUser as any)._id;
+    const rateLimit = await checkRateLimit('friendRequest', `${authUserId}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Too many friend requests', retryAfter: rateLimit.retryAfter };
     }
 
-    // Fetch actual Mongoose documents for both users
-    const user = await User.findById(authUser._id);
+    // Fetch actual user documents
+    const user = await User.findById(authUserId);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
     }
 
-    // Find user by username (case insensitive)
-    const targetUser = await User.findOne({ 
-      username: { $regex: new RegExp(`^${username}$`, 'i') } 
-    });
+    // Find user by username (case insensitive - Drizzle doesn't support regex, so try exact then lowercased)
+    let targetUser = await User.findOne({ username });
+    if (!targetUser) {
+      // Try case-insensitive by fetching all and filtering
+      const allUsers = await User.find({});
+      const found = allUsers.find(u => u.username.toLowerCase() === username.toLowerCase());
+      if (found) targetUser = found;
+    }
     
     if (!targetUser) {
       set.status = 404;
       return { error: `User "${username}" not found. Make sure you entered the correct username.` };
     }
 
-    if (compareIds(targetUser._id, user._id)) {
+    if (compareIds(targetUser.id, user.id)) {
       set.status = 400;
       return { error: 'You cannot send a friend request to yourself' };
     }
@@ -1434,56 +1435,64 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Check if already friends
-    if (user.friends.some((f: Types.ObjectId | string) => compareIds(f, targetUser._id))) {
+    if ((user.friends || []).some((f: string) => compareIds(f, targetUser.id))) {
       set.status = 400;
       return { error: `You're already friends with ${targetUser.displayName || targetUser.username}` };
     }
 
     // Check if blocked
-    if (user.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, targetUser._id))) {
+    if ((user.blockedUsers || []).some((b: string) => compareIds(b, targetUser.id))) {
       set.status = 400;
       return { error: 'You have blocked this user. Unblock them first to send a friend request.' };
     }
 
     // Check if target blocked the user
-    if (targetUser.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, user._id))) {
+    if ((targetUser.blockedUsers || []).some((b: string) => compareIds(b, user.id))) {
       set.status = 403;
       return { error: 'Unable to send friend request to this user' };
     }
 
     // Check privacy settings
-    if (targetUser.settings.privacy.friendRequests === 'none') {
+    if ((targetUser.settings as any)?.privacy?.friendRequests === 'none') {
       set.status = 403;
       return { error: `${targetUser.displayName || targetUser.username} is not accepting friend requests` };
     }
 
     // Check if request already pending
-    if (user.pendingFriendRequests.outgoing.some((p: Types.ObjectId | string) => compareIds(p, targetUser._id))) {
+    const outgoing = ((user as any).pendingFriendRequests?.outgoing || []) as string[];
+    if (outgoing.some((p: string) => compareIds(p, targetUser.id))) {
       set.status = 400;
       return { error: `You already sent a friend request to ${targetUser.displayName || targetUser.username}` };
     }
 
     // Check if they sent us a request - auto-accept
-    if (user.pendingFriendRequests.incoming.some((p: Types.ObjectId | string) => compareIds(p, targetUser._id))) {
+    const incoming = ((user as any).pendingFriendRequests?.incoming || []) as string[];
+    if (incoming.some((p: string) => compareIds(p, targetUser.id))) {
       // Accept the friend request
-      user.pendingFriendRequests.incoming = user.pendingFriendRequests.incoming.filter(
-        (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
-      );
-      targetUser.pendingFriendRequests.outgoing = targetUser.pendingFriendRequests.outgoing.filter(
-        (p: Types.ObjectId | string) => !compareIds(p, user._id)
-      );
+      const newIncoming = incoming.filter((p: string) => !compareIds(p, targetUser.id));
+      const targetOutgoing = ((targetUser as any).pendingFriendRequests?.outgoing || []) as string[];
+      const newTargetOutgoing = targetOutgoing.filter((p: string) => !compareIds(p, user.id));
       
-      user.friends.push(targetUser._id);
-      targetUser.friends.push(user._id);
-
-      await Promise.all([user.save(), targetUser.save()]);
-      emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+      const userFriends = [...(user.friends || []), targetUser.id];
+      const targetFriends = [...(targetUser.friends || []), user.id];
+      
+      await Promise.all([
+        User.updateById(user.id, {
+          friends: userFriends,
+          pendingFriendRequests: { incoming: newIncoming, outgoing },
+        }),
+        User.updateById(targetUser.id, {
+          friends: targetFriends,
+          pendingFriendRequests: { incoming: ((targetUser as any).pendingFriendRequests?.incoming || []), outgoing: newTargetOutgoing },
+        }),
+      ]);
+      emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
       return { 
         success: true, 
         message: `You are now friends with ${targetUser.displayName || targetUser.username}!`,
         user: {
-          id: targetUser._id,
+          id: targetUser.id,
           username: targetUser.username,
           displayName: targetUser.displayName,
           avatar: targetUser.avatar,
@@ -1493,11 +1502,18 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Send friend request
-    user.pendingFriendRequests.outgoing.push(targetUser._id);
-    targetUser.pendingFriendRequests.incoming.push(user._id);
+    const newOutgoing = [...outgoing, targetUser.id];
+    const targetIncoming = [...((targetUser as any).pendingFriendRequests?.incoming || []), user.id];
 
-    await Promise.all([user.save(), targetUser.save()]);
-    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+    await Promise.all([
+      User.updateById(user.id, {
+        pendingFriendRequests: { incoming, outgoing: newOutgoing },
+      }),
+      User.updateById(targetUser.id, {
+        pendingFriendRequests: { incoming: targetIncoming, outgoing: ((targetUser as any).pendingFriendRequests?.outgoing || []) },
+      }),
+    ]);
+    emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
     return { 
       success: true, 
@@ -1516,8 +1532,8 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch actual Mongoose document
-    const user = await User.findById(authUser._id);
+    // Fetch actual user document
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -1530,24 +1546,31 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Check if there's a pending request
-    if (!user.pendingFriendRequests.incoming.some((p: Types.ObjectId | string) => compareIds(p, targetUser._id))) {
+    const incoming = ((user as any).pendingFriendRequests?.incoming || []) as string[];
+    if (!incoming.some((p: string) => compareIds(p, targetUser.id))) {
       set.status = 400;
       return { error: 'No pending friend request from this user' };
     }
 
     // Accept the request
-    user.pendingFriendRequests.incoming = user.pendingFriendRequests.incoming.filter(
-      (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
-    );
-    targetUser.pendingFriendRequests.outgoing = targetUser.pendingFriendRequests.outgoing.filter(
-      (p: Types.ObjectId | string) => !compareIds(p, user._id)
-    );
+    const newIncoming = incoming.filter((p: string) => !compareIds(p, targetUser.id));
+    const targetOutgoing = ((targetUser as any).pendingFriendRequests?.outgoing || []) as string[];
+    const newTargetOutgoing = targetOutgoing.filter((p: string) => !compareIds(p, user.id));
     
-    user.friends.push(targetUser._id);
-    targetUser.friends.push(user._id);
+    const userFriends = [...(user.friends || []), targetUser.id];
+    const targetFriends = [...(targetUser.friends || []), user.id];
 
-    await Promise.all([user.save(), targetUser.save()]);
-    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+    await Promise.all([
+      User.updateById(user.id, {
+        friends: userFriends,
+        pendingFriendRequests: { incoming: newIncoming, outgoing: ((user as any).pendingFriendRequests?.outgoing || []) },
+      }),
+      User.updateById(targetUser.id, {
+        friends: targetFriends,
+        pendingFriendRequests: { incoming: ((targetUser as any).pendingFriendRequests?.incoming || []), outgoing: newTargetOutgoing },
+      }),
+    ]);
+    emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
     return { 
       success: true, 
@@ -1566,8 +1589,8 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch actual Mongoose document
-    const user = await User.findById(authUser._id);
+    // Fetch actual user document
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -1580,15 +1603,20 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Remove from outgoing
-    user.pendingFriendRequests.outgoing = user.pendingFriendRequests.outgoing.filter(
-      (p: Types.ObjectId) => !p.equals(targetUser._id)
-    );
-    targetUser.pendingFriendRequests.incoming = targetUser.pendingFriendRequests.incoming.filter(
-      (p: Types.ObjectId) => !p.equals(user._id)
-    );
+    const outgoing = ((user as any).pendingFriendRequests?.outgoing || []) as string[];
+    const newOutgoing = outgoing.filter((p: string) => !compareIds(p, targetUser.id));
+    const targetIncoming = ((targetUser as any).pendingFriendRequests?.incoming || []) as string[];
+    const newTargetIncoming = targetIncoming.filter((p: string) => !compareIds(p, user.id));
 
-    await Promise.all([user.save(), targetUser.save()]);
-    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+    await Promise.all([
+      User.updateById(user.id, {
+        pendingFriendRequests: { incoming: ((user as any).pendingFriendRequests?.incoming || []), outgoing: newOutgoing },
+      }),
+      User.updateById(targetUser.id, {
+        pendingFriendRequests: { incoming: newTargetIncoming, outgoing: ((targetUser as any).pendingFriendRequests?.outgoing || []) },
+      }),
+    ]);
+    emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'Friend request cancelled' };
   }, {
@@ -1604,8 +1632,8 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch actual Mongoose document
-    const user = await User.findById(authUser._id);
+    // Fetch actual user document
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -1618,15 +1646,20 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Remove from incoming
-    user.pendingFriendRequests.incoming = user.pendingFriendRequests.incoming.filter(
-      (p: Types.ObjectId) => !p.equals(targetUser._id)
-    );
-    targetUser.pendingFriendRequests.outgoing = targetUser.pendingFriendRequests.outgoing.filter(
-      (p: Types.ObjectId) => !p.equals(user._id)
-    );
+    const incoming = ((user as any).pendingFriendRequests?.incoming || []) as string[];
+    const newIncoming = incoming.filter((p: string) => !compareIds(p, targetUser.id));
+    const targetOutgoing = ((targetUser as any).pendingFriendRequests?.outgoing || []) as string[];
+    const newTargetOutgoing = targetOutgoing.filter((p: string) => !compareIds(p, user.id));
 
-    await Promise.all([user.save(), targetUser.save()]);
-    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+    await Promise.all([
+      User.updateById(user.id, {
+        pendingFriendRequests: { incoming: newIncoming, outgoing: ((user as any).pendingFriendRequests?.outgoing || []) },
+      }),
+      User.updateById(targetUser.id, {
+        pendingFriendRequests: { incoming: ((targetUser as any).pendingFriendRequests?.incoming || []), outgoing: newTargetOutgoing },
+      }),
+    ]);
+    emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'Friend request declined' };
   }, {
@@ -1642,8 +1675,8 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch actual Mongoose document
-    const user = await User.findById(authUser._id);
+    // Fetch actual user document
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -1655,40 +1688,47 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: 'User not found' };
     }
 
-    if (targetUser._id.equals(user._id)) {
+    if (compareIds(targetUser.id, user.id)) {
       set.status = 400;
       return { error: 'You cannot block yourself' };
     }
 
     // Already blocked?
-    if (user.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, targetUser._id))) {
+    if ((user.blockedUsers || []).some((b: string) => compareIds(b, targetUser.id))) {
       set.status = 400;
       return { error: 'User is already blocked' };
     }
 
     // Remove from friends if present
-    user.friends = user.friends.filter((f: Types.ObjectId | string) => !compareIds(f, targetUser._id));
-    targetUser.friends = targetUser.friends.filter((f: Types.ObjectId | string) => !compareIds(f, user._id));
+    const userFriends = (user.friends || []).filter((f: string) => !compareIds(f, targetUser.id));
+    const targetFriends = (targetUser.friends || []).filter((f: string) => !compareIds(f, user.id));
 
     // Remove any pending requests
-    user.pendingFriendRequests.incoming = user.pendingFriendRequests.incoming.filter(
-      (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
-    );
-    user.pendingFriendRequests.outgoing = user.pendingFriendRequests.outgoing.filter(
-      (p: Types.ObjectId | string) => !compareIds(p, targetUser._id)
-    );
-    targetUser.pendingFriendRequests.incoming = targetUser.pendingFriendRequests.incoming.filter(
-      (p: Types.ObjectId) => !p.equals(user._id)
-    );
-    targetUser.pendingFriendRequests.outgoing = targetUser.pendingFriendRequests.outgoing.filter(
-      (p: Types.ObjectId) => !p.equals(user._id)
-    );
+    const userIncoming = ((user as any).pendingFriendRequests?.incoming || []) as string[];
+    const userOutgoing = ((user as any).pendingFriendRequests?.outgoing || []) as string[];
+    const targetIncoming = ((targetUser as any).pendingFriendRequests?.incoming || []) as string[];
+    const targetOutgoing = ((targetUser as any).pendingFriendRequests?.outgoing || []) as string[];
+
+    const newUserIncoming = userIncoming.filter((p: string) => !compareIds(p, targetUser.id));
+    const newUserOutgoing = userOutgoing.filter((p: string) => !compareIds(p, targetUser.id));
+    const newTargetIncoming = targetIncoming.filter((p: string) => !compareIds(p, user.id));
+    const newTargetOutgoing = targetOutgoing.filter((p: string) => !compareIds(p, user.id));
 
     // Add to blocked list
-    user.blockedUsers.push(targetUser._id);
+    const newBlockedUsers = [...(user.blockedUsers || []), targetUser.id];
 
-    await Promise.all([user.save(), targetUser.save()]);
-    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+    await Promise.all([
+      User.updateById(user.id, {
+        friends: userFriends,
+        blockedUsers: newBlockedUsers,
+        pendingFriendRequests: { incoming: newUserIncoming, outgoing: newUserOutgoing },
+      }),
+      User.updateById(targetUser.id, {
+        friends: targetFriends,
+        pendingFriendRequests: { incoming: newTargetIncoming, outgoing: newTargetOutgoing },
+      }),
+    ]);
+    emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'User blocked' };
   }, {
@@ -1704,8 +1744,8 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch actual Mongoose document
-    const user = await User.findById(authUser._id);
+    // Fetch actual user document
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -1717,9 +1757,9 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: 'User not found' };
     }
 
-    user.blockedUsers = user.blockedUsers.filter((b: Types.ObjectId | string) => !compareIds(b, targetUser._id));
-    await user.save();
-    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+    const newBlockedUsers = (user.blockedUsers || []).filter((b: string) => !compareIds(b, targetUser.id));
+    await User.updateById(user.id, { blockedUsers: newBlockedUsers });
+    emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'User unblocked' };
   }, {
@@ -1735,8 +1775,8 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch actual Mongoose document
-    const user = await User.findById(authUser._id);
+    // Fetch actual user document
+    const user = await User.findById((authUser as any).id || (authUser as any)._id);
     if (!user) {
       set.status = 404;
       return { error: 'User not found' };
@@ -1749,17 +1789,20 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     }
 
     // Check if actually friends
-    if (!user.friends.some((f: Types.ObjectId | string) => compareIds(f, targetUser._id))) {
+    if (!(user.friends || []).some((f: string) => compareIds(f, targetUser.id))) {
       set.status = 400;
       return { error: 'You are not friends with this user' };
     }
 
     // Remove from friends
-    user.friends = user.friends.filter((f: Types.ObjectId | string) => !compareIds(f, targetUser._id));
-    targetUser.friends = targetUser.friends.filter((f: Types.ObjectId | string) => !compareIds(f, user._id));
+    const userFriends = (user.friends || []).filter((f: string) => !compareIds(f, targetUser.id));
+    const targetFriends = (targetUser.friends || []).filter((f: string) => !compareIds(f, user.id));
 
-    await Promise.all([user.save(), targetUser.save()]);
-    emitFriendEvent([user._id.toString(), targetUser._id.toString()], { type: 'friends:update', timestamp: Date.now() });
+    await Promise.all([
+      User.updateById(user.id, { friends: userFriends }),
+      User.updateById(targetUser.id, { friends: targetFriends }),
+    ]);
+    emitFriendEvent([user.id, targetUser.id], { type: 'friends:update', timestamp: Date.now() });
 
     return { success: true, message: 'Friend removed' };
   }, {
@@ -1778,10 +1821,10 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
     }
 
     try {
-      const { ServerMember, Message, Channel, Server } = await import('@/lib/models');
+      const { ServerMember, Message, Channel, Server, User } = await import('@/lib/models');
 
       // Get all servers the user is a member of
-      const memberships = await ServerMember.find({ userId: user._id }).select('serverId roles').lean();
+      const memberships = await ServerMember.find({ userId: user.id });
       const serverIds = memberships.map(m => m.serverId);
 
       if (serverIds.length === 0) {
@@ -1791,28 +1834,28 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
       // Map serverId -> user's role IDs (for role mention matching)
       const serverToRoles = new Map<string, string[]>();
       for (const m of memberships) {
-        serverToRoles.set(m.serverId.toString(), (m.roles || []).map((r: { toString(): string }) => r.toString()));
+        serverToRoles.set(m.serverId, (m.roles || []).map((r: string) => r));
       }
 
       // Get all channels in those servers
-      const channels = await Channel.find({ serverId: { $in: serverIds } }).select('_id serverId name').lean();
-      const channelIds = channels.map(c => c._id);
+      const channels = await Channel.find({ serverId: { in: serverIds } });
+      const channelIds = channels.map(c => c.id);
 
       // Map channelId -> { serverId, name }
       const channelToServer = new Map<string, string>();
       const channelToName = new Map<string, string>();
       for (const c of channels) {
-        channelToServer.set(c._id.toString(), c.serverId.toString());
-        channelToName.set(c._id.toString(), c.name);
+        channelToServer.set(c.id, c.serverId ?? '');
+        channelToName.set(c.id, c.name);
       }
 
       // Get server names
-      const servers = await Server.find({ _id: { $in: serverIds } }).select('_id name icon').lean();
+      const servers = await Server.find({ id: { in: serverIds } });
       const serverToName = new Map<string, string>();
       const serverToIcon = new Map<string, string>();
       for (const s of servers) {
-        serverToName.set(s._id.toString(), s.name);
-        serverToIcon.set(s._id.toString(), s.icon || '');
+        serverToName.set(s.id, s.name);
+        serverToIcon.set(s.id, s.icon || '');
       }
 
       // Build mention query: direct user mentions, @everyone, or role mentions
@@ -1824,49 +1867,53 @@ const notificationsRoutes = new Elysia({ prefix: '/notifications' })
         for (const rid of roleIds) allUserRoleIds.add(rid);
       }
 
-      const orConditions: Record<string, unknown>[] = [
-        { mentionedUserIds: user._id },
-        { mentionEveryone: true },
-      ];
-      if (allUserRoleIds.size > 0) {
-        orConditions.push({ mentionedRoleIds: { $in: Array.from(allUserRoleIds) } });
-      }
-
+      // Fetch messages in channels and filter manually
       const mentionedMessages = await Message.find({
-        channelId: { $in: channelIds },
+        channelId: { in: channelIds },
         isDeleted: false,
-        createdAt: { $gte: sevenDaysAgo },
-        $or: orConditions,
-      })
-        .select('content channelId createdAt authorId mentionEveryone')
-        .sort({ createdAt: -1 })
-        .limit(50)
-        .populate('authorId', 'username displayName avatar')
-        .lean();
+      });
 
-      const notifications = await Promise.all(mentionedMessages.map(async (msg) => {
-        const channelId = msg.channelId.toString();
+      const filteredMessages = mentionedMessages
+        .filter(msg => new Date(msg.createdAt ?? 0) >= sevenDaysAgo)
+        .filter(msg => {
+          const mentionedUsers = (msg as any).mentionedUserIds || [];
+          const mentionEveryone = (msg as any).mentionEveryone || false;
+          const mentionedRoles = (msg as any).mentionedRoleIds || [];
+          if (mentionedUsers.includes(user.id)) return true;
+          if (mentionEveryone) return true;
+          if (allUserRoleIds.size > 0 && mentionedRoles.some((r: string) => allUserRoleIds.has(r))) return true;
+          return false;
+        })
+        .sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime())
+        .slice(0, 50);
+
+      // Batch fetch authors
+      const authorIds = [...new Set(filteredMessages.map(m => m.authorId))];
+      const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+      const authorMap = new Map(authors.map(a => [a.id, a]));
+
+      const notifications = await Promise.all(filteredMessages.map(async (msg) => {
+        const channelId = msg.channelId;
         const serverId = channelToServer.get(channelId) || '';
         const channelName = channelToName.get(channelId) || '';
         const serverName = serverToName.get(serverId) || '';
         const serverIcon = serverToIcon.get(serverId) || '';
         
-        const author = msg.authorId as unknown as { _id?: string; username?: string; displayName?: string; avatar?: string } | null;
-        const isPopulatedAuthor = author && typeof author === 'object' && 'username' in author;
+        const author = authorMap.get(msg.authorId);
         const decryptedContent = await decryptFromStorage(msg.content || '');
 
         // Determine mention type
         let mentionType = 'mention';
-        if (msg.mentionEveryone) {
+        if ((msg as any).mentionEveryone) {
           mentionType = 'everyone';
         }
 
         return {
-          id: (msg as { _id: { toString(): string } })._id.toString(),
+          id: msg.id,
           type: 'mention' as const,
-          title: isPopulatedAuthor ? (author!.displayName || author!.username) : 'Unknown',
+          title: author ? (author.displayName || author.username) : 'Unknown',
           description: `${mentionType === 'everyone' ? '@everyone' : 'mentioned you'} in #${channelName}`,
-          avatar: isPopulatedAuthor ? author!.avatar : null,
+          avatar: author ? author.avatar : null,
           timestamp: msg.createdAt instanceof Date ? msg.createdAt.toISOString() : String(msg.createdAt),
           isRead: false,
           serverId,
@@ -1988,8 +2035,8 @@ export const api = new Elysia({ prefix: '/api' })
   .get('/platform/file-types', async () => {
     const { getPlatformSettings } = await import('@/lib/models/PlatformSettings');
     const settings = await getPlatformSettings();
-    const fileTypes = settings.allowedFileTypes?.length
-      ? settings.allowedFileTypes.map((f) => f.type)
+    const fileTypes = (settings.allowedFileTypes as any[])?.length
+      ? (settings.allowedFileTypes as any[]).map((f: any) => f.type)
       : config.ALLOWED_FILE_TYPES;
     return { fileTypes };
   })

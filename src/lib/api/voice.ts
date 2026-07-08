@@ -193,7 +193,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     }
 
     return {
-      token: `local-${user._id}-${roomId}-${expiresAt}`,
+      token: `local-${user.id}-${roomId}-${expiresAt}`,
       roomId,
       expiresAt,
       provider: 'local',
@@ -213,7 +213,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     }
 
     const room = getRoom(body.roomId);
-    const userId = user._id.toString();
+    const userId = user.id;
     room.set(userId, {
       userId,
       username: user.username,
@@ -257,7 +257,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
       return { success: true };
     }
 
-    const userId = user._id.toString();
+    const userId = user.id;
     room.delete(userId);
     if (room.size === 0) {
       roomState.delete(body.roomId);
@@ -329,7 +329,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     }
 
     const roomId = params.roomId;
-    const userId = user._id.toString();
+    const userId = user.id;
 
     let controllerRef: ReadableStreamDefaultController | null = null;
     let pingInterval: NodeJS.Timeout | null = null;
@@ -384,7 +384,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
 
     sendToUser(params.roomId, body.targetUserId, {
       type: 'voice:offer',
-      fromUserId: user._id.toString(),
+      fromUserId: user.id,
       signal: body.signal,
     });
     return { success: true };
@@ -399,7 +399,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
 
     sendToUser(params.roomId, body.targetUserId, {
       type: 'voice:answer',
-      fromUserId: user._id.toString(),
+      fromUserId: user.id,
       signal: body.signal,
     });
     return { success: true };
@@ -414,7 +414,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
 
     sendToUser(params.roomId, body.targetUserId, {
       type: 'voice:ice',
-      fromUserId: user._id.toString(),
+      fromUserId: user.id,
       candidate: body.candidate,
     });
     return { success: true };
@@ -428,7 +428,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
     const room = roomState.get(params.roomId);
-    if (!room || !room.has(user._id.toString())) {
+    if (!room || !room.has(user.id)) {
       set.status = 403;
       return { error: 'You must be connected to this voice channel' };
     }
@@ -439,22 +439,19 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     if (params.roomId.startsWith('channel-')) {
       const channelId = params.roomId.slice('channel-'.length);
       const { Channel, Server } = await import('@/lib/models');
-      if (!/^[0-9a-fA-F]{24}$/.test(channelId)) {
-        set.status = 400;
-        return { error: 'Invalid voice channel' };
-      }
-      const channel = await Channel.findById(channelId).select('serverId');
+      const channel = await Channel.findById(channelId);
       if (!channel) { set.status = 404; return { error: 'Channel not found' }; }
-      const server = await Server.findById(channel.serverId).select('settings soundboardSounds');
+      if (!channel.serverId) { set.status = 400; return { error: 'Not a server channel' }; }
+      const server = await Server.findById(channel.serverId);
       if (!server) { set.status = 404; return { error: 'Server not found' }; }
 
-      if (server.settings?.soundboard?.enabled === false) {
+      if ((server.settings as any)?.soundboard?.enabled === false) {
         set.status = 403;
         return { error: 'Soundboard is disabled in this server' };
       }
-      volume = server.settings?.soundboard?.volume ?? 100;
+      volume = (server.settings as any)?.soundboard?.volume ?? 100;
 
-      const sound = (server.soundboardSounds || []).find(
+      const sound = ((server.soundboardSounds as any[]) || []).find(
         (s: { url: string }) => s.url === body.soundUrl
       );
       if (!sound) {
@@ -465,12 +462,12 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
 
     broadcastToRoom(params.roomId, {
       type: 'voice:soundboard',
-      userId: user._id.toString(),
+      userId: user.id,
       username: user.displayName || user.username,
       soundUrl: body.soundUrl,
       soundName: body.soundName,
       volume,
-    }, user._id.toString());
+    }, user.id);
 
     return { success: true, volume };
   }, {
@@ -487,7 +484,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
 
     const room = roomState.get(params.roomId);
     if (!room) { set.status = 404; return { error: 'Room not found' }; }
-    const participant = room.get(user._id.toString());
+    const participant = room.get(user.id);
     if (!participant) { set.status = 404; return { error: 'Not in room' }; }
 
     if (body.audio !== undefined) participant.audio = body.audio;
@@ -496,7 +493,7 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
 
     broadcastToRoom(params.roomId, {
       type: 'voice:state_update',
-      userId: user._id.toString(),
+      userId: user.id,
       audio: participant.audio,
       deafened: participant.deafened,
       video: participant.video,
@@ -519,16 +516,16 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
     if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
     const room = roomState.get(params.roomId);
-    if (!room || !room.has(user._id.toString())) {
+    if (!room || !room.has(user.id)) {
       set.status = 404;
       return { error: 'Not in room' };
     }
 
     broadcastToRoom(params.roomId, {
       type: 'voice:speaking',
-      userId: user._id.toString(),
+      userId: user.id,
       speaking: body.speaking,
-    }, user._id.toString());
+    }, user.id);
 
     return { success: true };
   }, {

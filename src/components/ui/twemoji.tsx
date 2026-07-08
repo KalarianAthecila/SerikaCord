@@ -19,7 +19,7 @@ interface TwemojiProps {
 }
 
 // Custom emoji regex: <:name:id> or <a:name:id>
-const CUSTOM_EMOJI_REGEX = /<(a)?:([a-zA-Z0-9_]{2,32}):([a-f0-9]{24})>/g;
+const CUSTOM_EMOJI_REGEX = /<(a)?:([a-zA-Z0-9_]{2,32}):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/g;
 
 // Check if a string contains only emoji characters (including custom)
 function isOnlyEmoji(text: string): boolean {

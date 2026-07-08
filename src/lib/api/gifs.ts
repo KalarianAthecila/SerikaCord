@@ -223,7 +223,7 @@ export const gifRoutes = new Elysia({ prefix: '/gifs' })
       set.status = 401;
       return { error: error || 'Unauthorized' };
     }
-    const dbUser = await User.findById(user._id || (user as unknown as { id: string }).id);
+    const dbUser = await User.findById((user as any).id || (user as any)._id);
     return { favorites: dbUser?.gifFavorites || [] };
   })
   .post('/favorites', async ({ headers, cookie, body, set }) => {
@@ -237,18 +237,19 @@ export const gifRoutes = new Elysia({ prefix: '/gifs' })
       set.status = 400;
       return { error: 'GIF URL is required' };
     }
-    const userId = user._id || (user as unknown as { id: string }).id;
+    const userId = (user as any).id || (user as any)._id;
     const dbUser = await User.findById(userId);
     if (!dbUser) {
       set.status = 404;
       return { error: 'User not found' };
     }
-    const favorites = dbUser.gifFavorites || [];
+    const favorites = (dbUser.gifFavorites as any[]) || [];
     if (!favorites.some((f: { url: string }) => f.url === url)) {
       favorites.push({ url, title: title || '', source: source || '', addedAt: Date.now() });
-      dbUser.gifFavorites = favorites.slice(-200);
-      await dbUser.save();
-      await invalidateUserCache(userId.toString());
+      const updatedFavorites = favorites.slice(-200);
+      await User.updateById(userId, { gifFavorites: updatedFavorites });
+      await invalidateUserCache(userId);
+      return { favorites: updatedFavorites };
     }
     return { favorites: dbUser.gifFavorites };
   }, {
@@ -269,16 +270,16 @@ export const gifRoutes = new Elysia({ prefix: '/gifs' })
       set.status = 400;
       return { error: 'GIF URL is required' };
     }
-    const userId = user._id || (user as unknown as { id: string }).id;
+    const userId = (user as any).id || (user as any)._id;
     const dbUser = await User.findById(userId);
     if (!dbUser) {
       set.status = 404;
       return { error: 'User not found' };
     }
-    dbUser.gifFavorites = (dbUser.gifFavorites || []).filter((f: { url: string }) => f.url !== url);
-    await dbUser.save();
-    await invalidateUserCache(userId.toString());
-    return { favorites: dbUser.gifFavorites };
+    const updatedFavorites = ((dbUser.gifFavorites as any[]) || []).filter((f: { url: string }) => f.url !== url);
+    await User.updateById(userId, { gifFavorites: updatedFavorites });
+    await invalidateUserCache(userId);
+    return { favorites: updatedFavorites };
   }, {
     body: t.Object({
       url: t.String(),
