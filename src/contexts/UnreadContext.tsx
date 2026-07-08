@@ -321,10 +321,19 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
   return <UnreadContext.Provider value={value}>{children}</UnreadContext.Provider>;
 }
 
+// No-op fallback so a component rendered outside an UnreadProvider (e.g. a new
+// layout that forgets to wrap it) degrades to "no unread info" instead of
+// white-screening the whole page via the error boundary.
+const NOOP_UNREAD: UnreadContextValue = {
+  isChannelUnread: () => false,
+  getMentionCount: () => 0,
+  isServerUnread: () => false,
+  getServerMentionCount: () => 0,
+  markChannelRead: () => {},
+  registerChannels: () => {},
+  setActiveChannel: () => {},
+};
+
 export function useUnread() {
-  const ctx = useContext(UnreadContext);
-  if (ctx === undefined) {
-    throw new Error("useUnread must be used within an UnreadProvider");
-  }
-  return ctx;
+  return useContext(UnreadContext) ?? NOOP_UNREAD;
 }

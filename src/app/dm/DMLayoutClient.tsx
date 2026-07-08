@@ -9,6 +9,7 @@ import { BottomNavigation } from "@/components/mobile";
 import { VoiceAudioSink } from "@/components/voice/VoiceAudioSink";
 import { AuthProvider } from "@/contexts/AuthContext";
 import { ServerProvider } from "@/contexts/ServerContext";
+import { UnreadProvider } from "@/contexts/UnreadContext";
 
 function DMContent({ children }: { children: React.ReactNode }) {
   const [showCreateServer, setShowCreateServer] = useState(false);
@@ -80,7 +81,9 @@ export default function DMLayoutClient({ children }: { children: React.ReactNode
   return (
     <AuthProvider>
       <ServerProvider>
-        <DMContent>{children}</DMContent>
+        <UnreadProvider>
+          <DMContent>{children}</DMContent>
+        </UnreadProvider>
       </ServerProvider>
     </AuthProvider>
   );
