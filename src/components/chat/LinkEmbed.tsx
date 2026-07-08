@@ -228,12 +228,12 @@ function SpotifyEmbed({ type, id, url }: { type: string; id: string; url: string
 function GiphyEmbed({ gifId, url }: { gifId: string; url: string }) {
   const gifUrl = `https://media.giphy.com/media/${gifId}/giphy.gif`;
   return (
-    <div className="mt-2 inline-block w-fit relative group rounded-lg overflow-hidden max-w-[400px]">
+    <div className="mt-2 inline-flex relative group rounded-lg overflow-hidden max-w-[400px]">
       <a
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="block w-fit"
+        className="inline-flex"
       >
         <img
           src={gifUrl}
@@ -293,12 +293,12 @@ function TenorEmbed({ gifId, url, preview }: { gifId: string; url: string; previ
   }
 
   return (
-    <div className="mt-2 inline-block w-fit relative group rounded-lg overflow-hidden max-w-[400px]">
+    <div className="mt-2 inline-flex relative group rounded-lg overflow-hidden max-w-[400px]">
       <a
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="block w-fit"
+        className="inline-flex"
       >
         <img
           src={gifSrc}
@@ -357,12 +357,12 @@ function KlipyEmbed({ url, preview }: { url: string; preview?: { title?: string;
   }
 
   return (
-    <div className="mt-2 inline-block w-fit relative group rounded-lg overflow-hidden max-w-[400px]">
+    <div className="mt-2 inline-flex relative group rounded-lg overflow-hidden max-w-[400px]">
       <a
         href={url}
         target="_blank"
         rel="noopener noreferrer"
-        className="block w-fit"
+        className="inline-flex"
       >
         <img
           src={gifSrc}

@@ -780,6 +780,16 @@ export default function ChannelPage() {
     return () => { cancelled = true; };
   }, [channelId, channels, currentChannel, setCurrentChannel, serverId]);
 
+  // Persist the last-visited channel per server so reloads and server switches
+  // return here instead of falling back to the first channel in the list.
+  useEffect(() => {
+    if (!channelId || !serverId) return;
+    const channel = channels.find((c) => c.id === channelId);
+    if (channel && (channel.type === "text" || channel.type === "announcement")) {
+      localStorage.setItem(`sc:last_channel:${serverId}`, channelId);
+    }
+  }, [channelId, serverId, channels]);
+
   const isNsfw = currentChannel?.isNsfw;
   const isConfirmed = currentChannel ? confirmedNsfwChannels.has(currentChannel.id) : false;
 

@@ -72,9 +72,10 @@ export function MessageHoverActions<M extends ChatMessage>({
   return (
     <div
       className={cn(
-        "absolute -top-3 right-0 transition-opacity z-[100]",
+        "absolute -top-3 right-4 transition-opacity z-[100]",
         reactionPickerOpen ? "opacity-100" : "opacity-0 group-hover/message:opacity-100"
       )}
+    style={{ transform: 'translateZ(0)', willChange: 'opacity, transform' }}
     >
       <div className="flex items-center bg-[var(--app-surface-alt)] border border-[var(--app-border)] rounded-md shadow-lg">
         <Popover open={reactionPickerOpen} onOpenChange={onReactionPickerChange}>

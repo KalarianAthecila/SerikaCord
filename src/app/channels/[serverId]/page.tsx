@@ -51,12 +51,8 @@ export default function ServerPage() {
     }
   }, [channels, channelId, serverId, router, setCurrentChannel, currentServer]);
 
-  // Save last visited channel to localStorage
-  useEffect(() => {
-    if (channelId && currentServer?.id === serverId) {
-      localStorage.setItem(`sc:last_channel:${serverId}`, channelId);
-    }
-  }, [channelId, serverId, currentServer]);
+  // (Last-visited channel is persisted from the [channelId] page, where the
+  // channelId param is actually populated.)
 
   // Show loading state while waiting for redirect
   if (currentServer && channels.length === 0) {

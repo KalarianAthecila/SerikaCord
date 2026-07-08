@@ -60,8 +60,13 @@ function isOnlyUrl(text: string): boolean {
 
 // Check if a string contains only emoji characters (including custom emoji syntax)
 function isOnlyEmoji(text: string, customEmojiCount: number): boolean {
-  // Remove whitespace and custom emoji placeholders
-  const stripped = text.replace(/\s/g, "").replace(/:[a-zA-Z_][a-zA-Z0-9_]*:/g, "");
+  // Remove whitespace and custom emoji placeholders. Full custom-emoji tokens
+  // (<:name:id> / <a:name:id>) must be stripped too, otherwise a message made
+  // only of custom emojis leaves behind the raw id and fails the emoji check.
+  const stripped = text
+    .replace(/\s/g, "")
+    .replace(/<a?:[a-zA-Z0-9_]{2,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/g, "")
+    .replace(/:[a-zA-Z_][a-zA-Z0-9_]*:/g, "");
   const emojiRegex = /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)*$/u;
   
   // Check if remaining chars are only emojis and total emoji count is small
@@ -261,8 +266,6 @@ export const MessageContent = memo(function MessageContent({
     }
   }, [displayContent, serverEmojis]);
 
-  const emojiSize = isLargeEmoji ? "w-14 h-14" : "w-5 h-5";
-
   // If the message has a sticker, render it as a smaller Discord-like sticker
   if (sticker) {
     return (
@@ -285,7 +288,7 @@ export const MessageContent = memo(function MessageContent({
     const onlyGif = isGifUrl(imageOnlyUrl);
     return (
       <div className={className}>
-        <div className={cn("inline-block w-fit relative group", onlyGif && "rounded-lg overflow-hidden")}>
+        <div className={cn("relative group", onlyGif ? "inline-flex rounded-lg chat-gif-wrap" : "inline-block w-fit")}>
           <img
             src={imageOnlyUrl}
             alt="Image"
@@ -294,8 +297,8 @@ export const MessageContent = memo(function MessageContent({
             loading="lazy"
           />
           {onlyGif && (
-            <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-              <GifFavoriteButton url={imageOnlyUrl} />
+            <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+              <GifFavoriteButton url={imageOnlyUrl} className="p-0" />
             </div>
           )}
         </div>
@@ -321,8 +324,7 @@ export const MessageContent = memo(function MessageContent({
               alt={`:${part.emoji.name}:`}
               title={`:${part.emoji.name}:`}
               className={cn(
-                "inline-block align-middle mx-0.5",
-                emojiSize,
+                "custom-emoji",
                 part.emoji.animated && "animate-pulse"
               )}
               loading="lazy"
@@ -333,17 +335,17 @@ export const MessageContent = memo(function MessageContent({
           const inlineGif = isGifUrl(part.url);
           return (
             <span key={`image-${index}`} className="block my-2">
-              <span className={cn("inline-block w-fit relative group", inlineGif && "rounded-lg overflow-hidden")}>
+              <span className={cn("relative group", inlineGif && "inline-flex rounded-lg chat-gif-wrap")}>
                 <img
                   src={part.url}
                   alt="Image"
                   className="chat-media cursor-pointer hover:opacity-90 transition-opacity block"
                   onClick={() => handleMediaClick(part.url!, "Image")}
                   loading="lazy"
-                />
-                {inlineGif && (
-                  <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <GifFavoriteButton url={part.url} />
+                  />
+                  {inlineGif && (
+                    <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+                      <GifFavoriteButton url={part.url} className="p-0" />
                   </div>
                 )}
               </span>
