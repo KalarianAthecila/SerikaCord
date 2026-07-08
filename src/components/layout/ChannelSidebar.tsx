@@ -69,6 +69,8 @@ interface DMChannel {
     status: string;
     isPremium?: boolean;
     isSystem?: boolean;
+    isBot?: boolean;
+    isVerified?: boolean;
     customization?: {
       profileColor?: string;
       profileAccentColor?: string;
