@@ -170,9 +170,20 @@ export class GatewayHub {
   routeDispatch(dispatch: GatewayDispatch) {
     for (const conn of this.connections) {
       if (!conn.data.authenticated) continue;
+
+      // If targetBotId is specified, only deliver to that bot connection.
+      if (dispatch.targetBotId && conn.data.botId !== dispatch.targetBotId) continue;
+
       if (dispatch.intent && (conn.data.intents & dispatch.intent) === 0) continue;
 
       if (dispatch.guildId) {
+        // If this is a GUILD_CREATE for this bot, or a GUILD_MEMBER_ADD for this bot, add to guildIds
+        const isBotJoin = (dispatch.t === 'GUILD_MEMBER_ADD' && (dispatch.d as any)?.user?.id === conn.data.botId) ||
+                          (dispatch.t === 'GUILD_CREATE' && dispatch.targetBotId === conn.data.botId);
+        if (isBotJoin) {
+          conn.data.guildIds.add(dispatch.guildId);
+        }
+
         if (!conn.data.guildIds.has(dispatch.guildId)) continue;
       } else {
         const channelId = (dispatch.d as { channel_id?: string })?.channel_id;

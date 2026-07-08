@@ -135,7 +135,7 @@ async function main() {
     try { pathname = new URL(req.url || '/', 'http://localhost').pathname; } catch {}
     if (pathname === GATEWAY_PATH) {
       wss.handleUpgrade(req, socket, head, (ws) => wss.emit('connection', ws, req));
-    } else {
+    } else if (!pathname.startsWith('/_next/')) {
       // Not a gateway upgrade — let it drop (Next has no other WS routes).
       socket.destroy();
     }

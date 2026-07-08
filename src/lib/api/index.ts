@@ -17,7 +17,7 @@ import { oembedRoutes } from './oembed';
 import { experimentRoutes, instanceRoutes } from './experiments';
 import { voiceRoutes } from './voice';
 import { gifRoutes } from './gifs';
-import { developerRoutes } from './developers';
+import { developerRoutes, oauth2Routes } from './developers';
 import { botApiRoutes } from './botApi';
 import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
@@ -338,6 +338,48 @@ const userRoutes = new Elysia({ prefix: '/users' })
       });
 
     return result;
+  })
+  .get('/@me/guilds', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const { ServerMember, Server, Role } = await import('@/lib/models');
+    
+    const memberships = await ServerMember.find({ userId: user.id });
+    const serverIds = memberships.map(m => m.serverId);
+    const servers = serverIds.length > 0 ? await Server.find({ id: { in: serverIds } }) : [];
+    const serverMap = new Map(servers.map(s => [s.id, s]));
+
+    const results = [];
+    for (const membership of memberships) {
+      const server = serverMap.get(membership.serverId);
+      if (!server) continue;
+      
+      let perms = 0n;
+      if (server.ownerId === user.id) {
+        perms = 8n | (1n << 3n);
+      } else {
+        const serverRoles = await Role.find({ serverId: server.id });
+        const memberRoles = serverRoles.filter(r => (membership.roles || []).includes(r.id) || r.isDefault);
+        for (const role of memberRoles) {
+          perms |= BigInt(role.permissions || '0');
+        }
+      }
+      
+      results.push({
+        id: server.id,
+        name: server.name,
+        icon: server.icon ?? null,
+        owner: server.ownerId === user.id,
+        permissions: String(perms),
+        features: server.features || [],
+      });
+    }
+
+    return results;
   })
   .get('/@me/mentions', async ({ headers, cookie, set, query }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -2105,6 +2147,7 @@ export const api = new Elysia({ prefix: '/api' })
   .use(experimentRoutes)
   .use(instanceRoutes)
   .use(developerRoutes)
+  .use(oauth2Routes)
   .use(igdbRoutes)
   .use(botApiRoutes);
 

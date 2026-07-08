@@ -774,82 +774,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   return { success: true };
 })
 
-// ─── OAuth2 Token Exchange ─────────────────────────────────
 
-.post('/oauth2/token', async ({ body, set }) => {
-  const formData = body as any;
-
-  // Support both JSON and form-encoded
-  const grantType = formData.grant_type;
-  const clientId = formData.client_id;
-  const clientSecret = formData.client_secret;
-
-  const app = await Application.findOne({ clientId });
-  if (!app) { set.status = 400; return { error: 'invalid_client' }; }
-
-  if (app.clientSecret !== clientSecret) {
-    set.status = 400; return { error: 'invalid_client' };
-  }
-
-  if (grantType === 'authorization_code') {
-    // Exchange code for token — in production, store codes and validate
-    const accessToken = generateToken('sc_');
-    const refreshToken = generateToken('sc_r_');
-
-    return {
-      access_token: accessToken,
-      token_type: 'Bearer',
-      expires_in: 604800,
-      refresh_token: refreshToken,
-      scope: (app.scopes || []).join(' '),
-    };
-  }
-
-  if (grantType === 'refresh_token') {
-    const refreshToken = formData.refresh_token;
-    if (!refreshToken) { set.status = 400; return { error: 'invalid_request' }; }
-
-    const newAccessToken = generateToken('sc_');
-    return {
-      access_token: newAccessToken,
-      token_type: 'Bearer',
-      expires_in: 604800,
-      refresh_token: generateToken('sc_r_'),
-      scope: (app.scopes || []).join(' '),
-    };
-  }
-
-  if (grantType === 'client_credentials') {
-    const accessToken = generateToken('sc_');
-    return {
-      access_token: accessToken,
-      token_type: 'Bearer',
-      expires_in: 3600,
-      scope: (app.scopes || []).join(' '),
-    };
-  }
-
-  set.status = 400;
-  return { error: 'unsupported_grant_type' };
-})
-
-// OAuth2 authorize page info
-.get('/oauth2/authorize', async ({ query, set }) => {
-  const clientId = query.client_id as string;
-  const app = await Application.findOne({ clientId });
-  if (!app) { set.status = 404; return { error: 'Unknown application' }; }
-
-  return {
-    application: {
-      id: app.id,
-      name: app.name,
-      icon: app.icon,
-      description: app.description,
-    },
-    scopes: (query.scope as string || '').split(' ').filter(Boolean),
-    redirect_uri: query.redirect_uri as string,
-  };
-})
 
 // ─── Gateway URL ───────────────────────────────────────────
 
@@ -877,17 +802,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   };
 })
 
-// ─── OAuth2 Token Revocation ───────────────────────────────
 
-.post('/oauth2/token/revoke', async ({ body, set }) => {
-  const formData = body as any;
-  const token = formData.token;
-  if (!token) { set.status = 400; return { error: 'invalid_request' }; }
-
-  // In production, invalidate the token in the store
-  // For now, return success
-  return {};
-})
 
 // ─── Application Analytics ─────────────────────────────────
 
@@ -1037,3 +952,345 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
     },
   };
 });
+
+// ─── OAuth2 Router ─────────────────────────────────────────
+
+export const oauth2Routes = new Elysia({ prefix: '/oauth2' })
+  .post('/token', async ({ body, set }) => {
+    const formData = body as any;
+
+    const grantType = formData.grant_type;
+    const clientId = formData.client_id;
+    const clientSecret = formData.client_secret;
+
+    const { Application } = await import('@/lib/models');
+    const app = await Application.findOne({ clientId });
+    if (!app) { set.status = 400; return { error: 'invalid_client' }; }
+
+    if (app.clientSecret !== clientSecret) {
+      set.status = 400; return { error: 'invalid_client' };
+    }
+
+    if (grantType === 'authorization_code') {
+      const accessToken = generateToken('sc_');
+      const refreshToken = generateToken('sc_r_');
+
+      return {
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: 604800,
+        refresh_token: refreshToken,
+        scope: (app.scopes || []).join(' '),
+      };
+    }
+
+    if (grantType === 'refresh_token') {
+      const refreshToken = formData.refresh_token;
+      if (!refreshToken) { set.status = 400; return { error: 'invalid_request' }; }
+
+      const newAccessToken = generateToken('sc_');
+      return {
+        access_token: newAccessToken,
+        token_type: 'Bearer',
+        expires_in: 604800,
+        refresh_token: generateToken('sc_r_'),
+        scope: (app.scopes || []).join(' '),
+      };
+    }
+
+    if (grantType === 'client_credentials') {
+      const accessToken = generateToken('sc_');
+      return {
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: (app.scopes || []).join(' '),
+      };
+    }
+
+    set.status = 400;
+    return { error: 'unsupported_grant_type' };
+  })
+
+  .get('/authorize', async ({ query, set, headers }) => {
+    const accept = headers['accept'] || '';
+    if (accept.includes('text/html')) {
+      const searchParams = new URLSearchParams();
+      for (const [key, val] of Object.entries(query)) {
+        if (val !== undefined) searchParams.append(key, String(val));
+      }
+      return Response.redirect(`/oauth2/authorize?${searchParams.toString()}`, 302);
+    }
+
+    const clientId = query.client_id as string;
+    const { Application } = await import('@/lib/models');
+    const app = await Application.findOne({ clientId });
+    if (!app) {
+      set.status = 404;
+      return { error: 'Unknown application' };
+    }
+
+    return {
+      application: {
+        id: app.id,
+        name: app.name,
+        icon: app.icon,
+        description: app.description,
+      },
+      scopes: (query.scope as string || '').split(' ').filter(Boolean),
+      redirect_uri: query.redirect_uri as string,
+    };
+  })
+
+  .post('/token/revoke', async ({ body, set }) => {
+    const formData = body as any;
+    const token = formData.token;
+    if (!token) { set.status = 400; return { error: 'invalid_request' }; }
+    return {};
+  })
+
+  .post('/authorize', async ({ headers, cookie, query, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const payload = body as any;
+    const clientId = payload.client_id || (query.client_id as string);
+    const serverId = payload.serverId;
+    const permissions = BigInt(payload.permissions || '0');
+    const requestedScopes = (payload.scopes as string[]) || (query.scope as string || '').split(' ').filter(Boolean);
+    const redirectUri = payload.redirect_uri || (query.redirect_uri as string);
+    const state = payload.state || (query.state as string);
+    const responseType = payload.response_type || (query.response_type as string) || 'code';
+
+    if (!clientId) {
+      set.status = 400;
+      return { error: 'Missing client_id' };
+    }
+
+    const { Application, User, ServerMember, Server, Role, AuthorizedApp, Channel } = await import('@/lib/models');
+
+    const app = await Application.findOne({ clientId });
+    if (!app) {
+      set.status = 404;
+      return { error: 'Unknown application' };
+    }
+
+    const existingAuth = await AuthorizedApp.findOne({ userId: user.id, name: app.name });
+    if (existingAuth) {
+      const mergedScopes = Array.from(new Set([...(existingAuth.scopes || []), ...requestedScopes]));
+      await AuthorizedApp.updateById(existingAuth.id, {
+        scopes: mergedScopes,
+        lastUsedAt: new Date(),
+      });
+    } else {
+      await AuthorizedApp.create({
+        userId: user.id,
+        name: app.name,
+        description: app.description || '',
+        icon: app.icon || '',
+        scopes: requestedScopes,
+        lastUsedAt: new Date(),
+      });
+    }
+
+    let botAdded = false;
+
+    if (requestedScopes.includes('bot')) {
+      if (!serverId) {
+        set.status = 400;
+        return { error: 'bot scope requires serverId' };
+      }
+
+      if (!app.botId) {
+        set.status = 400;
+        return { error: 'Application has no bot user associated' };
+      }
+
+      const botUser = await User.findById(app.botId);
+      if (!botUser) {
+        set.status = 400;
+        return { error: 'Application bot user not found' };
+      }
+
+      const targetServer = await Server.findById(serverId);
+      if (!targetServer) {
+        set.status = 404;
+        return { error: 'Target server not found' };
+      }
+
+      const userMembership = await ServerMember.findOne({ serverId, userId: user.id });
+      if (!userMembership && targetServer.ownerId !== user.id) {
+        set.status = 403;
+        return { error: 'You must be a member of the server' };
+      }
+
+      let hasPermission = targetServer.ownerId === user.id;
+      if (!hasPermission && userMembership) {
+        const serverRoles = await Role.find({ serverId });
+        const memberRoles = serverRoles.filter(r => (userMembership.roles || []).includes(r.id) || r.isDefault);
+        let userPerms = 0n;
+        for (const role of memberRoles) {
+          userPerms |= BigInt(role.permissions || '0');
+        }
+        const PERM_ADMINISTRATOR = 1n << 3n;
+        const PERM_MANAGE_SERVER = 1n << 5n;
+        if ((userPerms & PERM_ADMINISTRATOR) !== 0n || (userPerms & PERM_MANAGE_SERVER) !== 0n) {
+          hasPermission = true;
+        }
+      }
+
+      if (!hasPermission) {
+        set.status = 403;
+        return { error: 'You do not have permission to add bots to this server' };
+      }
+
+      let botMembership = await ServerMember.findOne({ serverId, userId: botUser.id });
+      if (!botMembership) {
+        const everyoneRole = await Role.findOne({ serverId, isDefault: true });
+        const existingRoles = await Role.find({ serverId });
+        const highestPosition = existingRoles.reduce((max, r) => Math.max(max, r.position ?? 0), 0);
+
+        const botRole = await Role.create({
+          serverId,
+          name: botUser.username,
+          position: highestPosition + 1,
+          permissions: String(permissions),
+          managed: true,
+          hoist: false,
+          mentionable: false,
+          color: 3447003,
+        });
+
+        const botRolesList = [everyoneRole.id, botRole.id];
+        botMembership = await ServerMember.create({
+          serverId,
+          userId: botUser.id,
+          roles: botRolesList,
+          joinedAt: new Date(),
+        });
+
+        await Server.updateById(serverId, {
+          memberCount: (targetServer.memberCount ?? 0) + 1,
+        });
+
+        const { emitGuildMemberAdd, emitGuildCreate } = await import('@/lib/services/gatewayEvents');
+
+        const memberDto = {
+          user: {
+            id: botUser.id,
+            username: botUser.username,
+            avatar: botUser.avatar || null,
+            bot: true,
+            discriminator: '0',
+          },
+          nick: null,
+          roles: botRolesList,
+          joined_at: new Date().toISOString(),
+          deaf: false,
+          mute: false,
+        };
+
+        await emitGuildMemberAdd({ guildId: serverId, member: memberDto });
+
+        const serverChannels = await Channel.find({ serverId });
+        const serverRolesUpdated = await Role.find({ serverId });
+        
+        const mappedRoles = serverRolesUpdated.map(r => ({
+          id: r.id,
+          name: r.name,
+          color: Number(r.color) || 0,
+          hoist: Boolean(r.hoist),
+          position: r.position ?? 0,
+          permissions: r.permissions || '0',
+          managed: Boolean(r.managed),
+          mentionable: Boolean(r.mentionable),
+        }));
+
+        const typeMap: Record<string, number> = {
+          text: 0,
+          dm: 1,
+          voice: 2,
+          group_dm: 3,
+          category: 4,
+          announcement: 5,
+          forum: 15,
+        };
+
+        const mappedChannels = serverChannels.map(c => ({
+          id: c.id,
+          type: typeMap[c.type] ?? 0,
+          name: c.name,
+          position: c.position ?? 0,
+          parent_id: c.parentId ?? null,
+          topic: c.topic ?? null,
+          nsfw: Boolean(c.nsfw),
+          rate_limit_per_user: c.rateLimitPerUser ?? 0,
+        }));
+
+        const allServerMembers = await ServerMember.find({ serverId });
+        const allUserIds = allServerMembers.map(m => m.userId);
+        const allUsers = await User.find({ id: { in: allUserIds } });
+        const userMap = new Map(allUsers.map(u => [u.id, u]));
+
+        const mappedMembers = allServerMembers.map(m => {
+          const u = userMap.get(m.userId) || { id: m.userId, username: 'Unknown', isBot: false, avatar: null };
+          return {
+            user: {
+              id: u.id,
+              username: u.username,
+              avatar: u.avatar || null,
+              bot: Boolean(u.isBot),
+              discriminator: '0',
+            },
+            nick: m.nickname || null,
+            roles: m.roles || [],
+            joined_at: m.joinedAt ? new Date(m.joinedAt).toISOString() : new Date().toISOString(),
+            deaf: Boolean(m.deaf),
+            mute: Boolean(m.mute),
+          };
+        });
+
+        const guildCreatePayload = {
+          id: targetServer.id,
+          name: targetServer.name,
+          icon: targetServer.icon ?? null,
+          owner_id: targetServer.ownerId,
+          roles: mappedRoles,
+          channels: mappedChannels,
+          members: mappedMembers,
+          member_count: mappedMembers.length,
+          joined_at: new Date().toISOString(),
+          large: false,
+          unavailable: false,
+        };
+
+        await emitGuildCreate({
+          guildId: serverId,
+          targetBotId: botUser.id,
+          guild: guildCreatePayload,
+        });
+
+        botAdded = true;
+      }
+    }
+
+    if (redirectUri) {
+      let callbackUrl = redirectUri;
+      if (responseType === 'token') {
+        const accessToken = generateToken('sc_');
+        callbackUrl += `#access_token=${accessToken}&token_type=Bearer&expires_in=604800&scope=${encodeURIComponent(requestedScopes.join(' '))}`;
+        if (state) callbackUrl += `&state=${encodeURIComponent(state)}`;
+      } else {
+        const code = generateToken('sc_code_');
+        callbackUrl += callbackUrl.includes('?') ? '&' : '?';
+        callbackUrl += `code=${code}`;
+        if (state) callbackUrl += `&state=${encodeURIComponent(state)}`;
+      }
+      return { redirect: callbackUrl };
+    }
+
+    return { success: true, botAdded };
+  });
