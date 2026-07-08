@@ -47,7 +47,7 @@ function encodeSavedAccountsCookie(accounts: SavedAccountEntry[]): string {
   return `saved_accounts=${encodeURIComponent(JSON.stringify(accounts))}; Path=/; SameSite=Lax; Expires=${expires.toUTCString()}`;
 }
 
-function getAccountEmail(user: { email?: string; username: string }): string {
+function getAccountEmail(user: { email?: string | null; username: string }): string {
   return user.email || `${user.username}@serika.dev`;
 }
 
@@ -300,8 +300,8 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
           savedAccounts = upsertSavedAccount(savedAccounts, {
             email,
             username: currentUser.username,
-            displayName: currentUser.displayName,
-            avatar: currentUser.avatar,
+            displayName: currentUser.displayName ?? undefined,
+            avatar: currentUser.avatar ?? undefined,
             token: currentToken,
             refreshToken: typeof cookie.refresh_token?.value === 'string' ? cookie.refresh_token.value : undefined,
             savedAt: Date.now(),
@@ -317,8 +317,8 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
           savedAccounts = upsertSavedAccount(savedAccounts, {
             email,
             username: newUser.username || email.split('@')[0],
-            displayName: newUser.displayName,
-            avatar: newUser.avatar,
+            displayName: newUser.displayName ?? undefined,
+            avatar: newUser.avatar ?? undefined,
             token: data.token,
             refreshToken: data.refreshToken,
             savedAt: Date.now(),
@@ -380,8 +380,8 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
     const savedAccounts = upsertSavedAccount(parseSavedAccounts(cookie.saved_accounts?.value as unknown), {
       email,
       username: user.username,
-      displayName: user.displayName,
-      avatar: user.avatar,
+      displayName: user.displayName ?? undefined,
+      avatar: user.avatar ?? undefined,
       token,
       refreshToken: typeof cookie.refresh_token?.value === 'string' ? cookie.refresh_token.value : undefined,
       savedAt: Date.now(),
@@ -406,8 +406,8 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         savedAccounts = upsertSavedAccount(savedAccounts, {
           email,
           username: currentUser.username,
-          displayName: currentUser.displayName,
-          avatar: currentUser.avatar,
+          displayName: currentUser.displayName ?? undefined,
+          avatar: currentUser.avatar ?? undefined,
           token: currentToken,
           refreshToken: typeof cookie.refresh_token?.value === 'string' ? cookie.refresh_token.value : undefined,
           savedAt: Date.now(),
@@ -593,7 +593,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
 
     return {
       user: {
-        id: result.user._id,
+        id: result.user.id,
         username: result.user.username,
         displayName: result.user.displayName,
         avatar: result.user.avatar,
@@ -699,7 +699,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         success: true,
         isNew: result.isNew,
         user: {
-          id: result.user!._id,
+          id: result.user!.id,
           username: result.user!.username,
           displayName: result.user!.displayName,
           avatar: result.user!.avatar,
@@ -754,7 +754,7 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       return oauthRedirect(`${base}/channels/me?openSettings=connections&error=provider_disabled`);
     }
 
-    const userId = (user._id as { toString(): string }).toString();
+    const userId = user.id;
 
     // ── Last.fm initiate ────────────────────────────────────────────────────
     if (provider === 'lastfm') {
@@ -842,21 +842,26 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
         const infoData = await infoResp.json() as any;
         const avatar: string | undefined = infoData.user?.image?.find((img: any) => img.size === 'large')?.['#text'] || undefined;
 
-        await UserConnection.findOneAndUpdate(
-          { userId, provider: 'lastfm' },
-          {
-            $set: {
-              userId,
-              provider: 'lastfm',
-              accountId: lfmUsername,
-              username: lfmUsername,
-              displayName: lfmUsername,
-              avatar,
-              metadata: { sessionKey },
-            },
-          },
-          { upsert: true, new: true },
-        );
+        const existingConn = await UserConnection.findOne({ userId, provider: 'lastfm' });
+        if (existingConn) {
+          await UserConnection.updateById(existingConn.id, {
+            accountId: lfmUsername,
+            username: lfmUsername,
+            displayName: lfmUsername,
+            avatar,
+            metadata: { sessionKey },
+          });
+        } else {
+          await UserConnection.create({
+            userId,
+            provider: 'lastfm',
+            accountId: lfmUsername,
+            username: lfmUsername,
+            displayName: lfmUsername,
+            avatar,
+            metadata: { sessionKey },
+          });
+        }
 
         return oauthRedirect(`${redirectBase}&success=lastfm`, 'lastfm_state=; Path=/; Max-Age=0');
       } catch (err) {
@@ -889,21 +894,26 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       }
       try {
         const userInfo = await prov.fetchUser(steamId);
-        await UserConnection.findOneAndUpdate(
-          { userId, provider: 'steam' },
-          {
-            $set: {
-              userId,
-              provider: 'steam',
-              accountId: userInfo.accountId,
-              username: userInfo.username || userInfo.accountId,
-              displayName: userInfo.displayName || userInfo.username || userInfo.accountId,
-              avatar: userInfo.avatar,
-              metadata: { steamId },
-            },
-          },
-          { upsert: true, new: true },
-        );
+        const existingConn = await UserConnection.findOne({ userId, provider: 'steam' });
+        if (existingConn) {
+          await UserConnection.updateById(existingConn.id, {
+            accountId: userInfo.accountId,
+            username: userInfo.username || userInfo.accountId,
+            displayName: userInfo.displayName || userInfo.username || userInfo.accountId,
+            avatar: userInfo.avatar,
+            metadata: { steamId },
+          });
+        } else {
+          await UserConnection.create({
+            userId,
+            provider: 'steam',
+            accountId: userInfo.accountId,
+            username: userInfo.username || userInfo.accountId,
+            displayName: userInfo.displayName || userInfo.username || userInfo.accountId,
+            avatar: userInfo.avatar,
+            metadata: { steamId },
+          });
+        }
         return oauthRedirect(`${redirectBase}&success=steam`, 'oauth2_state=; Path=/; Max-Age=0');
       } catch (err) {
         console.error('Steam callback error:', err);
@@ -943,21 +953,26 @@ export const authRoutes = new Elysia({ prefix: '/auth' })
       }
 
       // Upsert connection
-      await UserConnection.findOneAndUpdate(
-        { userId, provider },
-        {
-          $set: {
-            userId,
-            provider,
-            accountId: userInfo.accountId,
-            username: userInfo.username || userInfo.accountId,
-            displayName: userInfo.displayName || userInfo.username || userInfo.accountId,
-            avatar: userInfo.avatar,
-            metadata: { accessToken: tokenResp.access_token, refreshToken: tokenResp.refreshToken },
-          },
-        },
-        { upsert: true, new: true },
-      );
+      const existingConn = await UserConnection.findOne({ userId, provider });
+      if (existingConn) {
+        await UserConnection.updateById(existingConn.id, {
+          accountId: userInfo.accountId,
+          username: userInfo.username || userInfo.accountId,
+          displayName: userInfo.displayName || userInfo.username || userInfo.accountId,
+          avatar: userInfo.avatar,
+          metadata: { accessToken: tokenResp.access_token, refreshToken: tokenResp.refreshToken },
+        });
+      } else {
+        await UserConnection.create({
+          userId,
+          provider: provider as 'discord' | 'twitch' | 'youtube' | 'github' | 'spotify' | 'website' | 'lastfm' | 'steam' | 'xbox' | 'psn' | 'roblox' | 'twitter' | 'instagram' | 'battlenet',
+          accountId: userInfo.accountId,
+          username: userInfo.username || userInfo.accountId,
+          displayName: userInfo.displayName || userInfo.username || userInfo.accountId,
+          avatar: userInfo.avatar,
+          metadata: { accessToken: tokenResp.access_token, refreshToken: tokenResp.refreshToken },
+        });
+      }
 
       return oauthRedirect(`${redirectBase}&success=${provider}`, 'oauth2_state=; Path=/; Max-Age=0');
     } catch (err) {

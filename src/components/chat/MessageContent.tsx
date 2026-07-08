@@ -131,7 +131,7 @@ export const MessageContent = memo(function MessageContent({
       return { parts: [], customEmojiCount: 0 };
     }
 
-    const tokenRegex = /<@!?([a-f0-9]{24})>|<@&([a-f0-9]{24})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>|:([a-zA-Z_][a-zA-Z0-9_]*):/gi;
+    const tokenRegex = /<@!?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|<@&([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|:([a-zA-Z_][a-zA-Z0-9_]*):/gi;
     const urlRegex = /(https?:\/\/[^\s]+)/g;
     const parts: Array<{
       type: "text" | "custom-emoji" | "image" | "link" | "mention-user" | "mention-role" | "mention-special";

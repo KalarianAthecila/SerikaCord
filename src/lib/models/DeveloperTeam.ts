@@ -1,41 +1,59 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export interface IDeveloperTeam extends Document {
-  _id: Types.ObjectId;
-  name: string;
-  icon?: string | null;
-  ownerId: Types.ObjectId;
-  members: {
-    userId: Types.ObjectId;
-    username: string;
-    avatar?: string | null;
-    role: 'owner' | 'admin' | 'developer' | 'viewer';
-    joinedAt: Date;
-  }[];
-  description?: string | null;
-  verified: boolean;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IDeveloperTeam = typeof schema.developerTeams.$inferSelect;
 
-const DeveloperTeamSchema = new Schema<IDeveloperTeam>({
-  name: { type: String, required: true, trim: true, maxlength: 100 },
-  icon: { type: String, default: null },
-  ownerId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  members: [{
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    username: { type: String, required: true },
-    avatar: { type: String, default: null },
-    role: { type: String, enum: ['owner', 'admin', 'developer', 'viewer'], default: 'developer' },
-    joinedAt: { type: Date, default: Date.now },
-  }],
-  description: { type: String, default: null, maxlength: 500 },
-  verified: { type: Boolean, default: false },
-}, {
-  timestamps: true,
-});
+export const DeveloperTeam = {
+  table: schema.developerTeams,
 
-DeveloperTeamSchema.index({ ownerId: 1, createdAt: -1 });
-DeveloperTeamSchema.index({ 'members.userId': 1 });
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.developerTeams).where(eq(schema.developerTeams.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-export const DeveloperTeam = mongoose.models.DeveloperTeam || mongoose.model<IDeveloperTeam>('DeveloperTeam', DeveloperTeamSchema);
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'ownerId': conditions.push(eq(schema.developerTeams.ownerId, normalizeId(value as string))); break;
+      }
+    }
+    let query = db.select().from(schema.developerTeams);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
+
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'ownerId': conditions.push(eq(schema.developerTeams.ownerId, normalizeId(value as string))); break;
+      }
+    }
+    let query = db.select().from(schema.developerTeams);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.developerTeams.$inferInsert) {
+    const [row] = await db.insert(schema.developerTeams).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.developerTeams.$inferInsert>) {
+    const [row] = await db.update(schema.developerTeams).set({ ...data, updatedAt: new Date() }).where(eq(schema.developerTeams.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.developerTeams).where(eq(schema.developerTeams.id, normalizeId(id)));
+  },
+};

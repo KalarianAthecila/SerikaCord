@@ -1,102 +1,63 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export interface IInvite extends Document {
-  _id: Types.ObjectId;
-  code: string;
-  serverId: Types.ObjectId;
-  channelId: Types.ObjectId;
-  inviterId: Types.ObjectId;
-  
-  // Usage
-  uses: number;
-  maxUses: number; // 0 = unlimited
-  maxAge: number; // in seconds, 0 = never expires
-  temporary: boolean; // Kick when disconnect if not assigned role
-  
-  // Invite type
-  type: 'normal' | 'vanity'; // Vanity = custom URL for partnered/discoverable
-  isVanity: boolean;
-  
-  // Metadata for invite splash page
-  metadata?: {
-    memberCount?: number;
-    onlineCount?: number;
-    serverDescription?: string;
-    serverFeatures?: string[];
-  };
-  
-  expiresAt?: Date;
-  
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IInvite = typeof schema.invites.$inferSelect;
 
-const InviteSchema = new Schema<IInvite>({
-  code: {
-    type: String,
-    required: true,
-    unique: true,
-    index: true,
-  },
-  serverId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Server',
-    required: true,
-    index: true,
-  },
-  channelId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Channel',
-    required: true,
-  },
-  inviterId: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-  uses: {
-    type: Number,
-    default: 0,
-  },
-  maxUses: {
-    type: Number,
-    default: 0, // Unlimited
-  },
-  maxAge: {
-    type: Number,
-    default: 86400, // 24 hours
-  },
-  temporary: {
-    type: Boolean,
-    default: false,
-  },
-  type: {
-    type: String,
-    enum: ['normal', 'vanity'],
-    default: 'normal',
-  },
-  isVanity: {
-    type: Boolean,
-    default: false,
-    index: true,
-  },
-  metadata: {
-    memberCount: { type: Number, default: null },
-    onlineCount: { type: Number, default: null },
-    serverDescription: { type: String, default: null },
-    serverFeatures: [{ type: String }],
-  },
-  expiresAt: {
-    type: Date,
-    default: null,
-  },
-}, {
-  timestamps: true,
-});
+export const Invite = {
+  table: schema.invites,
 
-// Auto-expire invites
-InviteSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
-// Index for vanity lookups
-InviteSchema.index({ code: 1, isVanity: 1 });
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.invites).where(eq(schema.invites.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-export const Invite = mongoose.models.Invite || mongoose.model<IInvite>('Invite', InviteSchema);
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'code': conditions.push(eq(schema.invites.code, value as string)); break;
+        case 'serverId': conditions.push(eq(schema.invites.serverId, normalizeId(value as string))); break;
+        case 'isVanity': conditions.push(eq(schema.invites.isVanity, value as boolean)); break;
+      }
+    }
+    let query = db.select().from(schema.invites);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
+
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'code': conditions.push(eq(schema.invites.code, value as string)); break;
+        case 'serverId': conditions.push(eq(schema.invites.serverId, normalizeId(value as string))); break;
+        case 'isVanity': conditions.push(eq(schema.invites.isVanity, value as boolean)); break;
+      }
+    }
+    let query = db.select().from(schema.invites);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.invites.$inferInsert) {
+    const [row] = await db.insert(schema.invites).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.invites.$inferInsert>) {
+    const [row] = await db.update(schema.invites).set({ ...data, updatedAt: new Date() }).where(eq(schema.invites.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.invites).where(eq(schema.invites.id, normalizeId(id)));
+  },
+};

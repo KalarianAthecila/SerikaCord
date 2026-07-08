@@ -30,13 +30,13 @@ export const experimentRoutes = new Elysia({ prefix: '/experiments' })
     }
 
     const userAttributes: Record<string, unknown> = {
-      user_id: user._id.toString(),
+      user_id: user.id,
       badge: user.badges ?? [],
       premium: user.isPremium ?? false,
       staff: (user.badges ?? []).some((b: string) => b === 'staff' || b === 'admin'),
       account_age: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000) : 0,
     };
-    const result = getUserVariant(experiment, user._id.toString(), userAttributes);
+    const result = getUserVariant(experiment, user.id, userAttributes);
     
     return {
       experimentKey: params.experimentKey,
@@ -70,7 +70,7 @@ export const experimentRoutes = new Elysia({ prefix: '/experiments' })
 
     // Build user attributes for filter evaluation
     const userAttributes: Record<string, unknown> = {
-      user_id: user._id.toString(),
+      user_id: user.id,
       badge: user.badges ?? [],
       premium: user.isPremium ?? false,
       staff: (user.badges ?? []).some((b: string) => b === 'staff' || b === 'admin'),
@@ -80,7 +80,7 @@ export const experimentRoutes = new Elysia({ prefix: '/experiments' })
     // Get user's variant for each experiment
     const results = await Promise.all(
       experiments.map(async (exp) => {
-        const result = getUserVariant(exp, user._id.toString(), userAttributes);
+        const result = getUserVariant(exp, user.id, userAttributes);
         return {
           key: exp.key,
           name: exp.name,
@@ -124,13 +124,13 @@ export const experimentRoutes = new Elysia({ prefix: '/experiments' })
     }
 
     const featureAttributes: Record<string, unknown> = {
-      user_id: user._id.toString(),
+      user_id: user.id,
       badge: user.badges ?? [],
       premium: user.isPremium ?? false,
       staff: (user.badges ?? []).some((b: string) => b === 'staff' || b === 'admin'),
       account_age: user.createdAt ? Math.floor((Date.now() - new Date(user.createdAt).getTime()) / 86400000) : 0,
     };
-    const result = getUserVariant(experiment, user._id.toString(), featureAttributes);
+    const result = getUserVariant(experiment, user.id, featureAttributes);
     
     // For feature flags, any variant that's not null and not 'control' means enabled
     const enabled = result.inExperiment && result.variant !== null && result.variant.id !== 'control';
@@ -158,7 +158,7 @@ export const instanceRoutes = new Elysia({ prefix: '/instance' })
       isHost,
       domain: host,
       instance: instance ? {
-        id: instance._id,
+        id: instance.id,
         name: instance.name,
         type: instance.type,
         status: instance.status,
@@ -194,9 +194,10 @@ export const instanceRoutes = new Elysia({ prefix: '/instance' })
     const { key, hash, prefix } = generateInstanceApiKey();
     const secretKey = generateSecretKey();
 
-    const instance = new Instance({
+    const instance = await Instance.create({
       name,
       domain,
+      instanceId: crypto.randomUUID(),
       type: 'self_hosted',
       status: 'pending', // Requires admin approval
       ownerEmail: adminEmail,
@@ -210,11 +211,9 @@ export const instanceRoutes = new Elysia({ prefix: '/instance' })
       },
     });
 
-    await instance.save();
-
     return {
       success: true,
-      instanceId: instance._id,
+      instanceId: instance.id,
       apiKey: key, // Only returned once!
       message: 'Instance registered. Please wait for approval from the host server.',
     };

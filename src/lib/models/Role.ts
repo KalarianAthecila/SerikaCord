@@ -1,80 +1,59 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, sql, and, type SQL } from 'drizzle-orm';
+import { normalizeId, buildCondition } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export interface IRole extends Document {
-  _id: Types.ObjectId;
-  serverId: Types.ObjectId;
-  name: string;
-  color: number;
-  hoist: boolean; // Show separately in sidebar
-  icon?: string;
-  unicodeEmoji?: string;
-  position: number;
-  permissions: string; // Bitfield as string
-  managed: boolean; // Managed by integration
-  mentionable: boolean;
-  
-  // Flags
-  isDefault: boolean; // @everyone role
-  
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IRole = typeof schema.roles.$inferSelect;
 
-const RoleSchema = new Schema<IRole>({
-  serverId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Server',
-    required: true,
-    index: true,
-  },
-  name: {
-    type: String,
-    required: true,
-    trim: true,
-    maxlength: 100,
-  },
-  color: {
-    type: Number,
-    default: 0,
-  },
-  hoist: {
-    type: Boolean,
-    default: false,
-  },
-  icon: {
-    type: String,
-    default: null,
-  },
-  unicodeEmoji: {
-    type: String,
-    default: null,
-  },
-  position: {
-    type: Number,
-    default: 0,
-  },
-  permissions: {
-    type: String,
-    default: '0',
-  },
-  managed: {
-    type: Boolean,
-    default: false,
-  },
-  mentionable: {
-    type: Boolean,
-    default: false,
-  },
-  isDefault: {
-    type: Boolean,
-    default: false,
-  },
-}, {
-  timestamps: true,
-});
+export const Role = {
+  table: schema.roles,
 
-// Compound index for server roles
-RoleSchema.index({ serverId: 1, position: 1 });
-RoleSchema.index({ serverId: 1, isDefault: 1 });
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.roles).where(eq(schema.roles.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-export const Role = mongoose.models.Role || mongoose.model<IRole>('Role', RoleSchema);
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(buildCondition(schema.roles.id, value, true)); break;
+        case 'serverId': conditions.push(buildCondition(schema.roles.serverId, value, true)); break;
+        case 'isDefault': conditions.push(eq(schema.roles.isDefault, value as boolean)); break;
+      }
+    }
+    const [row] = await db.select().from(schema.roles).where(conditions.length > 0 ? and(...conditions) : undefined).limit(1);
+    return row || null;
+  },
+
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(buildCondition(schema.roles.id, value, true)); break;
+        case 'serverId': conditions.push(buildCondition(schema.roles.serverId, value, true)); break;
+        case 'isDefault': conditions.push(eq(schema.roles.isDefault, value as boolean)); break;
+      }
+    }
+    let query = db.select().from(schema.roles);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.roles.$inferInsert) {
+    const [row] = await db.insert(schema.roles).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.roles.$inferInsert>) {
+    const [row] = await db.update(schema.roles).set({ ...data, updatedAt: new Date() }).where(eq(schema.roles.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.roles).where(eq(schema.roles.id, normalizeId(id)));
+  },
+};

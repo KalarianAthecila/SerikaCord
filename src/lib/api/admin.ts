@@ -1,13 +1,13 @@
 import { Elysia, t } from 'elysia';
 import { User } from '@/lib/models/User';
 import { Server } from '@/lib/models/Server';
+import { ServerMember } from '@/lib/models/ServerMember';
 import { Message } from '@/lib/models/Message';
-import { AdminLog, type AdminActionType, type IAdminLog } from '@/lib/models/AdminLog';
-import { PlatformSettings, getPlatformSettings, updatePlatformSettings } from '@/lib/models/PlatformSettings';
-import type { Types } from 'mongoose';
+import { AdminLog, type AdminActionType } from '@/lib/models/AdminLog';
+import { getPlatformSettings, updatePlatformSettings } from '@/lib/models/PlatformSettings';
 
 // System user ID for Serika Broadcast
-export const SERIKA_BROADCAST_ID = '000000000000000000000000';
+export const SERIKA_BROADCAST_ID = '00000000-0000-0000-0000-000000000001';
 
 // Helper function for admin auth
 async function getAdminAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -70,26 +70,23 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const searchQuery = q ? {
-      $or: [
-        { username: { $regex: q, $options: 'i' } },
-        { email: { $regex: q, $options: 'i' } },
-        { displayName: { $regex: q, $options: 'i' } },
-      ]
-    } : {};
-
-    const [users, total] = await Promise.all([
-      User.find(searchQuery)
-        .select('_id username displayName email avatar badges isVerified isBanned isStaff createdAt')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      User.countDocuments(searchQuery)
-    ]);
+    const allUsers = await User.find({});
+    let filtered = allUsers;
+    if (q) {
+      const lowerQ = q.toLowerCase();
+      filtered = allUsers.filter(u => 
+        u.username?.toLowerCase().includes(lowerQ) ||
+        u.email?.toLowerCase().includes(lowerQ) ||
+        u.displayName?.toLowerCase().includes(lowerQ)
+      );
+    }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const users = filtered.slice(skip, skip + limitNum);
 
     return {
       users: users.map(u => ({
-        id: u._id,
+        id: u.id,
         username: u.username,
         displayName: u.displayName,
         email: u.email,
@@ -117,27 +114,24 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: error || 'Admin access required' };
     }
 
-    const targetUser = await User.findById(params.userId)
-      .select('-passwordHash -verificationToken -resetToken');
+    const targetUser = await User.findById(params.userId);
     
     if (!targetUser) {
       set.status = 404;
       return { error: 'User not found' };
     }
 
-    // Get server count
-    const serverCount = await Server.countDocuments({ 
-      $or: [
-        { ownerId: targetUser._id },
-        { 'members.userId': targetUser._id }
-      ]
-    });
+    // Get server count - owned servers + servers where user is a member
+    const ownedServers = await Server.find({ ownerId: targetUser.id });
+    const memberships = await ServerMember.find({ userId: targetUser.id });
+    const serverCount = ownedServers.length + memberships.length;
 
     // Get message count
-    const messageCount = await Message.countDocuments({ authorId: targetUser._id });
+    const messages = await Message.find({ authorId: targetUser.id });
+    const messageCount = messages.length;
 
     return {
-      id: targetUser._id,
+      id: targetUser.id,
       username: targetUser.username,
       displayName: targetUser.displayName,
       email: targetUser.email,
@@ -186,15 +180,16 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Cannot ban staff members' };
     }
 
-    targetUser.isBanned = true;
-    targetUser.banReason = reason || 'No reason provided';
-    await targetUser.save();
+    await User.updateById(targetUser.id, {
+      isBanned: true,
+      banReason: reason || 'No reason provided',
+    });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'ban_user',
       'user',
-      targetUser._id.toString(),
+      targetUser.id,
       { username: targetUser.username },
       reason
     );
@@ -223,15 +218,16 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'User not found' };
     }
 
-    targetUser.isBanned = false;
-    targetUser.banReason = undefined;
-    await targetUser.save();
+    await User.updateById(targetUser.id, {
+      isBanned: false,
+      banReason: null,
+    });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'unban_user',
       'user',
-      targetUser._id.toString(),
+      targetUser.id,
       { username: targetUser.username }
     );
 
@@ -259,18 +255,17 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const oldBadges = [...(targetUser.badges || [])];
-    targetUser.badges = badges;
-    await targetUser.save();
+    await User.updateById(targetUser.id, { badges });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'edit_badges',
       'user',
-      targetUser._id.toString(),
+      targetUser.id,
       { oldBadges, newBadges: badges }
     );
 
-    return { success: true, badges: targetUser.badges };
+    return { success: true, badges };
   }, {
     params: t.Object({
       userId: t.String(),
@@ -295,30 +290,36 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const searchQuery = q ? {
-      $or: [
-        { name: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-      ]
-    } : {};
+    const allServers = await Server.find({});
+    let filtered = allServers;
+    if (q) {
+      const lowerQ = q.toLowerCase();
+      filtered = allServers.filter(s => 
+        s.name?.toLowerCase().includes(lowerQ) ||
+        s.description?.toLowerCase().includes(lowerQ)
+      );
+    }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const servers = filtered.slice(skip, skip + limitNum);
 
-    const [servers, total] = await Promise.all([
-      Server.find(searchQuery)
-        .populate('ownerId', 'username displayName')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      Server.countDocuments(searchQuery)
-    ]);
+    // Batch fetch owners
+    const ownerIds = [...new Set(servers.map(s => s.ownerId))];
+    const owners = ownerIds.length > 0 ? await User.find({ id: { in: ownerIds } }) : [];
+    const ownerMap = new Map(owners.map(o => [o.id, o]));
 
     return {
       servers: servers.map(s => ({
-        id: s._id,
+        id: s.id,
         name: s.name,
         description: s.description,
         icon: s.icon,
         memberCount: s.memberCount,
-        owner: s.ownerId,
+        owner: ownerMap.get(s.ownerId) ? {
+          id: ownerMap.get(s.ownerId)!.id,
+          username: ownerMap.get(s.ownerId)!.username,
+          displayName: ownerMap.get(s.ownerId)!.displayName,
+        } : s.ownerId,
         isDiscoverable: s.isDiscoverable,
         isPartnered: s.isPartnered,
         createdAt: s.createdAt,
@@ -349,21 +350,21 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'delete_server',
       'server',
-      server._id.toString(),
-      { name: server.name, ownerId: server.ownerId.toString() },
+      server.id,
+      { name: server.name, ownerId: server.ownerId },
       reason
     );
 
     // Delete the server and associated data
-    await Promise.all([
-      Server.findByIdAndDelete(params.serverId),
-      Message.deleteMany({ serverId: params.serverId }),
-      // Channel deletion happens via Server cascade
-    ]);
-
+    await Server.deleteById(params.serverId);
+    const serverMessages = await Message.find({ serverId: params.serverId });
+    for (const msg of serverMessages) {
+      await Message.deleteById(msg.id);
+    }
+    // Channel deletion happens via Server cascade
     return { success: true, message: 'Server deleted' };
   }, {
     params: t.Object({
@@ -396,19 +397,20 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Age-gated servers cannot be partnered' };
     }
 
-    server.isPartnered = newPartnerStatus;
-    server.partneredAt = newPartnerStatus ? new Date() : undefined;
-    await server.save();
+    await Server.updateById(server.id, {
+      isPartnered: newPartnerStatus,
+      partneredAt: newPartnerStatus ? new Date() : null,
+    });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       newPartnerStatus ? 'grant_partner' : 'revoke_partner',
       'server',
-      server._id.toString(),
+      server.id,
       { name: server.name }
     );
 
-    return { success: true, isPartnered: server.isPartnered };
+    return { success: true, isPartnered: newPartnerStatus };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -435,18 +437,18 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Age-gated servers cannot be discoverable' };
     }
 
-    server.isDiscoverable = !server.isDiscoverable;
-    await server.save();
+    const newDiscoverable = !server.isDiscoverable;
+    await Server.updateById(server.id, { isDiscoverable: newDiscoverable });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'toggle_discovery',
       'server',
-      server._id.toString(),
-      { name: server.name, isDiscoverable: server.isDiscoverable }
+      server.id,
+      { name: server.name, isDiscoverable: newDiscoverable }
     );
 
-    return { success: true, isDiscoverable: server.isDiscoverable };
+    return { success: true, isDiscoverable: newDiscoverable };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -475,19 +477,18 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'New owner not found' };
     }
 
-    const oldOwnerId = server.ownerId.toString();
-    server.ownerId = newOwner._id;
-    await server.save();
+    const oldOwnerId = server.ownerId;
+    await Server.updateById(server.id, { ownerId: newOwner.id });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'transfer_ownership',
       'server',
-      server._id.toString(),
+      server.id,
       { 
         name: server.name, 
         oldOwnerId, 
-        newOwnerId: newOwner._id.toString(),
+        newOwnerId: newOwner.id,
         newOwnerUsername: newOwner.username
       },
       reason
@@ -524,7 +525,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const settings = await getPlatformSettings();
-    return (settings as any).toObject();
+    return settings;
   })
 
   // Update platform settings
@@ -562,14 +563,14 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const settings = await updatePlatformSettings(updates);
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'update_settings',
       'platform',
       'settings',
       updates
     );
 
-    return (settings as any).toObject();
+    return settings;
   }, {
     body: t.Object({
       maintenanceMode: t.Optional(t.Boolean()),
@@ -618,83 +619,79 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
           const { Channel } = await import('@/lib/models/Channel');
           const { Message } = await import('@/lib/models/Message');
           const { encryptForStorage } = await import('@/lib/security/encryption');
-          const { Types } = await import('mongoose');
           const { emitDmListUpdate } = await import('@/lib/api/dms');
 
           await ensureSerikaBroadcastUser();
 
           // Get all users (excluding system users and banned users)
-          const allUsers = await User.find({
-            isSystem: { $ne: true },
-            isBanned: { $ne: true }
-          }).select('_id');
+          const allUsers = await User.find({});
+          const eligibleUsers = allUsers.filter(u => !u.isSystem && !u.isBanned);
 
-          console.log(`[Broadcast] Sending to ${allUsers.length} users`);
+          console.log(`[Broadcast] Sending to ${eligibleUsers.length} users`);
 
           // Send DM to each user (in batches)
           const batchSize = 50;
-          const broadcastUserId = new Types.ObjectId(SERIKA_BROADCAST_ID);
+          const broadcastUserId = SERIKA_BROADCAST_ID;
           let sent = 0;
 
-          for (let i = 0; i < allUsers.length; i += batchSize) {
-            const batch = allUsers.slice(i, i + batchSize);
+          for (let i = 0; i < eligibleUsers.length; i += batchSize) {
+            const batch = eligibleUsers.slice(i, i + batchSize);
 
-            await Promise.all(batch.map(async (targetUser) => {
+            await Promise.all(batch.map(async (targetUser: any) => {
               try {
                 // Get or create DM channel with system user
                 let channel = await Channel.findOne({
                   type: 'dm',
-                  recipientIds: { $all: [broadcastUserId, targetUser._id], $size: 2 },
+                  recipientIds: [broadcastUserId, targetUser.id],
                 });
 
                 if (!channel) {
-                  channel = new Channel({
+                  channel = await Channel.create({
                     type: 'dm',
                     name: 'Direct Message',
-                    recipientIds: [broadcastUserId, targetUser._id],
+                    recipientIds: [broadcastUserId, targetUser.id],
                     position: 0,
                   });
-                  await channel.save();
                 }
 
                 // Encrypt and send message
                 const encryptedContent = await encryptForStorage(message.trim());
-                const dmMessage = new Message({
-                  channelId: channel._id,
+                const dmMessage = await Message.create({
+                  channelId: channel.id,
                   authorId: broadcastUserId,
                   content: encryptedContent,
                   type: 'default',
                 });
-                await dmMessage.save();
 
                 // Update channel
-                channel.lastMessageId = dmMessage._id;
-                channel.updatedAt = new Date();
-                await channel.save();
+                await Channel.updateById(channel.id, {
+                  lastMessageId: dmMessage.id,
+                  updatedAt: new Date(),
+                });
 
                 // Emit real-time DM list update to the target user
-                emitDmListUpdate([targetUser._id.toString()], {
+                emitDmListUpdate([targetUser.id], {
                   type: 'dm:list:update',
-                  channelId: channel._id.toString(),
-                  recipientId: SERIKA_BROADCAST_ID.toString(),
+                  channelId: channel.id,
+                  recipientId: SERIKA_BROADCAST_ID,
                   message: {
-                    id: dmMessage._id.toString(),
+                    id: dmMessage.id,
                     content: message.trim().slice(0, 180),
-                    authorId: broadcastUserId.toString(),
+                    authorId: broadcastUserId,
                     createdAt: dmMessage.createdAt,
                   },
                 });
 
                 sent++;
               } catch (err) {
-                console.error(`[Broadcast] Failed to send DM to user ${targetUser._id}:`, err);
+                console.error(`[Broadcast] Failed to send DM to user ${targetUser.id}:`, err);
               }
             }));
 
-            console.log(`[Broadcast] Progress: ${sent}/${allUsers.length} DMs sent`);
+            console.log(`[Broadcast] Progress: ${sent}/${eligibleUsers.length} DMs sent`);
           }
 
-          console.log(`[Broadcast] Complete: ${sent}/${allUsers.length} DMs sent`);
+          console.log(`[Broadcast] Complete: ${sent}/${eligibleUsers.length} DMs sent`);
         } catch (err) {
           console.error('[Broadcast] Failed to send broadcast DMs:', err);
         }
@@ -704,7 +701,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'broadcast_announcement',
       'platform',
       'broadcast',
@@ -734,30 +731,35 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = {};
+    const allLogs = await AdminLog.find({});
+    let filtered = allLogs;
     if (type) {
       if (type === 'bans') {
-        filter.action = { $in: ['ban_user', 'unban_user'] };
+        filtered = allLogs.filter(log => log.action === 'ban_user' || log.action === 'unban_user');
       } else if (type === 'reports') {
-        filter.action = { $in: ['resolve_report', 'dismiss_report'] };
+        filtered = allLogs.filter(log => log.action === 'resolve_report' || log.action === 'dismiss_report');
       } else if (type === 'admin') {
-        filter.action = { $in: ['update_settings', 'broadcast_announcement', 'grant_partner', 'revoke_partner'] };
+        filtered = allLogs.filter(log => ['update_settings', 'broadcast_announcement', 'grant_partner', 'revoke_partner'].includes(log.action));
       }
     }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const logs = filtered.slice(skip, skip + limitNum);
 
-    const [logs, total] = await Promise.all([
-      AdminLog.find(filter)
-        .populate('adminId', 'username displayName avatar')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      AdminLog.countDocuments(filter)
-    ]);
+    // Batch fetch admins
+    const adminIds = [...new Set(logs.map(log => log.adminId))];
+    const admins = adminIds.length > 0 ? await User.find({ id: { in: adminIds } }) : [];
+    const adminMap = new Map(admins.map(a => [a.id, a]));
 
     return {
-      logs: logs.map((log: IAdminLog) => ({
-        id: log._id,
-        admin: log.adminId,
+      logs: logs.map((log) => ({
+        id: log.id,
+        admin: adminMap.get(log.adminId) ? {
+          id: adminMap.get(log.adminId)!.id,
+          username: adminMap.get(log.adminId)!.username,
+          displayName: adminMap.get(log.adminId)!.displayName,
+          avatar: adminMap.get(log.adminId)!.avatar,
+        } : log.adminId,
         action: log.action,
         targetType: log.targetType,
         targetId: log.targetId,
@@ -790,22 +792,31 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = {};
+    const allExperiments = await Experiment.find({});
+    let filtered = allExperiments;
     if (status) {
-      filter.status = status;
+      filtered = allExperiments.filter(e => e.status === status);
     }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const experiments = filtered.slice(skip, skip + limitNum);
 
-    const [experiments, total] = await Promise.all([
-      Experiment.find(filter)
-        .populate('createdBy', 'username displayName')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      Experiment.countDocuments(filter)
-    ]);
+    // Batch fetch creators
+    const creatorIds = [...new Set(experiments.map(e => e.createdBy).filter(Boolean))];
+    const creators = creatorIds.length > 0 ? await User.find({ id: { in: creatorIds } }) : [];
+    const creatorMap = new Map(creators.map(c => [c.id, c]));
+
+    const experimentsWithCreators = experiments.map(e => ({
+      ...e,
+      createdBy: creatorMap.get(e.createdBy) ? {
+        id: creatorMap.get(e.createdBy)!.id,
+        username: creatorMap.get(e.createdBy)!.username,
+        displayName: creatorMap.get(e.createdBy)!.displayName,
+      } : e.createdBy,
+    }));
 
     return {
-      experiments,
+      experiments: experimentsWithCreators,
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -824,15 +835,27 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const { Experiment } = await import('@/lib/models/Experiment');
-    const experiment = await Experiment.findById(params.experimentId)
-      .populate('createdBy', 'username displayName');
+    const experiment = await Experiment.findById(params.experimentId);
     
     if (!experiment) {
       set.status = 404;
       return { error: 'Experiment not found' };
     }
 
-    return experiment;
+    // Fetch creator info
+    let creator = null;
+    if (experiment.createdBy) {
+      creator = await User.findById(experiment.createdBy);
+    }
+
+    return {
+      ...experiment,
+      createdBy: creator ? {
+        id: creator.id,
+        username: creator.username,
+        displayName: creator.displayName,
+      } : experiment.createdBy,
+    };
   }, {
     params: t.Object({
       experimentId: t.String(),
@@ -848,7 +871,6 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const { Experiment } = await import('@/lib/models/Experiment');
-    const { Types } = await import('mongoose');
 
     const {
       name,
@@ -863,7 +885,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       name: string;
       key: string;
       description?: string;
-      type: string;
+      type: 'feature_flag' | 'ab_test' | 'percentage_rollout' | 'user_segment';
       variants: Array<{ id: string; name: string; weight: number; config?: Record<string, unknown> }>;
       rolloutPercentage?: number;
       filters?: Array<{ type: string; operator: string; value: unknown }>;
@@ -877,7 +899,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Experiment key already exists' };
     }
 
-    const experiment = new Experiment({
+    const experiment = await Experiment.create({
       name,
       key,
       description,
@@ -885,18 +907,16 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       variants,
       rolloutPercentage: rolloutPercentage ?? 100,
       filters: filters ?? [],
-      excludedUsers: excludedUserIds?.map(id => new Types.ObjectId(id)) ?? [],
-      createdBy: user._id,
+      excludedUsers: excludedUserIds ?? [],
+      createdBy: user.id,
       status: 'draft',
     });
 
-    await experiment.save();
-
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'create_experiment',
       'platform',
-      experiment._id.toString(),
+      experiment.id,
       { name, key, type }
     );
 
@@ -955,34 +975,35 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       status?: string;
     };
 
-    if (name) experiment.name = name;
-    if (description !== undefined) experiment.description = description;
-    if (variants) experiment.variants = variants as any;
-    if (rolloutPercentage !== undefined) experiment.rolloutPercentage = rolloutPercentage;
-    if (filters) experiment.filters = filters as any;
+    const updates: Record<string, unknown> = {};
+    if (name) updates.name = name;
+    if (description !== undefined) updates.description = description;
+    if (variants) updates.variants = variants;
+    if (rolloutPercentage !== undefined) updates.rolloutPercentage = rolloutPercentage;
+    if (filters) updates.filters = filters;
     
     // Handle status changes
     if (status && status !== experiment.status) {
-      experiment.status = status as typeof experiment.status;
+      updates.status = status;
       if (status === 'running' && !experiment.startedAt) {
-        experiment.startedAt = new Date();
+        updates.startedAt = new Date();
       }
       if (status === 'completed' && !experiment.endedAt) {
-        experiment.endedAt = new Date();
+        updates.endedAt = new Date();
       }
     }
 
-    await experiment.save();
+    const updated = await Experiment.updateById(experiment.id, updates);
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'update_experiment',
       'platform',
-      experiment._id.toString(),
+      experiment.id,
       { changes: body }
     );
 
-    return experiment;
+    return updated || experiment;
   }, {
     params: t.Object({
       experimentId: t.String(),
@@ -1022,10 +1043,10 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Experiment not found' };
     }
 
-    await experiment.deleteOne();
+    await Experiment.deleteById(experiment.id);
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'delete_experiment',
       'platform',
       params.experimentId,
@@ -1061,13 +1082,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'User not found' };
     }
 
-    const variant = await getUserVariant(experiment.key, params.userId);
+    const variant = await getUserVariant(experiment, params.userId);
 
     return {
       experimentKey: experiment.key,
       experimentName: experiment.name,
       user: {
-        id: targetUser._id,
+        id: targetUser.id,
         username: targetUser.username,
       },
       variant,
@@ -1095,22 +1116,18 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = {};
+    const allInstances = await Instance.find({}) as any[];
+    let filtered = allInstances;
     if (status) {
-      filter.status = status;
+      filtered = allInstances.filter((i: any) => i.status === status);
     }
-
-    const [instances, total] = await Promise.all([
-      Instance.find(filter)
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      Instance.countDocuments(filter)
-    ]);
+    filtered.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const total = filtered.length;
+    const instances = filtered.slice(skip, skip + limitNum);
 
     return {
-      instances: instances.map(i => ({
-        id: i._id,
+      instances: instances.map((i: any) => ({
+        id: i.id,
         name: i.name,
         domain: i.domain,
         type: i.type,
@@ -1147,14 +1164,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Instance not found' };
     }
 
-    instance.status = 'active';
-    await instance.save();
+    await Instance.updateById(instance.id, { status: 'active' });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'approve_instance',
       'platform',
-      instance._id.toString(),
+      instance.id,
       { name: instance.name, domain: instance.domain }
     );
 
@@ -1183,14 +1199,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Instance not found' };
     }
 
-    instance.status = 'revoked';
-    await instance.save();
+    await Instance.updateById(instance.id, { status: 'revoked' });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'revoke_instance',
       'platform',
-      instance._id.toString(),
+      instance.id,
       { name: instance.name, domain: instance.domain },
       reason
     );
@@ -1215,23 +1230,22 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: error || 'Admin access required' };
     }
 
-    const [userCount, serverCount, messageCount, bannedCount] = await Promise.all([
-      User.countDocuments(),
-      Server.countDocuments(),
-      Message.countDocuments(),
-      User.countDocuments({ isBanned: true }),
-    ]);
+    const allUsers = await User.find({});
+    const allServers = await Server.find({});
+    const allMessages = await Message.find({});
+    const bannedUsers = allUsers.filter(u => u.isBanned);
 
     // Get today's new users
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const newUsersToday = await User.countDocuments({ createdAt: { $gte: today } });
+    const todayMs = today.getTime();
+    const newUsersToday = allUsers.filter(u => new Date(u.createdAt ?? 0).getTime() >= todayMs).length;
 
     return {
-      users: userCount,
-      servers: serverCount,
-      messages: messageCount,
-      banned: bannedCount,
+      users: allUsers.length,
+      servers: allServers.length,
+      messages: allMessages.length,
+      banned: bannedUsers.length,
       newUsersToday,
     };
   });

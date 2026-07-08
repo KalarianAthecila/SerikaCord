@@ -8,28 +8,25 @@ import { config } from '@/lib/config';
 import { isReservedSlug, isValidVanityCode } from '@/lib/constants/reserved';
 import { resolveEffectiveStatus, PRESENCE_TIMEOUT_MS } from '@/lib/services/presence';
 import { parseCustomEmojis } from '@/lib/services/emoji';
-import { Types } from 'mongoose';
+import { User } from '@/lib/models';
 
 // Live count of members who are actually online right now (status + fresh
 // heartbeat), mirroring resolveEffectiveStatus. The Server.onlineCount field
 // is never written to and must not be trusted as a source of truth.
-async function computeOnlineCount(serverId: Types.ObjectId | string): Promise<number> {
-  const result = await ServerMember.aggregate([
-    { $match: { serverId: new Types.ObjectId(serverId) } },
-    { $lookup: {
-      from: 'users',
-      localField: 'userId',
-      foreignField: '_id',
-      as: 'user',
-    }},
-    { $unwind: '$user' },
-    { $match: {
-      'user.status': { $nin: ['offline', 'invisible'] },
-      'user.presenceLastHeartbeatAt': { $gte: new Date(Date.now() - PRESENCE_TIMEOUT_MS) },
-    }},
-    { $count: 'count' },
-  ]);
-  return result[0]?.count ?? 0;
+async function computeOnlineCount(serverId: string): Promise<number> {
+  const members = await ServerMember.find({ serverId });
+  const userIds = members.map(m => m.userId);
+  const users = userIds.length > 0 ? await User.find({ id: { in: userIds } }) : [];
+  const userMap = new Map(users.map(u => [u.id, u]));
+  const now = Date.now();
+  return members.filter(m => {
+    const u = userMap.get(m.userId);
+    if (!u) return false;
+    if (u.status === 'offline' || u.status === 'invisible') return false;
+    const hb = u.presenceLastHeartbeatAt;
+    if (!hb) return false;
+    return new Date(hb).getTime() >= now - PRESENCE_TIMEOUT_MS;
+  }).length;
 }
 
 // Helper function for auth
@@ -55,11 +52,12 @@ const PERM_MANAGE_SERVER = 1n << 5n;
 const PERM_MANAGE_ROLES = 1n << 28n;
 
 // Check if user can manage roles in a server (owner or has Manage Roles / Administrator)
-async function canManageRoles(server: { ownerId: Types.ObjectId; _id: Types.ObjectId }, userId: Types.ObjectId): Promise<boolean> {
-  if (server.ownerId.equals(userId)) return true;
-  const member = await ServerMember.findOne({ serverId: server._id, userId }).populate('roles', 'permissions');
+async function canManageRoles(server: { ownerId: string; id: string }, userId: string): Promise<boolean> {
+  if (server.ownerId === userId) return true;
+  const member = await ServerMember.findOne({ serverId: server.id, userId });
   if (!member) return false;
-  const roles = member.roles as unknown as { permissions: string }[];
+  const roleIds = member.roles || [];
+  const roles = roleIds.length > 0 ? await Role.find({ id: { in: roleIds }, serverId: server.id }) : [];
   for (const role of roles) {
     const perms = BigInt(role.permissions || '0');
     if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
@@ -69,11 +67,12 @@ async function canManageRoles(server: { ownerId: Types.ObjectId; _id: Types.Obje
 }
 
 // Check if user can manage server settings (owner or has Manage Server / Administrator)
-async function canManageServer(server: { ownerId: Types.ObjectId; _id: Types.ObjectId }, userId: Types.ObjectId): Promise<boolean> {
-  if (server.ownerId.equals(userId)) return true;
-  const member = await ServerMember.findOne({ serverId: server._id, userId }).populate('roles', 'permissions');
+async function canManageServer(server: { ownerId: string; id: string }, userId: string): Promise<boolean> {
+  if (server.ownerId === userId) return true;
+  const member = await ServerMember.findOne({ serverId: server.id, userId });
   if (!member) return false;
-  const roles = member.roles as unknown as { permissions: string }[];
+  const roleIds = member.roles || [];
+  const roles = roleIds.length > 0 ? await Role.find({ id: { in: roleIds }, serverId: server.id }) : [];
   for (const role of roles) {
     const perms = BigInt(role.permissions || '0');
     if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
@@ -83,29 +82,27 @@ async function canManageServer(server: { ownerId: Types.ObjectId; _id: Types.Obj
 }
 
 // Add a user to a server (used by invites, discovery joins, and application approvals)
-async function addUserToServer(serverId: Types.ObjectId, userId: Types.ObjectId) {
+async function addUserToServer(serverId: string, userId: string) {
   const existingMembership = await ServerMember.findOne({ serverId, userId });
   if (existingMembership) return existingMembership;
 
   const everyoneRole = await Role.findOne({ serverId, isDefault: true });
-  const membership = new ServerMember({
+  const membership = await ServerMember.create({
     serverId,
     userId,
-    roles: everyoneRole ? [everyoneRole._id] : [],
+    roles: everyoneRole ? [everyoneRole.id] : [],
   });
-  await membership.save();
 
   const server = await Server.findById(serverId);
   if (server) {
-    server.memberCount += 1;
-    await server.save();
-    await cache.del(`server:${server._id}`);
+    await Server.updateById(serverId, { memberCount: (server.memberCount ?? 0) + 1 });
+    await cache.del(`server:${serverId}`);
   }
   return membership;
 }
 
 interface PopulatedRole {
-  _id: Types.ObjectId;
+  id: string;
   name: string;
   color?: number | string | null;
   position?: number;
@@ -117,7 +114,7 @@ interface PopulatedRole {
 }
 
 interface PopulatedMemberUser {
-  _id: Types.ObjectId;
+  id: string;
   username: string;
   displayName?: string;
   avatar?: string;
@@ -166,7 +163,7 @@ function parseHexColorToNumber(color?: string | null): number {
 
 function normalizeRoleDto(role: PopulatedRole, memberCount: number = 0) {
   return {
-    id: role._id.toString(),
+    id: role.id,
     name: role.name,
     color: normalizeRoleColor(role.color),
     position: role.position ?? 0,
@@ -180,32 +177,34 @@ function normalizeRoleDto(role: PopulatedRole, memberCount: number = 0) {
 }
 
 async function getRoleMemberCountMap(serverId: string): Promise<Map<string, number>> {
-  const aggregated = await ServerMember.aggregate<{ _id: Types.ObjectId; count: number }>([
-    { $match: { serverId: new Types.ObjectId(serverId) } },
-    { $unwind: '$roles' },
-    { $group: { _id: '$roles', count: { $sum: 1 } } },
-  ]);
-
-  return new Map(aggregated.map((item) => [item._id.toString(), item.count]));
+  const members = await ServerMember.find({ serverId });
+  const countMap = new Map<string, number>();
+  for (const m of members) {
+    for (const roleId of (m.roles || [])) {
+      countMap.set(roleId, (countMap.get(roleId) || 0) + 1);
+    }
+  }
+  return countMap;
 }
 
 async function getNormalizedRoles(serverId: string) {
-  const roles = await Role.find({ serverId }).sort({ position: -1 });
+  const roles = await Role.find({ serverId });
+  roles.sort((a: any, b: any) => (b.position ?? 0) - (a.position ?? 0));
   const memberCountMap = await getRoleMemberCountMap(serverId);
   return roles.map((role) =>
-    normalizeRoleDto(role as unknown as PopulatedRole, memberCountMap.get(role._id.toString()) || 0)
+    normalizeRoleDto(role as unknown as PopulatedRole, memberCountMap.get(role.id) || 0)
   );
 }
 
 function normalizeMemberDto(member: {
-  _id: Types.ObjectId;
+  id: string;
   userId?: PopulatedMemberUser | null;
   roles?: PopulatedRole[];
   joinedAt?: Date;
   nickname?: string | null;
   avatar?: string | null;
   banner?: string | null;
-}, ownerId?: Types.ObjectId | null) {
+}, ownerId?: string | null) {
   const memberRoles = (member.roles || [])
     .map((role) => normalizeRoleDto(role))
     .sort((a, b) => b.position - a.position);
@@ -214,8 +213,8 @@ function normalizeMemberDto(member: {
   const userData = member.userId;
 
   return {
-    id: userData?._id?.toString() || '',
-    membershipId: member._id.toString(),
+    id: userData?.id || '',
+    membershipId: member.id,
     username: userData?.username || 'Unknown',
     displayName: member.nickname || userData?.displayName || userData?.username || 'Unknown',
     avatar: member.avatar || userData?.avatar || null,
@@ -225,7 +224,7 @@ function normalizeMemberDto(member: {
     }),
     customStatus: userData?.customStatus || null,
     isPremium: Boolean(userData?.isPremium),
-    isOwner: ownerId ? ownerId.equals(userData?._id as unknown as Types.ObjectId) : false,
+    isOwner: ownerId ? ownerId === userData?.id : false,
     customization: userData?.customization || null,
     joinedAt: member.joinedAt || null,
     roles: memberRoles,
@@ -245,25 +244,24 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const memberships = await ServerMember.find({ userId: user._id })
-      .populate({
-        path: 'serverId',
-        select: 'name icon banner ownerId memberCount onlineCount features premiumTier isAgeGated isPartnered',
-      });
+    const memberships = await ServerMember.find({ userId: user.id });
+    const serverIds = memberships.map(m => m.serverId);
+    const servers = serverIds.length > 0 ? await Server.find({ id: { in: serverIds } }) : [];
+    const serverMap = new Map(servers.map(s => [s.id, s]));
 
-    const servers = memberships
-      .filter(m => m.serverId)
+    const mappedServers = memberships
+      .filter(m => serverMap.has(m.serverId))
       .map(m => {
-        const server = m.serverId as unknown as { _id: Types.ObjectId; toJSON: () => Record<string, unknown> };
+        const server = serverMap.get(m.serverId)!;
         return {
-          ...server.toJSON(),
-          id: server._id.toString(),
+          ...server,
+          id: server.id,
           joinedAt: m.joinedAt,
           roles: m.roles,
         };
       });
 
-    return { servers };
+    return { servers: mappedServers };
   })
   // Create server
   .post('/', async ({ headers, cookie, body, request, set }) => {
@@ -275,14 +273,15 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     // Rate limit server creation
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('serverCreate', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('serverCreate', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Server creation rate limited', retryAfter: rateLimit.retryAfter };
     }
 
     // Check server limit
-    const serverCount = await ServerMember.countDocuments({ userId: user._id });
+    const userServers = await ServerMember.find({ userId: user.id });
+    const serverCount = userServers.length;
     if (serverCount >= config.MAX_SERVERS_PER_USER) {
       set.status = 400;
       return { error: `You can only be in ${config.MAX_SERVERS_PER_USER} servers` };
@@ -292,83 +291,68 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const sanitizedName = sanitizeInput(name);
 
     // Create server
-    const server = new Server({
+    const server = await Server.create({
       name: sanitizedName,
       icon,
-      ownerId: user._id,
+      ownerId: user.id,
       memberCount: 1,
     });
 
-    await server.save();
-
     // Create @everyone role
-    const everyoneRole = new Role({
-      serverId: server._id,
+    const everyoneRole = await Role.create({
+      serverId: server.id,
       name: '@everyone',
       position: 0,
       permissions: DEFAULT_PERMISSIONS.everyone,
       isDefault: true,
     });
 
-    await everyoneRole.save();
-
     // Create default channels
-    const textCategory = new Channel({
-      serverId: server._id,
+    const textCategory = await Channel.create({
+      serverId: server.id,
       name: 'Text Channels',
       type: 'category',
       position: 0,
     });
 
-    await textCategory.save();
-
-    const generalChannel = new Channel({
-      serverId: server._id,
+    const generalChannel = await Channel.create({
+      serverId: server.id,
       name: 'general',
       type: 'text',
       position: 0,
-      parentId: textCategory._id,
+      parentId: textCategory.id,
     });
 
-    await generalChannel.save();
-
     // Create voice category and channel
-    const voiceCategory = new Channel({
-      serverId: server._id,
+    const voiceCategory = await Channel.create({
+      serverId: server.id,
       name: 'Voice Channels',
       type: 'category',
       position: 1,
     });
 
-    await voiceCategory.save();
-
-    const generalVoice = new Channel({
-      serverId: server._id,
+    const generalVoice = await Channel.create({
+      serverId: server.id,
       name: 'General',
       type: 'voice',
       position: 0,
-      parentId: voiceCategory._id,
+      parentId: voiceCategory.id,
     });
-
-    await generalVoice.save();
 
     // Set system channel
-    server.systemChannelId = generalChannel._id;
-    await server.save();
+    await Server.updateById(server.id, { systemChannelId: generalChannel.id });
 
     // Add owner as member
-    const membership = new ServerMember({
-      serverId: server._id,
-      userId: user._id,
-      roles: [everyoneRole._id],
+    await ServerMember.create({
+      serverId: server.id,
+      userId: user.id,
+      roles: [everyoneRole.id],
     });
-
-    await membership.save();
 
     return {
       success: true,
       server: {
-        ...server.toJSON(),
+        ...server,
         channels: [textCategory, generalChannel, voiceCategory, generalVoice],
         roles: [everyoneRole],
       },
@@ -398,21 +382,21 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    const isBanned = await ServerBan.exists({ serverId: server._id, userId: user._id });
+    const isBanned = await ServerBan.findOne({ serverId: server.id, userId: user.id });
     if (isBanned) {
       set.status = 403;
       return { error: 'You are banned from this server' };
     }
 
     // Check if owner or has manage channels permission
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to create channels' };
     }
 
     // Check channel limit
-    const channelCount = await Channel.countDocuments({ serverId: server._id });
-    if (channelCount >= config.MAX_CHANNELS_PER_SERVER) {
+    const existingChannels = await Channel.find({ serverId: server.id });
+    if (existingChannels.length >= config.MAX_CHANNELS_PER_SERVER) {
       set.status = 400;
       return { error: `Server has reached the channel limit of ${config.MAX_CHANNELS_PER_SERVER}` };
     }
@@ -435,15 +419,17 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Get highest position in parent or server
-    const highestChannel = await Channel.findOne({
-      serverId: server._id,
+    const siblingChannels = await Channel.find({
+      serverId: server.id,
       parentId: parentId || null,
-    }).sort({ position: -1 });
+    });
+    siblingChannels.sort((a: any, b: any) => (b.position ?? 0) - (a.position ?? 0));
+    const highestChannel = siblingChannels[0];
 
-    const position = highestChannel ? highestChannel.position + 1 : 0;
+    const position = highestChannel ? (highestChannel.position ?? 0) + 1 : 0;
 
-    const channel = new Channel({
-      serverId: server._id,
+    const channel = await Channel.create({
+      serverId: server.id,
       name: sanitizedName,
       type,
       position,
@@ -451,8 +437,6 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       nsfw: type !== 'category' ? Boolean(nsfw) : false,
       ...(type === 'forum' ? { forumMode: forumMode === 'tickets' ? 'tickets' : 'posts' } : {}),
     });
-
-    await channel.save();
 
     return {
       success: true,
@@ -484,7 +468,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to reorder channels' };
     }
@@ -496,22 +480,15 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Bulk update each channel's position and parentId
-    const bulkOps = channelUpdates.map((update: { id: string; position: number; parentId?: string | null }) => ({
-      updateOne: {
-        filter: { _id: update.id, serverId: server._id },
-        update: {
-          $set: {
-            position: update.position,
-            ...(update.parentId !== undefined ? { parentId: update.parentId || null } : {}),
-          },
-        },
-      },
-    }));
-
-    await Channel.bulkWrite(bulkOps);
+    for (const update of channelUpdates) {
+      const updates: Record<string, unknown> = { position: update.position };
+      if (update.parentId !== undefined) updates.parentId = update.parentId || null;
+      await Channel.updateById(update.id, updates);
+    }
 
     // Fetch fresh channel list
-    const updatedChannels = await Channel.find({ serverId: server._id }).sort({ position: 1 });
+    const updatedChannels = await Channel.find({ serverId: server.id });
+    updatedChannels.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
 
     return { success: true, channels: updatedChannels };
   }, {
@@ -539,29 +516,30 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Invalid server ID' };
     }
 
-    // Check membership
-    const membership = await ServerMember.findOne({
-      serverId: params.serverId,
-      userId: user._id,
-    });
+    // Check membership and fetch server data in parallel
+    const [membership, server, channels, roles] = await Promise.all([
+      ServerMember.findOne({ serverId: params.serverId, userId: user.id }),
+      Server.findById(params.serverId),
+      Channel.find({ serverId: params.serverId }),
+      Role.find({ serverId: params.serverId }),
+    ]);
 
     if (!membership) {
       set.status = 403;
       return { error: 'You are not a member of this server' };
     }
 
-    const server = await Server.findById(params.serverId);
     if (!server) {
       set.status = 404;
       return { error: 'Server not found' };
     }
 
-    const channels = await Channel.find({ serverId: server._id }).sort({ position: 1 });
-    const roles = await Role.find({ serverId: server._id }).sort({ position: -1 });
+    channels.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
+    roles.sort((a: any, b: any) => (b.position ?? 0) - (a.position ?? 0));
 
     return {
       server: {
-        ...server.toJSON(),
+        ...server,
         channels,
         roles,
         member: membership,
@@ -592,8 +570,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     const membership = await ServerMember.findOne({
-      serverId: server._id,
-      userId: user._id,
+      serverId: server.id,
+      userId: user.id,
     });
     if (!membership) {
       set.status = 403;
@@ -602,25 +580,25 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     return {
       settings: {
-        widget: server.settings?.widget || { enabled: true, channelId: null },
+        widget: (server.settings as any)?.widget || { enabled: true, channelId: null },
         moderation: {
-          verificationLevel: server.settings?.moderation?.verificationLevel || server.verificationLevel,
-          explicitContentFilter: server.settings?.moderation?.explicitContentFilter || server.explicitContentFilter,
-          require2FA: server.settings?.moderation?.require2FA || false,
+          verificationLevel: (server.settings as any)?.moderation?.verificationLevel || server.verificationLevel,
+          explicitContentFilter: (server.settings as any)?.moderation?.explicitContentFilter || server.explicitContentFilter,
+          require2FA: (server.settings as any)?.moderation?.require2FA || false,
         },
-        safety: server.settings?.safety || { raidProtection: false, antiSpam: true, mentionSpamLimit: 5 },
-        integrations: server.settings?.integrations || {
+        safety: (server.settings as any)?.safety || { raidProtection: false, antiSpam: true, mentionSpamLimit: 5 },
+        integrations: (server.settings as any)?.integrations || {
           discord: false,
           twitch: false,
           youtube: false,
           webhooks: false,
         },
-        soundboard: server.settings?.soundboard || {
+        soundboard: (server.settings as any)?.soundboard || {
           enabled: true,
           volume: 100,
         },
         access: {
-          joinMode: server.settings?.access?.joinMode || server.joinMode || 'invite_only',
+          joinMode: (server.settings as any)?.access?.joinMode || server.joinMode || 'invite_only',
         },
         isAgeGated: Boolean(server.isAgeGated),
       },
@@ -649,37 +627,38 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id) && !(await canManageRoles(server, user._id))) {
+    if (server.ownerId !== user.id && !(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You do not have permission to edit this server' };
     }
 
     const payload = body as any;
+    const serverSettings = server.settings as any || {};
     const nextSettings = {
-      ...(server.settings || {}),
+      ...serverSettings,
       ...(payload.settings || {}),
       widget: {
-        ...(server.settings?.widget || {}),
+        ...(serverSettings.widget || {}),
         ...(payload.settings?.widget || {}),
       },
       moderation: {
-        ...(server.settings?.moderation || {}),
+        ...(serverSettings.moderation || {}),
         ...(payload.settings?.moderation || {}),
       },
       safety: {
-        ...(server.settings?.safety || {}),
+        ...(serverSettings.safety || {}),
         ...(payload.settings?.safety || {}),
       },
       integrations: {
-        ...(server.settings?.integrations || {}),
+        ...(serverSettings.integrations || {}),
         ...(payload.settings?.integrations || {}),
       },
       soundboard: {
-        ...(server.settings?.soundboard || {}),
+        ...(serverSettings.soundboard || {}),
         ...(payload.settings?.soundboard || {}),
       },
       access: {
-        ...(server.settings?.access || {}),
+        ...(serverSettings.access || {}),
         ...(payload.settings?.access || {}),
       },
     } as any;
@@ -703,17 +682,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       server.isAgeGated = payload.isAgeGated;
       if (payload.isAgeGated) {
         server.isPartnered = false;
-        server.partneredAt = undefined;
+        server.partneredAt = null;
         server.isDiscoverable = false;
-        server.discoverableAt = undefined;
+        server.discoverableAt = null;
         server.joinMode = 'invite_only';
         nextSettings.access = { ...(nextSettings.access || {}), joinMode: 'invite_only' };
       }
     }
 
-    server.settings = nextSettings;
-    await server.save();
-    await cache.del(`server:${server._id}`);
+    await Server.updateById(server.id, { settings: nextSettings as any });
+    await cache.del(`server:${server.id}`);
 
     return {
       success: true,
@@ -748,7 +726,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id) && !(await canManageRoles(server, user._id))) {
+    if (server.ownerId !== user.id && !(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You do not have permission to edit this server' };
     }
@@ -824,10 +802,10 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
     if (channelIdsToCheck.length > 0) {
       const found = await Channel.find({
-        _id: { $in: channelIdsToCheck },
-        serverId: server._id,
-      }).select('_id').lean();
-      const foundIds = new Set(found.map((c) => c._id.toString()));
+        id: { in: channelIdsToCheck },
+        serverId: server.id,
+      });
+      const foundIds = new Set(found.map((c: any) => c.id));
       for (const key of CHANNEL_FIELDS) {
         const value = changes[key];
         if (typeof value === 'string' && value && isValidObjectId(value) && !foundIds.has(value)) {
@@ -957,9 +935,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
             server.isAgeGated = v;
             if (v) {
               server.isPartnered = false;
-              server.partneredAt = undefined;
+              server.partneredAt = null;
               server.isDiscoverable = false;
-              server.discoverableAt = undefined;
+              server.discoverableAt = null;
               server.joinMode = 'invite_only';
               section('access').joinMode = 'invite_only';
             }
@@ -976,21 +954,21 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Some settings are invalid', fieldErrors };
     }
 
-    // All valid: apply everything, then persist in one save
+    // All valid: apply everything, then persist
     for (const apply of staged) apply();
-    server.markModified('settings');
-    await server.save();
-    await cache.del(`server:${server._id}`);
+    const { id: _sid, ...serverUpdates } = server;
+    await Server.updateById(server.id, serverUpdates as any);
+    await cache.del(`server:${server.id}`);
 
     return {
       success: true,
       server: {
-        id: server._id.toString(),
+        id: server.id,
         name: server.name,
         description: server.description,
-        systemChannelId: server.systemChannelId?.toString() ?? null,
-        rulesChannelId: server.rulesChannelId?.toString() ?? null,
-        afkChannelId: server.afkChannelId?.toString() ?? null,
+        systemChannelId: server.systemChannelId ?? null,
+        rulesChannelId: server.rulesChannelId ?? null,
+        afkChannelId: server.afkChannelId ?? null,
         afkTimeout: server.afkTimeout,
       },
       settings: server.settings,
@@ -1018,7 +996,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Check if owner or has manage server permission
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to edit this server' };
     }
@@ -1029,9 +1007,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     if (description !== undefined) server.description = sanitizeInput(description);
     if (icon !== undefined) server.icon = icon;
     if (banner !== undefined) server.banner = banner;
-    if (systemChannelId !== undefined) server.systemChannelId = systemChannelId || undefined;
-    if (rulesChannelId !== undefined) server.rulesChannelId = rulesChannelId || undefined;
-    if (afkChannelId !== undefined) server.afkChannelId = afkChannelId || undefined;
+    if (systemChannelId !== undefined) server.systemChannelId = systemChannelId || null;
+    if (rulesChannelId !== undefined) server.rulesChannelId = rulesChannelId || null;
+    if (afkChannelId !== undefined) server.afkChannelId = afkChannelId || null;
     if (afkTimeout !== undefined) server.afkTimeout = afkTimeout;
     if (verificationLevel !== undefined) server.verificationLevel = verificationLevel;
     if (explicitContentFilter !== undefined) server.explicitContentFilter = explicitContentFilter;
@@ -1041,45 +1019,47 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       server.isAgeGated = isAgeGated;
       if (isAgeGated) {
         server.isPartnered = false;
-        server.partneredAt = undefined;
+        server.partneredAt = null;
         server.isDiscoverable = false;
-        server.discoverableAt = undefined;
+        server.discoverableAt = null;
       }
     }
 
     // Keep extended settings document in sync with legacy fields
+    const serverSettings2 = server.settings as any || {};
     server.settings = {
-      ...(server.settings || {}),
+      ...serverSettings2,
       moderation: {
-        ...(server.settings?.moderation || {}),
-        verificationLevel: verificationLevel ?? server.settings?.moderation?.verificationLevel ?? server.verificationLevel,
-        explicitContentFilter: explicitContentFilter ?? server.settings?.moderation?.explicitContentFilter ?? server.explicitContentFilter,
+        ...(serverSettings2.moderation || {}),
+        verificationLevel: verificationLevel ?? serverSettings2.moderation?.verificationLevel ?? server.verificationLevel,
+        explicitContentFilter: explicitContentFilter ?? serverSettings2.moderation?.explicitContentFilter ?? server.explicitContentFilter,
       },
       widget: {
-        enabled: server.settings?.widget?.enabled ?? true,
-        channelId: server.settings?.widget?.channelId ?? null,
+        enabled: serverSettings2.widget?.enabled ?? true,
+        channelId: serverSettings2.widget?.channelId ?? null,
       },
       safety: {
-        raidProtection: server.settings?.safety?.raidProtection ?? false,
-        antiSpam: server.settings?.safety?.antiSpam ?? true,
-        mentionSpamLimit: server.settings?.safety?.mentionSpamLimit ?? 5,
+        raidProtection: serverSettings2.safety?.raidProtection ?? false,
+        antiSpam: serverSettings2.safety?.antiSpam ?? true,
+        mentionSpamLimit: serverSettings2.safety?.mentionSpamLimit ?? 5,
       },
       integrations: {
-        discord: server.settings?.integrations?.discord ?? false,
-        twitch: server.settings?.integrations?.twitch ?? false,
-        youtube: server.settings?.integrations?.youtube ?? false,
-        webhooks: server.settings?.integrations?.webhooks ?? false,
+        discord: serverSettings2.integrations?.discord ?? false,
+        twitch: serverSettings2.integrations?.twitch ?? false,
+        youtube: serverSettings2.integrations?.youtube ?? false,
+        webhooks: serverSettings2.integrations?.webhooks ?? false,
       },
       soundboard: {
-        enabled: server.settings?.soundboard?.enabled ?? true,
-        volume: server.settings?.soundboard?.volume ?? 100,
+        enabled: serverSettings2.soundboard?.enabled ?? true,
+        volume: serverSettings2.soundboard?.volume ?? 100,
       },
     } as any;
 
-    await server.save();
+    const { id: _updateId, ...serverFields } = server;
+    await Server.updateById(server.id, serverFields as any);
 
     // Invalidate cache
-    await cache.del(`server:${server._id}`);
+    await cache.del(`server:${server.id}`);
 
     return { success: true, server };
   }, {
@@ -1124,20 +1104,26 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can delete the server' };
     }
 
     // Delete all related data
+    const [channels, roles, members, invites] = await Promise.all([
+      Channel.find({ serverId: server.id }),
+      Role.find({ serverId: server.id }),
+      ServerMember.find({ serverId: server.id }),
+      Invite.find({ serverId: server.id }),
+    ]);
     await Promise.all([
-      Channel.deleteMany({ serverId: server._id }),
-      Role.deleteMany({ serverId: server._id }),
-      ServerMember.deleteMany({ serverId: server._id }),
-      Invite.deleteMany({ serverId: server._id }),
+      ...channels.map((c: any) => Channel.deleteById(c.id)),
+      ...roles.map((r: any) => Role.deleteById(r.id)),
+      ...members.map((m: any) => ServerMember.deleteById(m.id)),
+      ...invites.map((i: any) => Invite.deleteById(i.id)),
     ]);
 
-    await server.deleteOne();
+    await Server.deleteById(server.id);
 
     return { success: true };
   }, {
@@ -1155,7 +1141,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (!membership) {
@@ -1167,23 +1153,41 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const after = query.after;
 
     const filter: Record<string, unknown> = { serverId: params.serverId };
-    if (after) {
-      filter._id = { $gt: after };
-    }
 
-    const [server, members] = await Promise.all([
-      Server.findById(params.serverId).select('ownerId').lean(),
-      ServerMember.find(filter)
-        .limit(limit)
-        .populate('userId', 'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt customization')
-        .populate('roles', 'name color position permissions hoist mentionable managed isDefault')
-        .lean(),
+    const [server, allMembers] = await Promise.all([
+      Server.findById(params.serverId),
+      ServerMember.find(filter),
     ]);
 
+    // Manual populate: batch fetch users and roles
+    const userIds = [...new Set(allMembers.map((m: any) => m.userId).filter(Boolean))];
+    const roleIds = [...new Set(allMembers.flatMap((m: any) => m.roles || []).filter(Boolean))];
+
+    const [users, roles] = await Promise.all([
+      userIds.length > 0 ? User.find({ id: { in: userIds } }) : [],
+      roleIds.length > 0 ? Role.find({ id: { in: roleIds }, serverId: params.serverId }) : [],
+    ]);
+
+    const userMap = new Map(users.map((u: any) => [u.id, u]));
+    const roleMap = new Map(roles.map((r: any) => [r.id, r]));
+
+    let members = allMembers.map((m: any) => ({
+      ...m,
+      userId: m.userId ? userMap.get(m.userId) ?? m.userId : null,
+      roles: (m.roles || []).map((rid: string) => roleMap.get(rid)).filter(Boolean),
+    }));
+
+    // Apply 'after' cursor and limit in JS
+    if (after) {
+      const afterIdx = members.findIndex((m: any) => m.id === after);
+      members = afterIdx >= 0 ? members.slice(afterIdx + 1) : [];
+    }
+    members = members.slice(0, limit);
+
     return {
-      members: members.map((member) =>
+      members: members.map((member: any) =>
         normalizeMemberDto(member as unknown as {
-          _id: Types.ObjectId;
+          id: string;
           userId?: PopulatedMemberUser | null;
           roles?: PopulatedRole[];
           joinedAt?: Date;
@@ -1218,7 +1222,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!(await canManageRoles(server, user._id))) {
+    if (!(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You need Manage Roles permission to assign roles' };
     }
@@ -1244,33 +1248,28 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     const requestedRoleIds = Array.from(new Set((body.roleIds || []).filter((id): id is string => isValidObjectId(id))));
-    const requestedWithEveryone = Array.from(new Set([everyoneRole._id.toString(), ...requestedRoleIds]));
+    const requestedWithEveryone = Array.from(new Set([everyoneRole.id, ...requestedRoleIds]));
 
     const validRoles = await Role.find({
       serverId: params.serverId,
-      _id: { $in: requestedWithEveryone.map((id) => new Types.ObjectId(id)) },
-    }).select('_id');
+      id: { in: requestedWithEveryone },
+    });
 
     if (validRoles.length !== requestedWithEveryone.length) {
       set.status = 400;
       return { error: 'One or more provided role IDs are invalid for this server' };
     }
 
-    member.roles = requestedWithEveryone.map((id) => new Types.ObjectId(id));
-    await member.save();
+    await ServerMember.updateById(member.id, { roles: requestedWithEveryone });
 
-    const populatedMember = await ServerMember.findById(member._id)
-      .populate('userId', 'username displayName avatar status customStatus isPremium presenceLastHeartbeatAt customization')
-      .populate('roles', 'name color position permissions hoist mentionable managed isDefault');
-
-    if (!populatedMember) {
-      set.status = 404;
-      return { error: 'Member not found' };
-    }
+    // Manual populate
+    const populatedUser = member.userId ? await User.findById(member.userId) : null;
+    const populatedRoles = await Role.find({ id: { in: requestedWithEveryone }, serverId: params.serverId });
+    const populatedMember = { ...member, userId: populatedUser, roles: populatedRoles };
 
     return {
       member: normalizeMemberDto(populatedMember as unknown as {
-        _id: Types.ObjectId;
+        id: string;
         userId?: PopulatedMemberUser | null;
         roles?: PopulatedRole[];
         joinedAt?: Date;
@@ -1300,29 +1299,34 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
     if (!membership) {
       set.status = 403;
       return { error: 'You are not a member of this server' };
     }
 
-    const member = await ServerMember.findOne({
+    const rawMember = await ServerMember.findOne({
       serverId: params.serverId,
       userId: params.memberUserId,
-    })
-      .populate('userId', 'username displayName avatar status customStatus isPremium badges bio banner presenceLastHeartbeatAt customization')
-      .populate('roles', 'name color position permissions hoist mentionable managed isDefault');
+    });
 
-    if (!member) {
+    if (!rawMember) {
       set.status = 404;
       return { error: 'Member not found' };
     }
 
-    const server = await Server.findById(params.serverId).select('ownerId');
+    const server = await Server.findById(params.serverId);
+
+    // Manual populate
+    const [populatedUser, populatedRoles] = await Promise.all([
+      rawMember.userId ? User.findById(rawMember.userId) : null,
+      rawMember.roles && rawMember.roles.length > 0 ? Role.find({ id: { in: rawMember.roles }, serverId: params.serverId }) : [],
+    ]);
+    const member = { ...rawMember, userId: populatedUser, roles: populatedRoles };
 
     const normalized = normalizeMemberDto(member as unknown as {
-      _id: Types.ObjectId;
+      id: string;
       userId?: PopulatedMemberUser | null;
       roles?: PopulatedRole[];
       joinedAt?: Date;
@@ -1331,16 +1335,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       banner?: string | null;
     });
 
-    const userData = member.userId as unknown as { bio?: string; banner?: string; badges?: string[] } | null;
+    const userData = populatedUser as { bio?: string; banner?: string; badges?: string[] } | null;
 
     return {
       ...normalized,
-      nickname: member.nickname || null,
-      avatarOverride: member.avatar || null,
+      nickname: rawMember.nickname || null,
+      avatarOverride: rawMember.avatar || null,
       bio: userData?.bio || null,
-      banner: member.banner || userData?.banner || null,
+      banner: rawMember.banner || userData?.banner || null,
       badges: userData?.badges || [],
-      isOwner: server ? server.ownerId.equals(member.userId as unknown as Types.ObjectId) : false,
+      isOwner: server ? server.ownerId === rawMember.userId : false,
     };
   }, {
     params: t.Object({
@@ -1358,7 +1362,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const member = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (!member) {
@@ -1368,24 +1372,18 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const { nickname, avatar, banner } = body;
 
-    if (nickname !== undefined) {
-      member.nickname = nickname ? sanitizeInput(nickname) : undefined;
-    }
-    if (avatar !== undefined) {
-      member.avatar = avatar || undefined;
-    }
-    if (banner !== undefined) {
-      member.banner = banner || undefined;
-    }
-
-    await member.save();
+    const updates: Record<string, unknown> = {};
+    if (nickname !== undefined) updates.nickname = nickname ? sanitizeInput(nickname) : undefined;
+    if (avatar !== undefined) updates.avatar = avatar || undefined;
+    if (banner !== undefined) updates.banner = banner || undefined;
+    await ServerMember.updateById(member.id, updates);
 
     return {
       success: true,
       member: {
-        nickname: member.nickname || null,
-        avatar: member.avatar || null,
-        banner: member.banner || null,
+        nickname: updates.nickname ?? member.nickname ?? null,
+        avatar: updates.avatar ?? member.avatar ?? null,
+        banner: updates.banner ?? member.banner ?? null,
       },
     };
   }, {
@@ -1412,19 +1410,21 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (server.ownerId.equals(user._id)) {
+    if (server.ownerId === user.id) {
       set.status = 400;
       return { error: 'Server owner cannot leave. Transfer ownership first or delete the server.' };
     }
 
-    await ServerMember.deleteOne({
+    const memberToDelete = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
+    if (memberToDelete) {
+      await ServerMember.deleteById(memberToDelete.id);
+    }
 
     // Update member count
-    server.memberCount = Math.max(0, server.memberCount - 1);
-    await server.save();
+    await Server.updateById(server.id, { memberCount: Math.max(0, (server.memberCount || 0) - 1) });
 
     return { success: true };
   }, {
@@ -1442,29 +1442,31 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const server = await Server.findById(params.serverId).select('ownerId');
+    const server = await Server.findById(params.serverId);
     if (!server) {
       set.status = 404;
       return { error: 'Server not found' };
     }
 
-    const isOwner = server.ownerId.equals(user._id);
+    const isOwner = server.ownerId === user.id;
     if (isOwner) {
       // Owner implicitly has every permission.
       return { isOwner: true, permissions: (~0n & ((1n << 48n) - 1n)).toString() };
     }
 
-    const member = await ServerMember.findOne({ serverId: server._id, userId: user._id })
-      .populate('roles', 'permissions');
+    const member = await ServerMember.findOne({ serverId: server.id, userId: user.id });
     if (!member) {
       set.status = 403;
       return { error: 'Not a member of this server' };
     }
 
-    const roles = member.roles as unknown as { permissions: string }[];
+    // Manual populate roles
+    const roleIds = (member.roles || []) as string[];
+    const roles = roleIds.length > 0 ? await Role.find({ id: { in: roleIds }, serverId: params.serverId }) : [];
+
     let effective = 0n;
     for (const role of roles) {
-      effective |= BigInt(role.permissions || '0');
+      effective |= BigInt((role as any).permissions || '0');
     }
 
     return { isOwner: false, permissions: effective.toString() };
@@ -1483,7 +1485,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (!membership) {
@@ -1493,17 +1495,19 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('invite', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('invite', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Invite creation rate limited', retryAfter: rateLimit.retryAfter };
     }
 
     // Get default channel
-    const channel = await Channel.findOne({
+    const channels = await Channel.find({
       serverId: params.serverId,
-      type: { $in: ['text', 'announcement'] },
-    }).sort({ position: 1 });
+      type: { in: ['text', 'announcement'] },
+    });
+    channels.sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
+    const channel = channels[0];
 
     if (!channel) {
       set.status = 400;
@@ -1512,18 +1516,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const { maxUses = 0, maxAge = 86400, temporary = false } = body;
 
-    const invite = new Invite({
+    const invite = await Invite.create({
       code: nanoid(8),
       serverId: params.serverId,
-      channelId: channel._id,
-      inviterId: user._id,
+      channelId: channel.id,
+      inviterId: user.id,
       maxUses,
       maxAge,
       temporary,
       expiresAt: maxAge > 0 ? new Date(Date.now() + maxAge * 1000) : null,
     });
-
-    await invite.save();
 
     return {
       success: true,
@@ -1560,8 +1562,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     // Check membership
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
-    }).select('_id').lean();
+      userId: user.id,
+    });
 
     if (!membership) {
       set.status = 403;
@@ -1570,25 +1572,43 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     // Threads (public_thread / private_thread) live inside forum channels and are
     // listed via /channels/:id/threads — never as top-level sidebar channels.
-    const channels = await Channel.find({
+    const allChannels = await Channel.find({
       serverId: params.serverId,
-      type: { $nin: ['public_thread', 'private_thread'] },
-    }).sort({ position: 1 }).lean();
-    // Transform _id to id for frontend compatibility
-    return channels.map(ch => ({
-      id: ch._id.toString(),
+    });
+    const channels = allChannels
+      .filter((ch: any) => ch.type !== 'public_thread' && ch.type !== 'private_thread')
+      .sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0));
+
+    // Batch-resolve the timestamp of each channel's last message so the client
+    // can compute initial unread state (bold) without an extra round-trip per
+    // channel. One query for all last-message ids in this server.
+    const lastMessageIds = channels
+      .map((ch: any) => ch.lastMessageId)
+      .filter((id: unknown): id is string => typeof id === 'string' && id.length > 0);
+    const lastMessageAtById = new Map<string, string>();
+    if (lastMessageIds.length > 0) {
+      const lastMsgs = await Message.find({ id: { in: lastMessageIds } });
+      for (const m of lastMsgs as any[]) {
+        if (m.createdAt) lastMessageAtById.set(m.id, new Date(m.createdAt).toISOString());
+      }
+    }
+
+    // Transform for frontend compatibility
+    return channels.map((ch: any) => ({
+      id: ch.id,
       name: ch.name,
       type: ch.type,
-      serverId: ch.serverId?.toString(),
+      serverId: ch.serverId,
       position: ch.position,
-      parentId: ch.parentId?.toString() || null,
+      parentId: ch.parentId || null,
       topic: ch.topic,
       nsfw: ch.nsfw,
       forumMode: ch.forumMode,
       rateLimitPerUser: ch.rateLimitPerUser,
-      lastMessageId: ch.lastMessageId?.toString() || null,
+      lastMessageId: ch.lastMessageId || null,
+      lastMessageAt: ch.lastMessageId ? (lastMessageAtById.get(ch.lastMessageId) || null) : null,
       permissionOverwrites: (ch.permissionOverwrites || []).map((o: { id: any; type: string; allow: string; deny: string }) => ({
-        id: o.id.toString(),
+        id: o.id,
         type: o.type,
         allow: o.allow,
         deny: o.deny,
@@ -1615,7 +1635,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     // Check membership
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (!membership) {
@@ -1649,16 +1669,18 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!(await canManageRoles(server, user._id))) {
+    if (!(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You need Manage Roles permission to create roles' };
     }
 
     // Get highest position
-    const highestRole = await Role.findOne({ serverId: params.serverId }).sort({ position: -1 });
+    const existingRoles = await Role.find({ serverId: params.serverId });
+    existingRoles.sort((a: any, b: any) => (b.position ?? 0) - (a.position ?? 0));
+    const highestRole = existingRoles[0];
     const newPosition = (highestRole?.position || 0) + 1;
 
-    const role = new Role({
+    const role = await Role.create({
       serverId: params.serverId,
       name: body.name || 'new role',
       color: parseHexColorToNumber(body.color),
@@ -1668,10 +1690,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       mentionable: body.mentionable || false,
     });
 
-    await role.save();
-
     const roles = await getNormalizedRoles(params.serverId);
-    const createdRole = roles.find((item) => item.id === role._id.toString());
+    const createdRole = roles.find((item) => item.id === role.id);
 
     return { role: createdRole || normalizeRoleDto(role as unknown as PopulatedRole) };
   }, {
@@ -1705,12 +1725,12 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!(await canManageRoles(server, user._id))) {
+    if (!(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You need Manage Roles permission to edit roles' };
     }
 
-    const role = await Role.findOne({ _id: params.roleId, serverId: params.serverId });
+    const role = await Role.findOne({ id: params.roleId, serverId: params.serverId });
     if (!role) {
       set.status = 404;
       return { error: 'Role not found' };
@@ -1722,16 +1742,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Cannot rename the @everyone role' };
     }
 
-    if (body.name !== undefined) role.name = body.name;
-    if (body.color !== undefined) role.color = parseHexColorToNumber(body.color);
-    if (body.permissions !== undefined) role.permissions = body.permissions;
-    if (body.hoist !== undefined) role.hoist = body.hoist;
-    if (body.mentionable !== undefined) role.mentionable = body.mentionable;
-
-    await role.save();
+    const updates: Record<string, unknown> = {};
+    if (body.name !== undefined) updates.name = body.name;
+    if (body.color !== undefined) updates.color = parseHexColorToNumber(body.color);
+    if (body.permissions !== undefined) updates.permissions = body.permissions;
+    if (body.hoist !== undefined) updates.hoist = body.hoist;
+    if (body.mentionable !== undefined) updates.mentionable = body.mentionable;
+    await Role.updateById(role.id, updates);
 
     const roles = await getNormalizedRoles(params.serverId);
-    const updatedRole = roles.find((item) => item.id === role._id.toString());
+    const updatedRole = roles.find((item) => item.id === role.id);
     return { role: updatedRole || normalizeRoleDto(role as unknown as PopulatedRole) };
   }, {
     params: t.Object({
@@ -1765,7 +1785,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!(await canManageRoles(server, user._id))) {
+    if (!(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You need Manage Roles permission to reorder roles' };
     }
@@ -1790,14 +1810,14 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const reorderableRoles = await Role.find({
       serverId: params.serverId,
       isDefault: false,
-    }).select('_id position');
+    });
 
     if (reorderableRoles.length !== uniqueRoleIds.length) {
       set.status = 400;
       return { error: 'orderedRoleIds must include every non-default role exactly once' };
     }
 
-    const existingIds = new Set(reorderableRoles.map((role) => role._id.toString()));
+    const existingIds = new Set(reorderableRoles.map((role: any) => role.id));
     if (!uniqueRoleIds.every((roleId) => existingIds.has(roleId))) {
       set.status = 400;
       return { error: 'orderedRoleIds contains role IDs that do not belong to this server' };
@@ -1806,10 +1826,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const highestPosition = uniqueRoleIds.length;
     await Promise.all(
       uniqueRoleIds.map((roleId, index) =>
-        Role.updateOne(
-          { _id: roleId, serverId: params.serverId, isDefault: false },
-          { $set: { position: highestPosition - index } }
-        )
+        Role.updateById(roleId, { position: highestPosition - index })
       )
     );
 
@@ -1842,12 +1859,12 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!(await canManageRoles(server, user._id))) {
+    if (!(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You need Manage Roles permission to delete roles' };
     }
 
-    const role = await Role.findOne({ _id: params.roleId, serverId: params.serverId });
+    const role = await Role.findOne({ id: params.roleId, serverId: params.serverId });
     if (!role) {
       set.status = 404;
       return { error: 'Role not found' };
@@ -1859,12 +1876,14 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Remove role from all members
-    await ServerMember.updateMany(
-      { serverId: params.serverId },
-      { $pull: { roles: params.roleId } }
+    const allMembers = await ServerMember.find({ serverId: params.serverId });
+    await Promise.all(
+      allMembers
+        .filter((m: any) => (m.roles || []).includes(params.roleId))
+        .map((m: any) => ServerMember.updateById(m.id, { roles: (m.roles || []).filter((r: string) => r !== params.roleId) }))
     );
 
-    await role.deleteOne();
+    await Role.deleteById(role.id);
 
     const roles = await getNormalizedRoles(params.serverId);
     return { success: true, roles };
@@ -1889,43 +1908,42 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (server.settings?.widget?.enabled === false) {
+    if ((server.settings as any)?.widget?.enabled === false) {
       set.status = 403;
       return { error: 'Server widget is disabled' };
     }
 
     // Get online members
-    const members = await ServerMember.find({ serverId: params.serverId })
-      .populate('userId', 'username displayName avatar status presenceLastHeartbeatAt')
-      .limit(50);
+    const allMembers = await ServerMember.find({ serverId: params.serverId });
+    const memberUserIds = allMembers.map((m: any) => m.userId).filter(Boolean);
+    const memberUsers = memberUserIds.length > 0 ? await User.find({ id: { in: memberUserIds } }) : [];
+    const userMap = new Map(memberUsers.map((u: any) => [u.id, u]));
+    const members = allMembers.slice(0, 50).map((m: any) => ({
+      ...m,
+      userId: m.userId ? userMap.get(m.userId) ?? m.userId : null,
+    }));
 
     // Get categories + text/voice/announcement channels, ordered like the
     // real client so the embed's sidebar matches the server's layout.
-    const [categories, channels] = await Promise.all([
-      Channel.find({ serverId: params.serverId, type: 'category' })
-        .select('name position')
-        .sort({ position: 1 })
-        .limit(25),
-      // Only channels visible to @everyone by default (no per-role/member
-      // overwrites) and not marked NSFW — this is a public, unauthenticated
-      // endpoint, so anything gated behind roles or an age check must not
-      // be listed or become browsable here.
-      Channel.find({
-        serverId: params.serverId,
-        type: { $in: ['text', 'voice', 'announcement'] },
-        nsfw: { $ne: true },
-        $or: [{ permissionOverwrites: { $exists: false } }, { permissionOverwrites: { $size: 0 } }],
-      })
-        .select('name type position parentId')
-        .sort({ position: 1 })
-        .limit(50),
-    ]);
+    const allServerChannels = await Channel.find({ serverId: params.serverId });
+    const categories = allServerChannels
+      .filter((c: any) => c.type === 'category')
+      .sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
+      .slice(0, 25);
+    const channels = allServerChannels
+      .filter((c: any) =>
+        ['text', 'voice', 'announcement'].includes(c.type) &&
+        c.nsfw !== true &&
+        (!c.permissionOverwrites || c.permissionOverwrites.length === 0)
+      )
+      .sort((a: any, b: any) => (a.position ?? 0) - (b.position ?? 0))
+      .slice(0, 50);
 
-    const rawWidgetChannelId = server.settings?.widget?.channelId?.toString();
+    const rawWidgetChannelId = (server.settings as any)?.widget?.channelId as string | undefined;
     // Only honour the configured widget channel if it survived the public
     // (non-nsfw, no-overwrite) filter above — never leak a gated channel.
-    const textChannels = channels.filter(c => c.type === 'text' || c.type === 'announcement');
-    const safeChannelIds = new Set(textChannels.map(c => c._id.toString()));
+    const textChannels = channels.filter((c: any) => c.type === 'text' || c.type === 'announcement');
+    const safeChannelIds = new Set(textChannels.map((c: any) => c.id));
     const widgetChannelId = rawWidgetChannelId && safeChannelIds.has(rawWidgetChannelId)
       ? rawWidgetChannelId
       : undefined;
@@ -1935,9 +1953,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     // channel, then the first text channel.
     const requestedChannelId = typeof query.channel === 'string' ? query.channel : undefined;
     const requestedChannel = requestedChannelId && isValidObjectId(requestedChannelId)
-      ? textChannels.find(c => c._id.toString() === requestedChannelId)
+      ? textChannels.find((c: any) => c.id === requestedChannelId)
       : undefined;
-    const messageChannelId = requestedChannel?._id?.toString() || widgetChannelId || textChannels[0]?._id?.toString();
+    const messageChannelId = requestedChannel?.id || widgetChannelId || textChannels[0]?.id;
 
     interface WidgetAttachment {
       id: string;
@@ -1974,32 +1992,39 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const mentionRoleMap: Record<string, { name: string; color?: string }> = {};
 
     if (messageChannelId) {
-      const rawMessages = await Message.find({ channelId: messageChannelId, isDeleted: false })
-        .sort({ createdAt: -1 })
-        .limit(30)
-        .populate('authorId', 'username displayName avatar')
-        .populate({
-          path: 'referencedMessageId',
-          select: '_id content authorId',
-          populate: { path: 'authorId', select: 'username displayName avatar' },
-        })
-        .lean();
+      const allMessages = await Message.find({ channelId: messageChannelId, isDeleted: false });
+      allMessages.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const rawMessages = allMessages.slice(0, 30);
+
+      // Batch fetch authors and referenced messages
+      const authorIds = [...new Set(rawMessages.map((m: any) => m.authorId).filter(Boolean))];
+      const refMsgIds = [...new Set(rawMessages.map((m: any) => m.referencedMessageId).filter(Boolean))];
+      const [authors, refMsgs] = await Promise.all([
+        authorIds.length > 0 ? User.find({ id: { in: authorIds } }) : [],
+        refMsgIds.length > 0 ? Message.find({ id: { in: refMsgIds } }) : [],
+      ]);
+      const authorMap = new Map(authors.map((a: any) => [a.id, a]));
+      const refMsgMap = new Map(refMsgs.map((m: any) => [m.id, m]));
+      // Fetch ref message authors
+      const refAuthorIds = [...new Set(refMsgs.map((m: any) => m.authorId).filter(Boolean))];
+      const refAuthors = refAuthorIds.length > 0 ? await User.find({ id: { in: refAuthorIds } }) : [];
+      const refAuthorMap = new Map(refAuthors.map((a: any) => [a.id, a]));
 
       const decrypted = await Promise.all(
         rawMessages.map(async (msg) => {
           const m = msg as unknown as {
-            _id: Types.ObjectId;
+            id: string;
             content?: string;
-            authorId?: { _id: Types.ObjectId; username?: string; displayName?: string; avatar?: string };
+            authorId?: string;
             createdAt: Date;
-            attachments?: Array<{ id?: string; _id?: Types.ObjectId; filename?: string; contentType?: string; url?: string; width?: number; height?: number }>;
+            attachments?: Array<{ id?: string; filename?: string; contentType?: string; url?: string; width?: number; height?: number }>;
             sticker?: { id?: string; name?: string; imageUrl?: string };
-            mentionedUserIds?: (Types.ObjectId | string)[];
-            mentionedRoleIds?: (Types.ObjectId | string)[];
+            mentionedUserIds?: string[];
+            mentionedRoleIds?: string[];
             mentionEveryone?: boolean;
-            referencedMessageId?: { _id: Types.ObjectId; content?: string; authorId?: { _id: Types.ObjectId; username?: string; displayName?: string; avatar?: string } } | null;
+            referencedMessageId?: string | null;
           };
-          const author = m.authorId || ({} as NonNullable<typeof m.authorId>);
+          const author = m.authorId ? authorMap.get(m.authorId) : null;
           const content = await decryptFromStorage(m.content || '');
 
           const emojiResult = await parseCustomEmojis(content);
@@ -2010,36 +2035,39 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
             animated: e.animated,
           }));
 
-          const ref = m.referencedMessageId;
+          const refId = m.referencedMessageId;
           let referencedMessage: WidgetMessage['referencedMessage'];
-          if (ref && ref._id) {
-            const refAuthor = ref.authorId;
-            referencedMessage = {
-              id: ref._id.toString(),
-              content: ref.content ? await decryptFromStorage(ref.content) : '',
-              author: refAuthor
-                ? {
-                    id: refAuthor._id.toString(),
-                    username: refAuthor.username || '',
-                    displayName: refAuthor.displayName,
-                    avatar: refAuthor.avatar,
-                  }
-                : undefined,
-            };
+          if (refId) {
+            const ref = refMsgMap.get(refId);
+            if (ref) {
+              const refAuthor = ref.authorId ? refAuthorMap.get(ref.authorId) : null;
+              referencedMessage = {
+                id: ref.id,
+                content: ref.content ? await decryptFromStorage(ref.content) : '',
+                author: refAuthor
+                  ? {
+                      id: refAuthor.id,
+                      username: refAuthor.username || '',
+                      displayName: refAuthor.displayName,
+                      avatar: refAuthor.avatar,
+                    }
+                  : undefined,
+              };
+            }
           }
 
           return {
-            id: m._id.toString(),
+            id: m.id,
             content,
             author: {
-              id: author._id?.toString() || '',
-              username: author.username || '',
-              displayName: author.displayName,
-              avatar: author.avatar,
+              id: author?.id || '',
+              username: author?.username || '',
+              displayName: author?.displayName,
+              avatar: author?.avatar,
             },
             createdAt: m.createdAt,
             attachments: (m.attachments || []).map(a => ({
-              id: (a.id || a._id?.toString() || '').toString(),
+              id: a.id || '',
               filename: a.filename || 'file',
               contentType: a.contentType || '',
               url: a.url || '',
@@ -2047,8 +2075,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
               height: a.height,
             })),
             customEmojis,
-            mentionedUserIds: (m.mentionedUserIds || []).map(id => id.toString()),
-            mentionedRoleIds: (m.mentionedRoleIds || []).map(id => id.toString()),
+            mentionedUserIds: (m.mentionedUserIds || []).map(id => String(id)),
+            mentionedRoleIds: (m.mentionedRoleIds || []).map(id => String(id)),
             mentionEveryone: Boolean(m.mentionEveryone),
             sticker: m.sticker?.imageUrl
               ? { id: m.sticker.id || '', name: m.sticker.name || '', imageUrl: m.sticker.imageUrl }
@@ -2067,30 +2095,25 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
         msg.mentionedRoleIds.forEach(id => roleIds.add(id));
       }
       if (userIds.size > 0) {
-        const users = await ServerMember.find({
+        const mentionMembers = await ServerMember.find({
           serverId: params.serverId,
-          userId: { $in: Array.from(userIds).map(id => new Types.ObjectId(id)) },
-        })
-          .populate('userId', 'username displayName')
-          .lean();
-        for (const u of users) {
-          const ud = u.userId as unknown as { _id: Types.ObjectId; username?: string; displayName?: string } | null;
-          if (ud?._id) {
-            mentionUserMap[ud._id.toString()] = { username: ud.username || '', displayName: ud.displayName };
-          }
+          userId: { in: Array.from(userIds) },
+        });
+        const mentionUserIds = mentionMembers.map((m: any) => m.userId).filter(Boolean);
+        const mentionUsers = mentionUserIds.length > 0 ? await User.find({ id: { in: mentionUserIds } }) : [];
+        for (const u of mentionUsers) {
+          mentionUserMap[u.id] = { username: u.username || '', displayName: u.displayName as string | undefined };
         }
       }
       if (roleIds.size > 0) {
         const roles = await Role.find({
           serverId: params.serverId,
-          _id: { $in: Array.from(roleIds).map(id => new Types.ObjectId(id)) },
-        })
-          .select('name color')
-          .lean();
+          id: { in: Array.from(roleIds) },
+        });
         for (const r of roles) {
-          mentionRoleMap[(r._id as Types.ObjectId).toString()] = {
-            name: (r as { name?: string }).name || 'role',
-            color: (r as { color?: string }).color,
+          mentionRoleMap[r.id] = {
+            name: (r.name as string) || 'role',
+            color: r.color as unknown as string | undefined,
           };
         }
       }
@@ -2099,26 +2122,25 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     // Get an active invite. Partnered servers with a vanity URL prefer that as
     // the default invite (serika.cc/<vanity>) over a random invite code.
     const vanityCode = server.isPartnered && server.vanityUrlCode ? server.vanityUrlCode : undefined;
-    const invite = vanityCode
-      ? null
-      : await Invite.findOne({
-          serverId: params.serverId,
-          $or: [
-            { expiresAt: { $gt: new Date() } },
-            { expiresAt: null }
-          ]
-        }).sort({ createdAt: -1 });
+    let invite: any = null;
+    if (!vanityCode) {
+      const allInvites = await Invite.find({ serverId: params.serverId });
+      const now = new Date();
+      const activeInvites = allInvites.filter((i: any) => !i.expiresAt || new Date(i.expiresAt) > now);
+      activeInvites.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      invite = activeInvites[0] || null;
+    }
 
-    const transformedMembers = members.map(m => {
-      const userData = m.userId as unknown as PopulatedMemberUser;
+    const transformedMembers = members.map((m: any) => {
+      const userData = m.userId as PopulatedMemberUser | null;
       return {
-        id: userData._id.toString(),
-        username: userData.username,
-        displayName: userData.displayName,
-        avatar: userData.avatar,
+        id: userData?.id || '',
+        username: userData?.username,
+        displayName: userData?.displayName,
+        avatar: userData?.avatar,
         status: resolveEffectiveStatus({
-          status: userData.status || 'offline',
-          presenceLastHeartbeatAt: userData.presenceLastHeartbeatAt || null,
+          status: userData?.status || 'offline',
+          presenceLastHeartbeatAt: userData?.presenceLastHeartbeatAt || null,
         }),
       };
     });
@@ -2128,7 +2150,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     const onlineCount = await computeOnlineCount(params.serverId);
 
     return {
-      id: server._id.toString(),
+      id: server.id,
       name: server.name,
       icon: server.icon,
       banner: server.banner,
@@ -2139,16 +2161,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       // newest active invite code.
       inviteCode: vanityCode || invite?.code,
       currentChannelId: messageChannelId || null,
-      categories: categories.map(c => ({
-        id: c._id.toString(),
+      categories: categories.map((c: any) => ({
+        id: c.id,
         name: c.name,
       })),
-      channels: channels.map(c => ({
-        id: c._id.toString(),
+      channels: channels.map((c: any) => ({
+        id: c.id,
         name: c.name,
         type: c.type,
-        parentId: c.parentId ? c.parentId.toString() : null,
-        isWidgetChannel: widgetChannelId ? c._id.toString() === widgetChannelId : false,
+        parentId: c.parentId || null,
+        isWidgetChannel: widgetChannelId ? c.id === widgetChannelId : false,
       })),
       members: transformedMembers,
       recentMessages,
@@ -2177,7 +2199,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (!membership) {
@@ -2212,28 +2234,27 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Check permissions (owner or admin)
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can upload emojis' };
     }
 
     // Check emoji limit (50 for non-premium, 100 for premium)
-    const emojiCount = await ServerEmoji.countDocuments({ serverId: params.serverId });
-    const maxEmojis = server.premiumTier >= 1 ? 100 : 50;
+    const allEmojis = await ServerEmoji.find({ serverId: params.serverId });
+    const emojiCount = allEmojis.length;
+    const maxEmojis = Number(server.premiumTier || 0) >= 1 ? 100 : 50;
     if (emojiCount >= maxEmojis) {
       set.status = 400;
       return { error: `You can only have ${maxEmojis} custom emojis` };
     }
 
-    const emoji = new ServerEmoji({
+    const emoji = await ServerEmoji.create({
       serverId: params.serverId,
       name: sanitizeInput(body.name),
       imageUrl: body.imageUrl,
       animated: body.animated || false,
-      uploadedBy: user._id,
+      uploadedBy: user.id,
     });
-
-    await emoji.save();
 
     return { emoji };
   }, {
@@ -2265,18 +2286,18 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can delete emojis' };
     }
 
-    const emoji = await ServerEmoji.findOne({ _id: params.emojiId, serverId: params.serverId });
+    const emoji = await ServerEmoji.findOne({ id: params.emojiId, serverId: params.serverId });
     if (!emoji) {
       set.status = 404;
       return { error: 'Emoji not found' };
     }
 
-    await emoji.deleteOne();
+    await ServerEmoji.deleteById(emoji.id);
 
     return { success: true };
   }, {
@@ -2300,7 +2321,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (!membership) {
@@ -2308,8 +2329,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You are not a member of this server' };
     }
 
-    const stickers = await ServerSticker.find({ serverId: params.serverId, available: true }).sort({ createdAt: -1 });
-    return { stickers };
+    const allStickers = await ServerSticker.find({ serverId: params.serverId, available: true });
+    allStickers.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    return { stickers: allStickers };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -2334,27 +2356,27 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can upload stickers' };
     }
 
-    const stickerCount = await ServerSticker.countDocuments({ serverId: params.serverId });
-    const maxStickers = server.premiumTier >= 1 ? 30 : 15;
+    const allStickers = await ServerSticker.find({ serverId: params.serverId });
+    const stickerCount = allStickers.length;
+    const maxStickers = Number(server.premiumTier || 0) >= 1 ? 30 : 15;
     if (stickerCount >= maxStickers) {
       set.status = 400;
       return { error: `Sticker limit reached (${maxStickers})` };
     }
 
-    const sticker = new ServerSticker({
+    const sticker = await ServerSticker.create({
       serverId: params.serverId,
       name: sanitizeInput(body.name),
       description: body.description ? sanitizeInput(body.description) : undefined,
       imageUrl: body.imageUrl,
       tags: body.tags || [],
-      uploadedBy: user._id,
+      uploadedBy: user.id,
     });
-    await sticker.save();
 
     return { sticker };
   }, {
@@ -2387,12 +2409,15 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can delete stickers' };
     }
 
-    await ServerSticker.deleteOne({ _id: params.stickerId, serverId: params.serverId });
+    const stickerToDelete = await ServerSticker.findOne({ id: params.stickerId, serverId: params.serverId });
+    if (stickerToDelete) {
+      await ServerSticker.deleteById(stickerToDelete.id);
+    }
     return { success: true };
   }, {
     params: t.Object({
@@ -2415,7 +2440,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     const membership = await ServerMember.findOne({
       serverId: params.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (!membership) {
@@ -2423,7 +2448,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You are not a member of this server' };
     }
 
-    const server = await Server.findById(params.serverId).select('soundboardSounds');
+    const server = await Server.findById(params.serverId);
     return { sounds: server?.soundboardSounds || [] };
   })
   // Upload soundboard sound
@@ -2445,7 +2470,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can add soundboard sounds' };
     }
@@ -2457,22 +2482,23 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Name and URL are required' };
     }
 
-    if (server.soundboardSounds.length >= 20) {
+    if ((server.soundboardSounds as any[] | undefined)?.length ?? 0 >= 20) {
       set.status = 400;
       return { error: 'Maximum of 20 soundboard sounds reached' };
     }
 
-    server.soundboardSounds.push({
+    const sounds = (server.soundboardSounds as any[]) || [];
+    sounds.push({
       name: name.substring(0, 32),
       url,
       emoji: emoji || '🔊',
-      uploadedBy: user._id,
+      uploadedBy: user.id,
     });
 
-    await server.save();
+    await Server.updateById(server.id, { soundboardSounds: sounds as any });
 
     return {
-      sound: server.soundboardSounds[server.soundboardSounds.length - 1],
+      sound: sounds[sounds.length - 1],
     };
   }, {
     body: t.Object({
@@ -2500,21 +2526,22 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can delete soundboard sounds' };
     }
 
-    const idx = server.soundboardSounds.findIndex(
-      (s: any) => s._id.toString() === params.soundId
+    const sounds = (server.soundboardSounds as any[]) || [];
+    const idx = sounds.findIndex(
+      (s: any) => s.id === params.soundId
     );
     if (idx === -1) {
       set.status = 404;
       return { error: 'Sound not found' };
     }
 
-    server.soundboardSounds.splice(idx, 1);
-    await server.save();
+    sounds.splice(idx, 1);
+    await Server.updateById(server.id, { soundboardSounds: sounds as any });
 
     return { success: true };
   }, {
@@ -2536,14 +2563,13 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Invalid server ID' };
     }
 
-    const server = await Server.findById(params.serverId)
-      .select('ownerId isPartnered vanityUrlCode vanityUrlUses');
+    const server = await Server.findById(params.serverId);
     if (!server) {
       set.status = 404;
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id) && !(await canManageRoles(server, user._id))) {
+    if (server.ownerId !== user.id && !(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You do not have permission to manage this server' };
     }
@@ -2577,7 +2603,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id) && !(await canManageRoles(server, user._id))) {
+    if (server.ownerId !== user.id && !(await canManageRoles(server, user.id))) {
       set.status = 403;
       return { error: 'You do not have permission to manage this server' };
     }
@@ -2591,8 +2617,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     // null / empty clears the vanity URL
     if (rawCode === null || rawCode === undefined || rawCode.trim() === '') {
-      server.vanityUrlCode = undefined;
-      await server.save();
+      await Server.updateById(server.id, { vanityUrlCode: null as any });
       return { code: null, uses: server.vanityUrlUses ?? 0 };
     }
 
@@ -2612,18 +2637,15 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Enforce uniqueness against other servers' vanity URLs and invite codes
-    const [vanityTaken, inviteTaken] = await Promise.all([
-      Server.exists({ vanityUrlCode: code, _id: { $ne: server._id } }),
-      Invite.exists({ code }),
-    ]);
+    const allServers = await Server.find({ vanityUrlCode: code });
+    const vanityTaken = allServers.find((s: any) => s.id !== server.id);
+    const inviteTaken = await Invite.findOne({ code });
     if (vanityTaken || inviteTaken) {
       set.status = 409;
       return { error: 'That link is already in use' };
     }
 
-    server.vanityUrlCode = code;
-    server.vanityUrlUses = 0;
-    await server.save();
+    await Server.updateById(server.id, { vanityUrlCode: code, vanityUrlUses: 0 });
 
     return { code, uses: 0 };
   }, {
@@ -2654,35 +2676,48 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Only owner can view all invites
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to view invites' };
     }
 
-    const invites = await Invite.find({ serverId: params.serverId })
-      .populate('inviterId', 'username displayName avatar')
-      .populate('channelId', 'name type')
-      .sort({ createdAt: -1 });
+    const invites = await Invite.find({ serverId: params.serverId });
+
+    // Manual populate: batch fetch inviters and channels
+    const inviterIds = [...new Set(invites.map((i: any) => i.inviterId).filter(Boolean))];
+    const channelIds = [...new Set(invites.map((i: any) => i.channelId).filter(Boolean))];
+    const [inviters, channels] = await Promise.all([
+      inviterIds.length > 0 ? User.find({ id: { in: inviterIds } }) : [],
+      channelIds.length > 0 ? Channel.find({ id: { in: channelIds } }) : [],
+    ]);
+    const inviterMap = new Map(inviters.map((u: any) => [u.id, u]));
+    const channelMap = new Map(channels.map((c: any) => [c.id, c]));
+
+    invites.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     // Transform invites to include channel data
-    const transformedInvites = invites.map(invite => ({
-      code: invite.code,
-      uses: invite.uses,
-      maxUses: invite.maxUses,
-      expiresAt: invite.expiresAt,
-      createdAt: invite.createdAt,
-      channel: invite.channelId ? {
-        id: (invite.channelId as any)._id?.toString() || invite.channelId.toString(),
-        name: (invite.channelId as any).name || 'unknown',
-        type: (invite.channelId as any).type || 'text',
-      } : null,
-      createdBy: invite.inviterId ? {
-        id: (invite.inviterId as any)._id?.toString() || invite.inviterId.toString(),
-        username: (invite.inviterId as any).username || 'Unknown',
-        displayName: (invite.inviterId as any).displayName,
-        avatar: (invite.inviterId as any).avatar,
-      } : null,
-    }));
+    const transformedInvites = invites.map((invite: any) => {
+      const channel = invite.channelId ? channelMap.get(invite.channelId) : null;
+      const inviter = invite.inviterId ? inviterMap.get(invite.inviterId) : null;
+      return {
+        code: invite.code,
+        uses: invite.uses,
+        maxUses: invite.maxUses,
+        expiresAt: invite.expiresAt,
+        createdAt: invite.createdAt,
+        channel: channel ? {
+          id: channel.id,
+          name: channel.name || 'unknown',
+          type: channel.type || 'text',
+        } : null,
+        createdBy: inviter ? {
+          id: inviter.id,
+          username: inviter.username || 'Unknown',
+          displayName: inviter.displayName,
+          avatar: inviter.avatar,
+        } : null,
+      };
+    });
 
     return { invites: transformedInvites };
   }, {
@@ -2705,12 +2740,15 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Only owner can delete invites
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to delete invites' };
     }
 
-    await Invite.deleteOne({ code: params.code, serverId: params.serverId });
+    const inviteToDelete = await Invite.findOne({ code: params.code, serverId: params.serverId });
+    if (inviteToDelete) {
+      await Invite.deleteById(inviteToDelete.id);
+    }
     return { success: true };
   }, {
     params: t.Object({
@@ -2738,28 +2776,38 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Only owner can view bans
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to view bans' };
     }
 
-    const bans = await ServerBan.find({ serverId: params.serverId })
-      .populate('userId', 'username displayName avatar')
-      .populate('bannedBy', 'username displayName')
-      .sort({ createdAt: -1 });
+    const bans = await ServerBan.find({ serverId: params.serverId });
+
+    // Manual populate: batch fetch banned users and banners
+    const bannedUserIds = [...new Set(bans.map((b: any) => b.userId).filter(Boolean))];
+    const bannerIds = [...new Set(bans.map((b: any) => b.bannedBy).filter(Boolean))];
+    const allUserIds = [...new Set([...bannedUserIds, ...bannerIds])];
+    const users = allUserIds.length > 0 ? await User.find({ id: { in: allUserIds } }) : [];
+    const userMap = new Map(users.map((u: any) => [u.id, u]));
+
+    bans.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return {
-      bans: bans.map((ban: any) => ({
-        id: ban.userId?._id?.toString() || ban.userId?.toString(),
-        username: ban.userId?.displayName || ban.userId?.username || 'Unknown',
-        avatar: ban.userId?.avatar,
-        reason: ban.reason,
-        bannedAt: ban.createdAt,
-        bannedBy: {
-          id: ban.bannedBy?._id?.toString() || ban.bannedBy?.toString(),
-          username: ban.bannedBy?.displayName || ban.bannedBy?.username || 'Unknown',
-        },
-      })),
+      bans: bans.map((ban: any) => {
+        const bannedUser = ban.userId ? userMap.get(ban.userId) : null;
+        const banner = ban.bannedBy ? userMap.get(ban.bannedBy) : null;
+        return {
+          id: bannedUser?.id || ban.userId,
+          username: bannedUser?.displayName || bannedUser?.username || 'Unknown',
+          avatar: bannedUser?.avatar,
+          reason: ban.reason,
+          bannedAt: ban.createdAt,
+          bannedBy: {
+            id: banner?.id || ban.bannedBy,
+            username: banner?.displayName || banner?.username || 'Unknown',
+          },
+        };
+      }),
     };
   }, {
     params: t.Object({
@@ -2785,12 +2833,12 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to ban users' };
     }
 
-    if (server.ownerId.toString() === params.userId) {
+    if (server.ownerId === params.userId) {
       set.status = 400;
       return { error: 'You cannot ban the server owner' };
     }
@@ -2804,22 +2852,24 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'User is not a server member' };
     }
 
-    await ServerBan.findOneAndUpdate(
-      { serverId: params.serverId, userId: params.userId },
-      {
-        $set: {
-          bannedBy: user._id,
-          reason: body.reason || null,
-        },
-      },
-      { upsert: true, new: true, setDefaultsOnInsert: true }
-    );
+    // Upsert ban
+    const existingBan = await ServerBan.findOne({ serverId: params.serverId, userId: params.userId });
+    if (existingBan) {
+      await ServerBan.updateById(existingBan.id, { bannedBy: user.id, reason: body.reason || null });
+    } else {
+      await ServerBan.create({
+        serverId: params.serverId,
+        userId: params.userId,
+        bannedBy: user.id,
+        reason: body.reason || null,
+      });
+    }
 
-    await ServerMember.deleteOne({ serverId: params.serverId, userId: params.userId });
-    await Server.updateOne({ _id: params.serverId }, { $inc: { memberCount: -1 } });
+    await ServerMember.deleteById(targetUser.id);
+    await Server.updateById(server.id, { memberCount: Math.max(0, (server.memberCount || 0) - 1) });
 
     await AdminLog.create({
-      adminId: user._id,
+      adminId: user.id,
       action: 'ban_user',
       targetType: 'server',
       targetId: params.serverId,
@@ -2852,15 +2902,18 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Only owner can unban
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to unban users' };
     }
 
-    await ServerBan.deleteOne({ serverId: params.serverId, userId: params.userId });
+    const banToDelete = await ServerBan.findOne({ serverId: params.serverId, userId: params.userId });
+    if (banToDelete) {
+      await ServerBan.deleteById(banToDelete.id);
+    }
 
     await AdminLog.create({
-      adminId: user._id,
+      adminId: user.id,
       action: 'unban_user',
       targetType: 'server',
       targetId: params.serverId,
@@ -2893,29 +2946,37 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to view audit log' };
     }
 
-    const logs = await AdminLog.find({ targetType: 'server', targetId: params.serverId })
-      .populate('adminId', 'username displayName avatar')
-      .sort({ createdAt: -1 })
-      .limit(100);
+    const logs = await AdminLog.find({ targetType: 'server', targetId: params.serverId });
+
+    // Manual populate: batch fetch admins
+    const adminIds = [...new Set(logs.map((l: any) => l.adminId).filter(Boolean))];
+    const admins = adminIds.length > 0 ? await User.find({ id: { in: adminIds } }) : [];
+    const adminMap = new Map(admins.map((a: any) => [a.id, a]));
+
+    logs.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const limitedLogs = logs.slice(0, 100);
 
     return {
-      logs: logs.map((log: any) => ({
-        id: log._id.toString(),
-        action: log.action,
-        reason: log.reason,
-        details: log.details,
-        createdAt: log.createdAt,
-        admin: {
-          id: log.adminId?._id?.toString(),
-          username: log.adminId?.displayName || log.adminId?.username || 'Unknown',
-          avatar: log.adminId?.avatar,
-        },
-      })),
+      logs: limitedLogs.map((log: any) => {
+        const admin = log.adminId ? adminMap.get(log.adminId) : null;
+        return {
+          id: log.id,
+          action: log.action,
+          reason: log.reason,
+          details: log.details,
+          createdAt: log.createdAt,
+          admin: {
+            id: admin?.id,
+            username: admin?.displayName || admin?.username || 'Unknown',
+            avatar: admin?.avatar,
+          },
+        };
+      }),
     };
   }, {
     params: t.Object({
@@ -2942,15 +3003,16 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id) && !(await canManageServer(server, user._id))) {
+    if (server.ownerId !== user.id && !(await canManageServer(server, user.id))) {
       set.status = 403;
       return { error: 'You do not have permission to view applications' };
     }
 
-    const count = await ServerMemberApplication.countDocuments({
-      serverId: server._id,
+    const allApps = await ServerMemberApplication.find({
+      serverId: server.id,
       status: 'pending',
     });
+    const count = allApps.length;
 
     return { count };
   }, {
@@ -2975,51 +3037,40 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id) && !(await canManageServer(server, user._id))) {
+    if (server.ownerId !== user.id && !(await canManageServer(server, user.id))) {
       set.status = 403;
       return { error: 'You do not have permission to view applications' };
     }
 
     const status = query.status || 'all';
-    const filter: Record<string, string | Types.ObjectId> = { serverId: server._id };
+    const filter: Record<string, string> = { serverId: server.id };
     if (status !== 'all') filter.status = status;
 
-    const applications = await ServerMemberApplication.find(filter)
-      .populate('userId', 'username displayName avatar createdAt')
-      .sort({ createdAt: -1 })
-      .lean();
+    const applications = await ServerMemberApplication.find(filter);
 
-    interface PopulatedUser {
-      _id: Types.ObjectId;
-      username: string;
-      displayName?: string;
-      avatar?: string;
-      createdAt: Date;
-    }
+    // Manual populate: batch fetch users
+    const userIds = [...new Set(applications.map((a: any) => a.userId).filter(Boolean))];
+    const users = userIds.length > 0 ? await User.find({ id: { in: userIds } }) : [];
+    const userMap = new Map(users.map((u: any) => [u.id, u]));
+
+    applications.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
     return {
-      applications: applications.map((app) => {
-        const populated = app as unknown as {
-          _id: Types.ObjectId;
-          userId: PopulatedUser;
-          status: string;
-          answers: { question: string; answer: string }[];
-          createdAt: Date;
-          processedAt?: Date;
-        };
+      applications: applications.map((app: any) => {
+        const appUser = app.userId ? userMap.get(app.userId) : null;
         return {
-          id: populated._id.toString(),
+          id: app.id,
           user: {
-            id: populated.userId._id.toString(),
-            username: populated.userId.username,
-            displayName: populated.userId.displayName,
-            avatar: populated.userId.avatar,
-            createdAt: populated.userId.createdAt,
+            id: appUser?.id || app.userId,
+            username: appUser?.username,
+            displayName: appUser?.displayName,
+            avatar: appUser?.avatar,
+            createdAt: appUser?.createdAt,
           },
-          status: populated.status,
-          answers: populated.answers,
-          createdAt: populated.createdAt,
-          processedAt: populated.processedAt,
+          status: app.status,
+          answers: app.answers,
+          createdAt: app.createdAt,
+          processedAt: app.processedAt,
         };
       }),
     };
@@ -3053,7 +3104,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Check bans
-    const isBanned = await ServerBan.exists({ serverId: server._id, userId: user._id });
+    const isBanned = await ServerBan.findOne({ serverId: server.id, userId: user.id });
     if (isBanned) {
       set.status = 403;
       return { error: 'You are banned from this server' };
@@ -3061,8 +3112,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     // Check existing membership
     const existingMembership = await ServerMember.findOne({
-      serverId: server._id,
-      userId: user._id,
+      serverId: server.id,
+      userId: user.id,
     });
     if (existingMembership) {
       set.status = 400;
@@ -3071,8 +3122,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     // Check for existing pending application
     const existingApp = await ServerMemberApplication.findOne({
-      serverId: server._id,
-      userId: user._id,
+      serverId: server.id,
+      userId: user.id,
       status: 'pending',
     });
     if (existingApp) {
@@ -3086,9 +3137,9 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Application answers are required' };
     }
 
-    const application = new ServerMemberApplication({
-      serverId: server._id,
-      userId: user._id,
+    const application = await ServerMemberApplication.create({
+      serverId: server.id,
+      userId: user.id,
       status: 'pending',
       answers: answers.map((a) => ({
         question: sanitizeInput(a.question || ''),
@@ -3096,12 +3147,11 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
         isPrivate: true,
       })),
     });
-    await application.save();
 
     return {
       success: true,
       application: {
-        id: application._id.toString(),
+        id: application.id,
         status: application.status,
         createdAt: application.createdAt,
       },
@@ -3128,10 +3178,12 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Invalid server ID' };
     }
 
-    const application = await ServerMemberApplication.findOne({
+    const allApplications = await ServerMemberApplication.find({
       serverId: params.serverId,
-      userId: user._id,
-    }).sort({ createdAt: -1 }).lean();
+      userId: user.id,
+    });
+    allApplications.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const application = allApplications[0] || null;
 
     if (!application) {
       return { application: null };
@@ -3139,7 +3191,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     return {
       application: {
-        id: application._id.toString(),
+        id: application.id,
         status: application.status,
         answers: application.answers,
         createdAt: application.createdAt,
@@ -3169,14 +3221,14 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id) && !(await canManageServer(server, user._id))) {
+    if (server.ownerId !== user.id && !(await canManageServer(server, user.id))) {
       set.status = 403;
       return { error: 'You do not have permission to manage applications' };
     }
 
     const application = await ServerMemberApplication.findOne({
-      _id: params.applicationId,
-      serverId: server._id,
+      id: params.applicationId,
+      serverId: server.id,
     });
     if (!application) {
       set.status = 404;
@@ -3189,26 +3241,28 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'Invalid status' };
     }
 
-    application.status = status;
-    application.processedBy = user._id;
-    application.processedAt = new Date();
+    const updates: Record<string, unknown> = {
+      status,
+      processedBy: user.id,
+      processedAt: new Date(),
+    };
     if (status === 'rejected' && rejectionReason) {
-      application.rejectionReason = sanitizeInput(rejectionReason).slice(0, 500);
+      updates.rejectionReason = sanitizeInput(rejectionReason).slice(0, 500);
     }
 
     // If approved, add user to server
     if (status === 'approved') {
-      await addUserToServer(server._id, application.userId);
+      await addUserToServer(server.id, application.userId);
     }
 
-    await application.save();
+    await ServerMemberApplication.updateById(application.id, updates);
 
     return {
       success: true,
       application: {
-        id: application._id.toString(),
-        status: application.status,
-        processedAt: application.processedAt,
+        id: application.id,
+        status,
+        processedAt: updates.processedAt,
       },
     };
   }, {
@@ -3251,8 +3305,8 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     // Check if already a member
     const existingMembership = await ServerMember.findOne({
-      serverId: server._id,
-      userId: user._id,
+      serverId: server.id,
+      userId: user.id,
     });
 
     if (existingMembership) {
@@ -3261,18 +3315,19 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     }
 
     // Check server limit
-    const serverCount = await ServerMember.countDocuments({ userId: user._id });
+    const userServers = await ServerMember.find({ userId: user.id });
+    const serverCount = userServers.length;
     if (serverCount >= config.MAX_SERVERS_PER_USER) {
       set.status = 400;
       return { error: `You can only be in ${config.MAX_SERVERS_PER_USER} servers` };
     }
 
-    await addUserToServer(server._id, user._id);
+    await addUserToServer(server.id, user.id);
 
     return {
       success: true,
       server: {
-        id: server._id,
+        id: server.id,
         name: server.name,
         icon: server.icon,
       },
@@ -3287,22 +3342,14 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 export const partnerRoutes = new Elysia({ prefix: '/servers' })
   .get('/partnered', async ({ set }) => {
     try {
-      const servers = await Server.find({ isPartnered: true })
-        .select('name icon description memberCount vanityUrlCode')
-        .sort({ partneredAt: 1 })
-        .limit(20)
-        .lean() as Array<{
-          _id: Types.ObjectId;
-          name: string;
-          icon?: string;
-          description?: string;
-          memberCount?: number;
-          vanityUrlCode?: string;
-        }>;
+      const allServers = await Server.find({ isPartnered: true });
+      const servers = allServers
+        .sort((a: any, b: any) => new Date(a.partneredAt || 0).getTime() - new Date(b.partneredAt || 0).getTime())
+        .slice(0, 20);
 
       return {
-        servers: servers.map((s) => ({
-          id: s._id.toString(),
+        servers: servers.map((s: any) => ({
+          id: s.id,
           name: s.name,
           icon: s.icon ?? null,
           description: s.description ?? null,
@@ -3321,65 +3368,52 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
       if (query.category && query.category !== 'all') {
         filter.discoveryCategories = query.category;
       }
+
+      let servers = await Server.find(filter);
+
       if (query.search) {
-        filter.$or = [
-          { name: { $regex: query.search, $options: 'i' } },
-          { description: { $regex: query.search, $options: 'i' } },
-        ];
+        const searchLower = query.search.toLowerCase();
+        servers = servers.filter((s: any) =>
+          (s.name || '').toLowerCase().includes(searchLower) ||
+          (s.description || '').toLowerCase().includes(searchLower)
+        );
       }
 
-      const servers = await Server.find(filter)
-        .select('name icon banner description memberCount isPartnered discoveryCategories vanityUrlCode joinMode')
-        .sort({ memberCount: -1 })
-        .limit(50)
-        .lean() as Array<{
-          _id: Types.ObjectId;
-          name: string;
-          icon?: string;
-          banner?: string;
-          description?: string;
-          discoveryDescription?: string;
-          memberCount?: number;
-          isPartnered?: boolean;
-          joinMode?: string;
-          discoveryCategories?: string[];
-          vanityUrlCode?: string;
-        }>;
+      servers.sort((a: any, b: any) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
+      const limitedServers = servers.slice(0, 50);
 
       // Calculate online counts dynamically for each server
-      const serverIds = servers.map(s => s._id);
-      const onlineCounts = await ServerMember.aggregate([
-        { $match: { serverId: { $in: serverIds } } },
-        { $lookup: {
-          from: 'users',
-          localField: 'userId',
-          foreignField: '_id',
-          as: 'user'
-        }},
-        { $unwind: '$user' },
-        { $match: {
-          'user.status': { $ne: 'offline' },
-          'user.presenceLastHeartbeatAt': { $gte: new Date(Date.now() - 90000) }
-        }},
-        { $group: {
-          _id: '$serverId',
-          count: { $sum: 1 }
-        }}
-      ]) as Array<{ _id: Types.ObjectId; count: number }>;
+      const serverIds = limitedServers.map((s: any) => s.id);
+      const allMembers = serverIds.length > 0 ? await ServerMember.find({ serverId: { in: serverIds } }) : [];
+      const memberUserIds = [...new Set(allMembers.map((m: any) => m.userId).filter(Boolean))];
+      const memberUsers = memberUserIds.length > 0 ? await User.find({ id: { in: memberUserIds } }) : [];
+      const userMap = new Map(memberUsers.map((u: any) => [u.id, u]));
 
-      const onlineCountMap = new Map(
-        onlineCounts.map((item) => [item._id.toString(), item.count])
-      );
+      const now = Date.now();
+      const onlineCountMap = new Map<string, number>();
+      for (const sid of serverIds) {
+        const count = allMembers
+          .filter((m: any) => m.serverId === sid)
+          .filter((m: any) => {
+            const u = m.userId ? userMap.get(m.userId) : null;
+            if (!u) return false;
+            if (u.status === 'offline') return false;
+            const hb = u.presenceLastHeartbeatAt;
+            return hb && new Date(hb).getTime() >= now - 90000;
+          })
+          .length;
+        onlineCountMap.set(sid, count);
+      }
 
       return {
-        servers: servers.map((s) => ({
-          id: s._id.toString(),
+        servers: limitedServers.map((s: any) => ({
+          id: s.id,
           name: s.name,
           icon: s.icon ?? null,
           banner: s.banner ?? null,
           description: s.description ?? s.discoveryDescription ?? null,
           memberCount: s.memberCount ?? 0,
-          onlineCount: onlineCountMap.get(s._id.toString()) ?? 0,
+          onlineCount: onlineCountMap.get(s.id) ?? 0,
           isPartnered: s.isPartnered ?? false,
           joinMode: s.joinMode || 'invite_only',
           category: s.discoveryCategories?.[0] ?? null,
@@ -3401,19 +3435,19 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
 // Resolve an invite code to a server: normal invite docs first, then partnered
 // vanity URLs stored on the server itself (e.g. serika.cc/my-community).
 async function resolveInviteCode(code: string): Promise<
-  | { kind: 'invite'; invite: InstanceType<typeof Invite>; serverId: Types.ObjectId }
-  | { kind: 'vanity'; server: InstanceType<typeof Server>; serverId: Types.ObjectId }
+  | { kind: 'invite'; invite: any; serverId: string }
+  | { kind: 'vanity'; server: any; serverId: string }
   | null
 > {
   const invite = await Invite.findOne({ code });
   if (invite) {
-    if (invite.expiresAt && invite.expiresAt.getTime() <= Date.now()) return null;
+    if (invite.expiresAt && new Date(invite.expiresAt).getTime() <= Date.now()) return null;
     return { kind: 'invite', invite, serverId: invite.serverId };
   }
 
   const vanityServer = await Server.findOne({ vanityUrlCode: code.toLowerCase() });
   if (vanityServer) {
-    return { kind: 'vanity', server: vanityServer, serverId: vanityServer._id };
+    return { kind: 'vanity', server: vanityServer, serverId: vanityServer.id };
   }
 
   return null;
@@ -3430,8 +3464,7 @@ export const inviteRoutes = new Elysia({ prefix: '/invites' })
       return { error: 'Invite not found or expired' };
     }
 
-    const server = await Server.findById(resolved.serverId)
-      .select('name icon banner description memberCount isPartnered joinMode');
+    const server = await Server.findById(resolved.serverId);
 
     if (!server) {
       set.status = 404;
@@ -3443,7 +3476,7 @@ export const inviteRoutes = new Elysia({ prefix: '/invites' })
     return {
       code: params.code,
       server: {
-        _id: server._id,
+        id: server.id,
         name: server.name,
         icon: server.icon,
         banner: server.banner,
@@ -3477,7 +3510,7 @@ export const inviteRoutes = new Elysia({ prefix: '/invites' })
 
     const invite = resolved.kind === 'invite' ? resolved.invite : null;
 
-    const isBanned = await ServerBan.exists({ serverId: resolved.serverId, userId: user._id });
+    const isBanned = await ServerBan.findOne({ serverId: resolved.serverId, userId: user.id });
     if (isBanned) {
       set.status = 403;
       return { error: 'You are banned from this server' };
@@ -3486,7 +3519,7 @@ export const inviteRoutes = new Elysia({ prefix: '/invites' })
     // Check if already a member
     const existingMembership = await ServerMember.findOne({
       serverId: resolved.serverId,
-      userId: user._id,
+      userId: user.id,
     });
 
     if (existingMembership) {
@@ -3495,7 +3528,8 @@ export const inviteRoutes = new Elysia({ prefix: '/invites' })
     }
 
     // Check server limit
-    const serverCount = await ServerMember.countDocuments({ userId: user._id });
+    const userServers = await ServerMember.find({ userId: user.id });
+    const serverCount = userServers.length;
     if (serverCount >= config.MAX_SERVERS_PER_USER) {
       set.status = 400;
       return { error: `You can only be in ${config.MAX_SERVERS_PER_USER} servers` };
@@ -3514,37 +3548,32 @@ export const inviteRoutes = new Elysia({ prefix: '/invites' })
     });
 
     // Create membership
-    const membership = new ServerMember({
+    await ServerMember.create({
       serverId: resolved.serverId,
-      userId: user._id,
-      roles: everyoneRole ? [everyoneRole._id] : [],
+      userId: user.id,
+      roles: everyoneRole ? [everyoneRole.id] : [],
     });
-
-    await membership.save();
 
     // Track uses on the invite doc, or on the server for vanity joins
     if (invite) {
-      invite.uses += 1;
-      await invite.save();
+      await Invite.updateById(invite.id, { uses: (invite.uses || 0) + 1 });
     } else {
-      await Server.updateOne(
-        { _id: resolved.serverId },
-        { $inc: { vanityUrlUses: 1 } }
-      );
+      const vanityServer = await Server.findById(resolved.serverId);
+      if (vanityServer) {
+        await Server.updateById(vanityServer.id, { vanityUrlUses: (vanityServer.vanityUrlUses || 0) + 1 });
+      }
     }
 
     // Update server member count
-    await Server.updateOne(
-      { _id: resolved.serverId },
-      { $inc: { memberCount: 1 } }
-    );
-
     const server = await Server.findById(resolved.serverId);
+    if (server) {
+      await Server.updateById(server.id, { memberCount: (server.memberCount || 0) + 1 });
+    }
 
     return {
       success: true,
       server: {
-        id: server?._id,
+        id: server?.id,
         name: server?.name,
         icon: server?.icon,
       },

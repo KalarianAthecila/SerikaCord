@@ -1,4 +1,3 @@
-import { Types } from 'mongoose';
 import { Application, Message, User } from '@/lib/models';
 import { AppCommand } from '@/lib/models/AppCommand';
 import { signInteraction } from '@/lib/services/appIdentity';
@@ -66,7 +65,7 @@ export async function verifyInteractionEndpoint(app: {
   clientId?: string;
 }): Promise<boolean> {
   const result = await postSignedInteraction(app, {
-    id: new Types.ObjectId().toString(),
+    id: crypto.randomUUID(),
     application_id: app.clientId ?? '',
     type: INTERACTION_PING,
     token: 'ping',
@@ -90,16 +89,16 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
 
   // Prefer a guild-scoped command, then a global one.
   const query: Record<string, unknown> = { name };
-  const cmds = await AppCommand.find(query).lean();
+  const cmds = await AppCommand.find(query);
   if (!cmds.length) return;
 
   const guildId = message.serverId ?? null;
   const cmd =
-    cmds.find((c: any) => c.guildId && guildId && c.guildId.toString() === guildId) ??
+    cmds.find((c: any) => c.guildId && guildId && c.guildId === guildId) ??
     cmds.find((c: any) => !c.guildId);
   if (!cmd) return;
 
-  const app = await Application.findById(cmd.applicationId).select('+privateKeyPem');
+  const app = await Application.findById(cmd.applicationId);
   if (!app || !app.interactionsEndpointUrl || !app.botId) return;
 
   // Map trailing words to the declared options positionally (STRING values only,
@@ -116,7 +115,7 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
     : undefined;
 
   const interaction = {
-    id: new Types.ObjectId().toString(),
+    id: crypto.randomUUID(),
     application_id: app.clientId,
     type: INTERACTION_APPLICATION_COMMAND,
     token: `${message.id}.${Math.random().toString(36).slice(2)}`,
@@ -126,7 +125,7 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
     member,
     user: message.author ? { id: message.author.id, username: message.author.username ?? '' } : undefined,
     data: {
-      id: cmd._id.toString(),
+      id: cmd.id,
       name: cmd.name,
       type: cmd.type ?? 1,
       options: optionValues,
@@ -138,7 +137,7 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
 
   const cb = result.body;
   if (cb.type === CB_CHANNEL_MESSAGE && cb.data) {
-    await sendBotResponse(app.botId.toString(), message.channelId, message.serverId ?? null, cb.data);
+    await sendBotResponse(app.botId, message.channelId, message.serverId ?? null, cb.data);
   }
   // CB_DEFERRED_CHANNEL_MESSAGE: bot will follow up via REST; nothing to do here.
   void CB_DEFERRED_CHANNEL_MESSAGE;
@@ -154,17 +153,17 @@ async function sendBotResponse(
   if (!data.content && !(data.embeds && data.embeds.length)) return;
 
   const msg = await Message.create({
-    channelId: new Types.ObjectId(channelId),
-    serverId: serverId ? new Types.ObjectId(serverId) : null,
-    authorId: new Types.ObjectId(botId),
+    channelId,
+    serverId: serverId || null,
+    authorId: botId,
     content: data.content ?? '',
     embeds: data.embeds ?? [],
     type: 'default',
   });
 
-  const botUser = await User.findById(botId).lean();
+  const botUser = await User.findById(botId);
   const messageResponse = {
-    id: msg._id.toString(),
+    id: msg.id,
     content: msg.content,
     authorId: botId,
     author: botUser ? {
@@ -176,7 +175,7 @@ async function sendBotResponse(
     } : null,
     channelId,
     serverId: serverId ?? undefined,
-    createdAt: (msg as any).createdAt,
+    createdAt: msg.createdAt,
     attachments: [],
     embeds: data.embeds ?? [],
     type: 0,

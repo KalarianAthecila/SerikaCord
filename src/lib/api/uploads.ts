@@ -44,8 +44,8 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch the actual Mongoose document
-    const userId = authUser._id || (authUser as unknown as { id: string }).id;
+    // Fetch the actual user document
+    const userId = (authUser as any).id || (authUser as any)._id;
     const user = await User.findById(userId);
     if (!user) {
       set.status = 404;
@@ -54,7 +54,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -91,13 +91,12 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
       // Upload new avatar
       const result = await storage.uploadFromFormData(file, 'avatars', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       // Update user, mirroring the change to the accounts service
-      user.avatar = result.url;
-      await user.save();
-      void accountsSyncProfile(user.email, { avatar: result.url });
+      await User.updateById(user.id, { avatar: result.url });
+      void accountsSyncProfile(user.email ?? '', { avatar: result.url });
 
       return {
         success: true,
@@ -122,8 +121,8 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch the actual Mongoose document
-    const userId = authUser._id || (authUser as unknown as { id: string }).id;
+    // Fetch the actual user document
+    const userId = (authUser as any).id || (authUser as any)._id;
     const user = await User.findById(userId);
     if (!user) {
       set.status = 404;
@@ -132,7 +131,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -170,13 +169,12 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
       // Upload new banner
       const result = await storage.uploadFromFormData(file, 'banners', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       // Update user, mirroring the change to the accounts service
-      user.banner = result.url;
-      await user.save();
-      void accountsSyncProfile(user.email, { banner: result.url });
+      await User.updateById(user.id, { banner: result.url });
+      void accountsSyncProfile(user.email ?? '', { banner: result.url });
 
       return {
         success: true,
@@ -201,14 +199,14 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user._id });
+    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user.id });
     if (!member) {
       set.status = 404;
       return { error: 'You are not a member of this server' };
     }
 
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -240,12 +238,11 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       }
 
       const result = await storage.uploadFromFormData(file, 'avatars', {
-        userId: user._id.toString(),
+        userId: user.id,
         serverId: params.serverId,
       });
 
-      member.avatar = result.url;
-      await member.save();
+      await ServerMember.updateById(member.id, { avatar: result.url });
 
       return {
         success: true,
@@ -272,14 +269,14 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user._id });
+    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user.id });
     if (!member) {
       set.status = 404;
       return { error: 'You are not a member of this server' };
     }
 
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -313,12 +310,11 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       }
 
       const result = await storage.uploadFromFormData(file, 'banners', {
-        userId: user._id.toString(),
+        userId: user.id,
         serverId: params.serverId,
       });
 
-      member.banner = result.url;
-      await member.save();
+      await ServerMember.updateById(member.id, { banner: result.url });
 
       return {
         success: true,
@@ -352,14 +348,14 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     }
 
     // Check if user is owner or has manage server permission
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to change the server icon' };
     }
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -400,8 +396,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       });
 
       // Update server
-      server.icon = result.url;
-      await server.save();
+      await Server.updateById(server.id, { icon: result.url });
 
       return {
         success: true,
@@ -435,14 +430,14 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to change the server banner' };
     }
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -480,8 +475,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
         serverId: params.serverId,
       });
 
-      server.banner = result.url;
-      await server.save();
+      await Server.updateById(server.id, { banner: result.url });
 
       return {
         success: true,
@@ -511,7 +505,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -526,7 +520,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Validate file type (use platform settings whitelist if configured)
     const platformSettings = await getPlatformSettings();
-    const customWhitelist = platformSettings.allowedFileTypes;
+    const customWhitelist = platformSettings.allowedFileTypes as any[] | undefined;
     const fileCheck = isValidFileType(file.type, customWhitelist);
     if (!fileCheck.allowed) {
       const shouldWarn = platformSettings.warnOnUnknownFileTypes !== false;
@@ -546,7 +540,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     try {
       const result = await storage.uploadFromFormData(file, 'attachments', {
-        userId: user._id.toString(),
+        userId: user.id,
         channelId,
       });
 
@@ -588,21 +582,21 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     }
 
     const membership = await ServerMember.findOne({
-      serverId: server._id,
-      userId: user._id,
+      serverId: server.id,
+      userId: user.id,
     });
     if (!membership) {
       set.status = 403;
       return { error: 'You are not a member of this server' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can upload stickers' };
     }
 
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -629,7 +623,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     try {
       const result = await storage.uploadFromFormData(file, 'stickers', {
         serverId: params.serverId,
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       return {
@@ -660,7 +654,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -688,7 +682,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     try {
       const result = await storage.uploadFromFormData(file, 'emojis', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       return {
@@ -728,7 +722,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     try {
       const result = await storage.uploadFromFormData(file, 'audio', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       return {

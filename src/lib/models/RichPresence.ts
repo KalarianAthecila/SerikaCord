@@ -1,44 +1,59 @@
-/**
- * Rich Presence — game / application statuses reported by the SerikaCord desktop
- * app. Stored per-user+activity with a short TTL (cleared when the app goes offline).
- * Multiple active activities are allowed per user.
- */
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export interface IRichPresence extends Document {
-  _id: Types.ObjectId;
-  userId: Types.ObjectId;
-  type: string;
-  name: string;
-  details?: string | null;
-  state?: string | null;
-  largeImageUrl?: string | null;
-  largeImageText?: string | null;
-  smallImageUrl?: string | null;
-  smallImageText?: string | null;
-  startedAt?: Date | null;
-  endsAt?: Date | null;
-  expiresAt: Date;
-  updatedAt: Date;
-}
+export type IRichPresence = typeof schema.richPresence.$inferSelect;
 
-const RichPresenceSchema = new Schema<IRichPresence>({
-  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true, index: true },
-  type: { type: String, default: 'other', trim: true },
-  name: { type: String, required: true, trim: true },
-  details: { type: String, default: null },
-  state: { type: String, default: null },
-  largeImageUrl: { type: String, default: null },
-  largeImageText: { type: String, default: null },
-  smallImageUrl: { type: String, default: null },
-  smallImageText: { type: String, default: null },
-  startedAt: { type: Date, default: null },
-  endsAt: { type: Date, default: null },
-  expiresAt: { type: Date, required: true, index: { expireAfterSeconds: 0 } },
-}, {
-  timestamps: { createdAt: false, updatedAt: true },
-});
+export const RichPresence = {
+  table: schema.richPresence,
 
-RichPresenceSchema.index({ userId: 1, type: 1, name: 1 }, { unique: true });
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.richPresence).where(eq(schema.richPresence.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-export const RichPresence = mongoose.models.RichPresence || mongoose.model<IRichPresence>('RichPresence', RichPresenceSchema);
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'userId': conditions.push(eq(schema.richPresence.userId, normalizeId(value as string))); break;
+      }
+    }
+    let query = db.select().from(schema.richPresence);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
+
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'userId': conditions.push(eq(schema.richPresence.userId, normalizeId(value as string))); break;
+      }
+    }
+    let query = db.select().from(schema.richPresence);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.richPresence.$inferInsert) {
+    const [row] = await db.insert(schema.richPresence).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.richPresence.$inferInsert>) {
+    const [row] = await db.update(schema.richPresence).set({ ...data, updatedAt: new Date() }).where(eq(schema.richPresence.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.richPresence).where(eq(schema.richPresence.id, normalizeId(id)));
+  },
+};

@@ -1,94 +1,66 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export type AdminActionType = 
-  | 'ban_user'
-  | 'unban_user'
-  | 'edit_badges'
-  | 'delete_server'
-  | 'grant_partner'
-  | 'revoke_partner'
-  | 'toggle_discovery'
-  | 'transfer_ownership'
-  | 'update_settings'
-  | 'broadcast_announcement'
-  | 'resolve_report'
-  | 'dismiss_report'
-  | 'delete_message'
-  | 'impersonate_user'
-  // Experiment actions
-  | 'create_experiment'
-  | 'update_experiment'
-  | 'delete_experiment'
-  // Instance actions
-  | 'approve_instance'
-  | 'revoke_instance';
+export type AdminActionType = typeof schema.adminLogs.$inferSelect['action'];
+export type IAdminLog = typeof schema.adminLogs.$inferSelect;
 
-export interface IAdminLog extends Document {
-  _id: Types.ObjectId;
-  adminId: Types.ObjectId;
-  action: AdminActionType;
-  targetType: 'user' | 'server' | 'message' | 'platform';
-  targetId: string;
-  details?: Record<string, unknown>;
-  reason?: string;
-  createdAt: Date;
-}
+export const AdminLog = {
+  table: schema.adminLogs,
 
-const AdminLogSchema = new Schema<IAdminLog>({
-  adminId: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    index: true,
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.adminLogs).where(eq(schema.adminLogs.id, normalizeId(id))).limit(1);
+    return row || null;
   },
-  action: {
-    type: String,
-    enum: [
-      'ban_user',
-      'unban_user', 
-      'edit_badges',
-      'delete_server',
-      'grant_partner',
-      'revoke_partner',
-      'toggle_discovery',
-      'transfer_ownership',
-      'update_settings',
-      'broadcast_announcement',
-      'resolve_report',
-      'dismiss_report',
-      'delete_message',
-      'impersonate_user',
-      // Experiment actions
-      'create_experiment',
-      'update_experiment',
-      'delete_experiment',
-      // Instance actions
-      'approve_instance',
-      'revoke_instance',
-    ],
-    required: true,
-    index: true,
-  },
-  targetType: {
-    type: String,
-    enum: ['user', 'server', 'message', 'platform'],
-    required: true,
-  },
-  targetId: {
-    type: String,
-    required: true,
-    index: true,
-  },
-  details: {
-    type: Schema.Types.Mixed,
-  },
-  reason: String,
-}, {
-  timestamps: { createdAt: true, updatedAt: false },
-});
 
-// Index for efficient log queries
-AdminLogSchema.index({ createdAt: -1 });
-AdminLogSchema.index({ action: 1, createdAt: -1 });
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'adminId': conditions.push(eq(schema.adminLogs.adminId, normalizeId(value as string))); break;
+        case 'action': conditions.push(eq(schema.adminLogs.action, value as any)); break;
+        case 'targetId': conditions.push(eq(schema.adminLogs.targetId, normalizeId(value as string))); break;
+        case 'targetType': conditions.push(eq(schema.adminLogs.targetType, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.adminLogs);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
 
-export const AdminLog = mongoose.models.AdminLog || mongoose.model<IAdminLog>('AdminLog', AdminLogSchema);
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'adminId': conditions.push(eq(schema.adminLogs.adminId, normalizeId(value as string))); break;
+        case 'action': conditions.push(eq(schema.adminLogs.action, value as any)); break;
+        case 'targetId': conditions.push(eq(schema.adminLogs.targetId, normalizeId(value as string))); break;
+        case 'targetType': conditions.push(eq(schema.adminLogs.targetType, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.adminLogs);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.adminLogs.$inferInsert) {
+    const [row] = await db.insert(schema.adminLogs).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.adminLogs.$inferInsert>) {
+    const [row] = await db.update(schema.adminLogs).set(data).where(eq(schema.adminLogs.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.adminLogs).where(eq(schema.adminLogs.id, normalizeId(id)));
+  },
+};

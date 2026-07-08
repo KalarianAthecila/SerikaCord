@@ -14,7 +14,7 @@ const UNDERLINE_RE = /__([^_]+)__/;
 const STRIKE_RE = /~~([^~]+)~~/;
 const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/;
 const TIMESTAMP_RE = /<t:(-?\d+)(?::([tTdDfFRC])(?:\[([^\]]*)\])?)?>/;
-const CHANNEL_MENTION_RE = /<#([a-f0-9]{24})>/;
+const CHANNEL_MENTION_RE = /<#([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/;
 
 function parseInline(text: string): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];
@@ -68,7 +68,7 @@ function parseInline(text: string): MarkdownNode[] {
 }
 
 export interface ParsedMarkdown {
-  type: "paragraph" | "codeblock" | "heading";
+  type: "paragraph" | "codeblock" | "heading" | "blockquote" | "small";
   level?: number;
   inline?: MarkdownNode[];
   code?: string;
@@ -97,6 +97,28 @@ export function parseMarkdown(text: string): ParsedMarkdown[] {
       continue;
     }
 
+    // Multi-line blockquote (>>>)
+    if (line.trim().startsWith(">>>")) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && (lines[i].trim().startsWith(">>>") || lines[i].trim().startsWith(">"))) {
+        quoteLines.push(lines[i].replace(/^>>?>\s*/, ""));
+        i++;
+      }
+      blocks.push({ type: "blockquote", inline: parseInline(quoteLines.join("\n")) });
+      continue;
+    }
+
+    // Single-line blockquote (>)
+    if (line.trim().startsWith(">") && !line.trim().startsWith(">>>")) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith(">") && !lines[i].trim().startsWith(">>>")) {
+        quoteLines.push(lines[i].replace(/^>\s*/, ""));
+        i++;
+      }
+      blocks.push({ type: "blockquote", inline: parseInline(quoteLines.join("\n")) });
+      continue;
+    }
+
     // Heading — space after # is optional (#Hello and # Hello both work)
     const headingMatch = line.match(/^(#{1,3})\s*(.+)$/);
     if (headingMatch) {
@@ -104,6 +126,17 @@ export function parseMarkdown(text: string): ParsedMarkdown[] {
         type: "heading",
         level: headingMatch[1].length,
         inline: parseInline(headingMatch[2]),
+      });
+      i++;
+      continue;
+    }
+
+    // Small text block (-# syntax)
+    const smallMatch = line.match(/^-(#{1,3})\s*(.+)$/);
+    if (smallMatch) {
+      blocks.push({
+        type: "small",
+        inline: parseInline(smallMatch[2]),
       });
       i++;
       continue;
@@ -117,7 +150,7 @@ export function parseMarkdown(text: string): ParsedMarkdown[] {
 
     // Paragraph - collect consecutive non-empty lines
     const paraLines: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "" && !lines[i].trim().startsWith("```") && !lines[i].match(/^#{1,3}\s*.+/)) {
+    while (i < lines.length && lines[i].trim() !== "" && !lines[i].trim().startsWith("```") && !lines[i].match(/^#{1,3}\s*.+/) && !lines[i].match(/^-(#{1,3})\s*.+/) && !lines[i].trim().startsWith(">")) {
       paraLines.push(lines[i]);
       i++;
     }

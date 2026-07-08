@@ -17,7 +17,7 @@ import { usePolling } from "@/hooks/usePolling";
 import { useIsMobile } from "@/hooks/useIsMobile";
 
 interface SoundboardSound {
-  _id: string;
+  id: string;
   name: string;
   url: string;
   emoji?: string;
@@ -212,7 +212,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
 
   const handlePlaySound = useCallback(async (sound: SoundboardSound) => {
     if (!isConnected) return;
-    setPlayingSoundId(sound._id);
+    setPlayingSoundId(sound.id);
     const success = await voiceService.playSoundboardSound({ url: sound.url, name: sound.name });
     if (!success) {
       toast.error("Failed to play sound");
@@ -531,12 +531,12 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                   <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                     {soundboardSounds.map((sound) => (
                       <button
-                        key={sound._id}
+                        key={sound.id}
                         onClick={() => handlePlaySound(sound)}
-                        disabled={playingSoundId === sound._id}
+                        disabled={playingSoundId === sound.id}
                         className={cn(
                           "flex flex-col items-center gap-1 p-2 rounded-lg border transition-all",
-                          playingSoundId === sound._id
+                          playingSoundId === sound.id
                             ? "bg-[#8B5CF6]/20 border-[#8B5CF6] scale-95"
                             : "bg-[#0a0d15] border-[#1e2637] hover:border-[#8B5CF6]/50 hover:bg-[#1e2637]"
                         )}
@@ -761,7 +761,7 @@ export default function ChannelPage() {
         const ch = data.channel;
         if (cancelled || !ch) return;
         setCurrentChannel({
-          id: ch._id || ch.id,
+          id: ch.id || ch._id,
           name: ch.name,
           type: ch.type,
           serverId: (ch.serverId || serverId)?.toString?.() || serverId,

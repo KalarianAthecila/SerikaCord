@@ -107,7 +107,7 @@ function replaceAliasMention(content: string, alias: string, token: string): str
   const pattern = new RegExp(`(^|\\s)@${escapedAlias}(?=$|[\\s.,!?;:])`, "gi");
   // Only replace in segments that are NOT already inside a token (<@id>, <@&id>, <:name:id>)
   // Split on existing tokens and only process plain-text segments
-  const tokenSplit = /(<[@#][^>]{0,64}>|<a?:[a-zA-Z0-9_]+:[a-f0-9]{24}>)/g;
+  const tokenSplit = /(<[@#][^>]{0,80}>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>)/g;
   return content.replace(tokenSplit, (match) => `\x00${match}\x00`)
     .split("\x00")
     .map((seg) => {

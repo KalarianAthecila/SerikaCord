@@ -1,7 +1,6 @@
 import { Elysia, t } from 'elysia';
 import { authenticateRequest } from '@/lib/services/auth';
 import { Application, DeveloperTeam, AppWebhook, AppEmoji, User } from '@/lib/models';
-import { Types } from 'mongoose';
 import * as crypto from 'crypto';
 import { config } from '@/lib/config';
 
@@ -36,12 +35,12 @@ function generateBotToken(appId: string): string {
 function sanitizeApp(app: any) {
   if (!app) return null;
   return {
-    id: app._id.toString(),
+    id: app.id,
     name: app.name,
     description: app.description,
     icon: app.icon,
     coverImage: app.coverImage,
-    botId: app.botId?.toString() ?? null,
+    botId: app.botId ?? null,
     botPublic: app.botPublic,
     botRequireCodeGrant: app.botRequireCodeGrant,
     botToken: app.botToken,
@@ -55,7 +54,7 @@ function sanitizeApp(app: any) {
     verificationStatus: app.verificationStatus,
     serverCount: app.serverCount,
     tags: app.tags,
-    teamId: app.teamId?.toString() ?? null,
+    teamId: app.teamId ?? null,
     termsOfServiceUrl: app.termsOfServiceUrl,
     privacyPolicyUrl: app.privacyPolicyUrl,
     flags: app.flags,
@@ -70,7 +69,7 @@ function sanitizeApp(app: any) {
 function sanitizeTeam(team: any) {
   if (!team) return null;
   return {
-    id: team._id.toString(),
+    id: team.id,
     name: team.name,
     icon: team.icon,
     ownerUsername: team.members?.find((m: any) => m.role === 'owner')?.username ?? '',
@@ -79,7 +78,7 @@ function sanitizeTeam(team: any) {
     verified: team.verified,
     description: team.description,
     members: team.members?.map((m: any) => ({
-      id: m.userId.toString(),
+      id: m.userId,
       username: m.username,
       avatar: m.avatar,
       role: m.role,
@@ -88,10 +87,10 @@ function sanitizeTeam(team: any) {
   };
 }
 
-async function isTeamMember(teamId: Types.ObjectId, userId: Types.ObjectId): Promise<boolean> {
-  const team = await DeveloperTeam.findById(teamId).lean();
+async function isTeamMember(teamId: string, userId: string): Promise<boolean> {
+  const team = await DeveloperTeam.findById(teamId);
   if (!team) return false;
-  return team.members?.some((m: any) => m.userId.toString() === userId.toString()) ?? false;
+  return (team.members as any[])?.some((m: any) => m.userId === userId) ?? false;
 }
 
 // ─── Developer Routes ──────────────────────────────────────
@@ -105,7 +104,8 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  const apps = await Application.find({ ownerId: user._id }).sort({ createdAt: -1 }).lean();
+  const apps = await Application.find({ ownerId: user.id });
+  apps.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return { applications: apps.map(sanitizeApp) };
 })
 
@@ -124,7 +124,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const clientSecret = generateClientSecret();
 
   const app = await Application.create({
-    ownerId: user._id,
+    ownerId: user.id,
     name: name.trim(),
     description: '',
     clientId,
@@ -149,25 +149,25 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
-  const app = await Application.findById(params.id).lean();
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
   // Check ownership or team membership
-  const isOwner = app.ownerId.toString() === user._id.toString();
+  const isOwner = app.ownerId === user.id;
   let hasAccess = isOwner;
   if (!hasAccess && app.teamId) {
-    const team = await DeveloperTeam.findById(app.teamId).lean();
-    hasAccess = team?.members?.some((m: any) => m.userId.toString() === user._id.toString()) ?? false;
+    const team = await DeveloperTeam.findById(app.teamId);
+    hasAccess = (team?.members as any[])?.some((m: any) => m.userId === user.id) ?? false;
   }
   if (!hasAccess) { set.status = 403; return { error: 'You do not have access to this application' }; }
 
   // Count emojis and webhooks
-  const [emojiCount, webhookCount] = await Promise.all([
-    AppEmoji.countDocuments({ applicationId: app._id }),
-    AppWebhook.countDocuments({ applicationId: app._id }),
-  ]);
+  const emojis = await AppEmoji.find({ applicationId: app.id });
+  const webhooks = await AppWebhook.find({ applicationId: app.id });
+  const emojiCount = emojis.length;
+  const webhookCount = webhooks.length;
 
   const sanitized = sanitizeApp(app);
   return { application: { ...sanitized, emojiCount, webhookCount } };
@@ -178,16 +178,16 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
   const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
-  const isOwner = app.ownerId.toString() === user._id.toString();
+  const isOwner = app.ownerId === user.id;
   let hasAccess = isOwner;
   if (!hasAccess && app.teamId) {
-    const team = await DeveloperTeam.findById(app.teamId).lean();
-    const member = team?.members?.find((m: any) => m.userId.toString() === user._id.toString());
+    const team = await DeveloperTeam.findById(app.teamId);
+    const member = (team?.members as any[])?.find((m: any) => m.userId === user.id);
     hasAccess = member && (member.role === 'owner' || member.role === 'admin' || member.role === 'developer');
   }
   if (!hasAccess) { set.status = 403; return { error: 'You do not have permission to edit this application' }; }
@@ -200,14 +200,16 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
     'interactionsEndpointUrl',
   ];
 
+  const updateData: Record<string, any> = {};
   for (const key of allowed) {
     if (patch[key] !== undefined) {
-      (app as any)[key] = patch[key];
+      updateData[key] = patch[key];
     }
   }
 
-  await app.save();
-  return { application: sanitizeApp(app) };
+  await Application.updateById(app.id, updateData);
+  const updated = await Application.findById(app.id);
+  return { application: sanitizeApp(updated) };
 })
 
 // Delete application
@@ -215,22 +217,24 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
   const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
-  if (app.ownerId.toString() !== user._id.toString()) {
+  if (app.ownerId !== user.id) {
     set.status = 403; return { error: 'Only the owner can delete this application' };
   }
 
   // Clean up related data
+  const emojis = await AppEmoji.find({ applicationId: app.id });
+  const webhooks = await AppWebhook.find({ applicationId: app.id });
   await Promise.all([
-    AppEmoji.deleteMany({ applicationId: app._id }),
-    AppWebhook.deleteMany({ applicationId: app._id }),
+    ...emojis.map(e => AppEmoji.deleteById(e.id)),
+    ...webhooks.map(w => AppWebhook.deleteById(w.id)),
   ]);
 
-  await app.deleteOne();
+  await Application.deleteById(app.id);
   return { success: true };
 })
 
@@ -239,21 +243,21 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
   const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
-  const isOwner = app.ownerId.toString() === user._id.toString();
+  const isOwner = app.ownerId === user.id;
   if (!isOwner) { set.status = 403; return { error: 'Only the owner can reset the bot token' }; }
 
   const newToken = generateBotToken(app.clientId);
-  app.botToken = newToken;
-  await app.save();
+  await Application.updateById(app.id, { botToken: newToken });
 
   // Ensure the bot User + keypair exist so the new token actually authenticates.
   const { ensureBotProvisioned } = await import('@/lib/services/appIdentity');
-  await ensureBotProvisioned(app as any);
+  const updatedApp = await Application.findById(app.id);
+  await ensureBotProvisioned(updatedApp as any);
 
   return { token: newToken };
 })
@@ -263,12 +267,12 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
   const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
-  if (app.ownerId.toString() !== user._id.toString()) {
+  if (app.ownerId !== user.id) {
     set.status = 403; return { error: 'Only the owner can enable the bot' };
   }
 
@@ -277,7 +281,8 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { ensureBotProvisioned } = await import('@/lib/services/appIdentity');
   await ensureBotProvisioned(app as any);
 
-  return { application: sanitizeApp(app) };
+  const updatedApp = await Application.findById(app.id);
+  return { application: sanitizeApp(updatedApp) };
 })
 
 // Set / verify the interactions endpoint URL. Discord-style: we send a signed
@@ -286,18 +291,17 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
-  const app = await Application.findById(params.id).select('+privateKeyPem');
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
-  if (app.ownerId.toString() !== user._id.toString()) {
+  if (app.ownerId !== user.id) {
     set.status = 403; return { error: 'Only the owner can change the interactions endpoint' };
   }
 
   const url = (body as any)?.url?.trim() || null;
 
   if (!url) {
-    app.interactionsEndpointUrl = null;
-    await app.save();
+    await Application.updateById(app.id, { interactionsEndpointUrl: null });
     return { interactionsEndpointUrl: null };
   }
 
@@ -318,8 +322,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
     return { error: 'The interactions endpoint did not respond to our PING with a valid PONG.' };
   }
 
-  app.interactionsEndpointUrl = url;
-  await app.save();
+  await Application.updateById(app.id, { interactionsEndpointUrl: url });
   return { interactionsEndpointUrl: url };
 }, {
   body: t.Object({ url: t.Optional(t.Union([t.String(), t.Null()])) }),
@@ -330,19 +333,19 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
   const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
-  if (app.ownerId.toString() !== user._id.toString()) {
+  if (app.ownerId !== user.id) {
     set.status = 403; return { error: 'Only the owner can reset the client secret' };
   }
 
-  app.clientSecret = generateClientSecret();
-  await app.save();
+  const newSecret = generateClientSecret();
+  await Application.updateById(app.id, { clientSecret: newSecret });
 
-  return { clientSecret: app.clientSecret };
+  return { clientSecret: newSecret };
 })
 
 // ─── Application Emojis ────────────────────────────────────
@@ -351,11 +354,12 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
-  const emojis = await AppEmoji.find({ applicationId: params.id }).sort({ createdAt: -1 }).lean();
+  const emojis = await AppEmoji.find({ applicationId: params.id });
+  emojis.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return { emojis: emojis.map((e: any) => ({
-    id: e._id.toString(),
+    id: e.id,
     name: e.name,
     image: e.image,
     animated: e.animated,
@@ -367,23 +371,23 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
 
-  const app = await Application.findById(params.id).lean();
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
   const { name, image, animated } = body as any;
   if (!name || !image) { set.status = 400; return { error: 'Name and image are required' }; }
 
   const emoji = await AppEmoji.create({
-    applicationId: new Types.ObjectId(params.id),
+    applicationId: params.id,
     name: name.trim(),
     image,
     animated: animated ?? false,
   });
 
   return { emoji: {
-    id: emoji._id.toString(),
+    id: emoji.id,
     name: emoji.name,
     image: emoji.image,
     animated: emoji.animated,
@@ -394,9 +398,12 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
-  await AppEmoji.deleteOne({ _id: params.emojiId, applicationId: params.id });
+  const emoji = await AppEmoji.findById(params.emojiId);
+  if (emoji && emoji.applicationId === params.id) {
+    await AppEmoji.deleteById(emoji.id);
+  }
   return { success: true };
 })
 
@@ -406,11 +413,12 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
-  const webhooks = await AppWebhook.find({ applicationId: params.id }).sort({ createdAt: -1 }).lean();
+  const webhooks = await AppWebhook.find({ applicationId: params.id });
+  webhooks.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   return { webhooks: webhooks.map((w: any) => ({
-    id: w._id.toString(),
+    id: w.id,
     name: w.name,
     url: w.url,
     events: w.events,
@@ -423,7 +431,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
   const { name, url, events } = body as any;
   if (!name || !url) { set.status = 400; return { error: 'Name and URL are required' }; }
@@ -431,7 +439,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   try { new URL(url); } catch { set.status = 400; return { error: 'Invalid URL' }; }
 
   const webhook = await AppWebhook.create({
-    applicationId: new Types.ObjectId(params.id),
+    applicationId: params.id,
     name: name.trim(),
     url,
     events: events ?? [],
@@ -439,7 +447,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   });
 
   return { webhook: {
-    id: webhook._id.toString(),
+    id: webhook.id,
     name: webhook.name,
     url: webhook.url,
     events: webhook.events,
@@ -451,26 +459,28 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
   const webhook = await AppWebhook.findById(params.webhookId);
-  if (!webhook || webhook.applicationId.toString() !== params.id) {
+  if (!webhook || webhook.applicationId !== params.id) {
     set.status = 404; return { error: 'Webhook not found' };
   }
 
   const patch = body as any;
-  if (patch.active !== undefined) webhook.active = patch.active;
-  if (patch.events !== undefined) webhook.events = patch.events;
-  if (patch.name !== undefined) webhook.name = patch.name;
-  if (patch.url !== undefined) webhook.url = patch.url;
+  const updateData: Record<string, any> = {};
+  if (patch.active !== undefined) updateData.active = patch.active;
+  if (patch.events !== undefined) updateData.events = patch.events;
+  if (patch.name !== undefined) updateData.name = patch.name;
+  if (patch.url !== undefined) updateData.url = patch.url;
 
-  await webhook.save();
+  await AppWebhook.updateById(webhook.id, updateData);
+  const updated = await AppWebhook.findById(webhook.id);
   return {
-    id: webhook._id.toString(),
-    name: webhook.name,
-    url: webhook.url,
-    events: webhook.events,
-    active: webhook.active,
+    id: updated!.id,
+    name: updated!.name,
+    url: updated!.url,
+    events: updated!.events,
+    active: updated!.active,
   };
 })
 
@@ -478,9 +488,12 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
-  await AppWebhook.deleteOne({ _id: params.webhookId, applicationId: params.id });
+  const webhook = await AppWebhook.findById(params.webhookId);
+  if (webhook && webhook.applicationId === params.id) {
+    await AppWebhook.deleteById(webhook.id);
+  }
   return { success: true };
 })
 
@@ -490,25 +503,25 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
-  const app = await Application.findById(params.id).lean();
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
   if (!app.teamId) {
     // Solo owner — return just the owner
-    const owner = await User.findById(app.ownerId).lean();
+    const owner = await User.findById(app.ownerId);
     return { members: [{
-      id: owner!._id.toString(),
+      id: owner!.id,
       username: owner!.username,
       avatar: owner!.avatar,
       role: 'owner' as const,
     }]};
   }
 
-  const team = await DeveloperTeam.findById(app.teamId).lean();
-  return { members: team?.members?.map((m: any) => ({
-    id: m.userId.toString(),
+  const team = await DeveloperTeam.findById(app.teamId);
+  return { members: (team?.members as any[])?.map((m: any) => ({
+    id: m.userId,
     username: m.username,
     avatar: m.avatar,
     role: m.role,
@@ -519,17 +532,17 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
   const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
-  if (app.ownerId.toString() !== user._id.toString()) {
+  if (app.ownerId !== user.id) {
     set.status = 403; return { error: 'Only the owner can invite members' };
   }
 
   const { username, role } = body as any;
-  const invitee = await User.findOne({ username: username?.trim() }).lean();
+  const invitee = await User.findOne({ username: username?.trim() });
   if (!invitee) { set.status = 404; return { error: 'User not found' }; }
 
   // For solo apps, create a team first
@@ -539,13 +552,12 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
       ownerId: app.ownerId,
       members: [
         { userId: app.ownerId, username: user.username, avatar: user.avatar, role: 'owner' },
-        { userId: invitee._id, username: invitee.username, avatar: invitee.avatar, role: role ?? 'developer' },
+        { userId: invitee.id, username: invitee.username, avatar: invitee.avatar, role: role ?? 'developer' },
       ],
     });
-    app.teamId = team._id;
-    await app.save();
+    await Application.updateById(app.id, { teamId: team.id });
     return { member: {
-      id: invitee._id.toString(),
+      id: invitee.id,
       username: invitee.username,
       avatar: invitee.avatar,
       role: role ?? 'developer',
@@ -553,20 +565,20 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   }
 
   const team = await DeveloperTeam.findById(app.teamId);
-  if (team?.members.some((m: any) => m.userId.toString() === invitee._id.toString())) {
+  if ((team?.members as any[])?.some((m: any) => m.userId === invitee.id)) {
     set.status = 400; return { error: 'User is already a member' };
   }
 
-  team!.members.push({
-    userId: invitee._id,
+  (team!.members as any[]).push({
+    userId: invitee.id,
     username: invitee.username,
     avatar: invitee.avatar,
     role: role ?? 'developer',
   });
-  await team!.save();
+  await DeveloperTeam.updateById(team!.id, { members: team!.members });
 
   return { member: {
-    id: invitee._id.toString(),
+    id: invitee.id,
     username: invitee.username,
     avatar: invitee.avatar,
     role: role ?? 'developer',
@@ -577,9 +589,9 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Not found' }; }
 
-  const app = await Application.findById(params.id).lean();
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
 
   if (!app.teamId) { set.status = 400; return { error: 'No team for this application' }; }
@@ -588,13 +600,13 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   if (!team) { set.status = 404; return { error: 'Team not found' }; }
 
   // Only owner or admin can remove
-  const requester = team.members.find((m: any) => m.userId.toString() === user._id.toString());
+  const requester = (team.members as any[]).find((m: any) => m.userId === user.id);
   if (!requester || (requester.role !== 'owner' && requester.role !== 'admin')) {
     set.status = 403; return { error: 'You do not have permission to remove members' };
   }
 
-  team.members = team.members.filter((m: any) => m.userId.toString() !== params.memberId) as any;
-  await team.save();
+  team.members = (team.members as any[]).filter((m: any) => m.userId !== params.memberId);
+  await DeveloperTeam.updateById(team.id, { members: team.members });
   return { success: true };
 })
 
@@ -604,11 +616,15 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  const teams = await DeveloperTeam.find({ 'members.userId': user._id }).sort({ createdAt: -1 }).lean();
+  const allTeams = await DeveloperTeam.find({});
+  const teams = allTeams
+    .filter((t: any) => t.members?.some((m: any) => m.userId === user.id))
+    .sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
 
   // Get app counts per team
   const teamsWithCounts = await Promise.all(teams.map(async (team: any) => {
-    const appCount = await Application.countDocuments({ teamId: team._id });
+    const apps = await Application.find({ teamId: team.id });
+    const appCount = apps.length;
     return { ...sanitizeTeam(team), appCount };
   }));
 
@@ -624,9 +640,9 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
 
   const team = await DeveloperTeam.create({
     name: name.trim(),
-    ownerId: user._id,
+    ownerId: user.id,
     members: [{
-      userId: user._id,
+      userId: user.id,
       username: user.username,
       avatar: user.avatar,
       role: 'owner',
@@ -640,12 +656,12 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Team not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Team not found' }; }
 
-  const team = await DeveloperTeam.findById(params.id).lean();
+  const team = await DeveloperTeam.findById(params.id);
   if (!team) { set.status = 404; return { error: 'Team not found' }; }
 
-  const isMember = team.members.some((m: any) => m.userId.toString() === user._id.toString());
+  const isMember = (team.members as any[]).some((m: any) => m.userId === user.id);
   if (!isMember) { set.status = 403; return { error: 'You are not a member of this team' }; }
 
   return { team: sanitizeTeam(team) };
@@ -655,41 +671,44 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Team not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Team not found' }; }
 
   const team = await DeveloperTeam.findById(params.id);
   if (!team) { set.status = 404; return { error: 'Team not found' }; }
 
-  const member = team.members.find((m: any) => m.userId.toString() === user._id.toString());
+  const member = (team.members as any[]).find((m: any) => m.userId === user.id);
   if (!member || (member.role !== 'owner' && member.role !== 'admin')) {
     set.status = 403; return { error: 'You do not have permission to edit this team' };
   }
 
   const { name, description, icon } = body as any;
-  if (name !== undefined) team.name = name.trim();
-  if (description !== undefined) team.description = description;
-  if (icon !== undefined) team.icon = icon;
+  const updateData: Record<string, any> = {};
+  if (name !== undefined) updateData.name = name.trim();
+  if (description !== undefined) updateData.description = description;
+  if (icon !== undefined) updateData.icon = icon;
 
-  await team.save();
-  return { team: sanitizeTeam(team) };
+  await DeveloperTeam.updateById(team.id, updateData);
+  const updated = await DeveloperTeam.findById(team.id);
+  return { team: sanitizeTeam(updated) };
 })
 
 .delete('/teams/:id', async ({ headers, cookie, params, set }) => {
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Team not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Team not found' }; }
 
   const team = await DeveloperTeam.findById(params.id);
   if (!team) { set.status = 404; return { error: 'Team not found' }; }
 
-  if (team.ownerId.toString() !== user._id.toString()) {
+  if (team.ownerId !== user.id) {
     set.status = 403; return { error: 'Only the team owner can delete it' };
   }
 
   // Unlink applications from this team
-  await Application.updateMany({ teamId: team._id }, { $unset: { teamId: '' } });
-  await team.deleteOne();
+  const apps = await Application.find({ teamId: team.id });
+  await Promise.all(apps.map(a => Application.updateById(a.id, { teamId: null })));
+  await DeveloperTeam.deleteById(team.id);
   return { success: true };
 })
 
@@ -698,34 +717,34 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Team not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Team not found' }; }
 
   const team = await DeveloperTeam.findById(params.id);
   if (!team) { set.status = 404; return { error: 'Team not found' }; }
 
-  const requester = team.members.find((m: any) => m.userId.toString() === user._id.toString());
+  const requester = (team.members as any[]).find((m: any) => m.userId === user.id);
   if (!requester || (requester.role !== 'owner' && requester.role !== 'admin')) {
     set.status = 403; return { error: 'You do not have permission to invite members' };
   }
 
   const { username, role } = body as any;
-  const invitee = await User.findOne({ username: username?.trim() }).lean();
+  const invitee = await User.findOne({ username: username?.trim() });
   if (!invitee) { set.status = 404; return { error: 'User not found' }; }
 
-  if (team.members.some((m: any) => m.userId.toString() === invitee._id.toString())) {
+  if ((team.members as any[]).some((m: any) => m.userId === invitee.id)) {
     set.status = 400; return { error: 'User is already a member' };
   }
 
-  team.members.push({
-    userId: invitee._id,
+  (team.members as any[]).push({
+    userId: invitee.id,
     username: invitee.username,
     avatar: invitee.avatar,
     role: role ?? 'developer',
-  } as any);
-  await team.save();
+  });
+  await DeveloperTeam.updateById(team.id, { members: team.members });
 
   return { member: {
-    id: invitee._id.toString(),
+    id: invitee.id,
     username: invitee.username,
     avatar: invitee.avatar,
     role: role ?? 'developer',
@@ -737,100 +756,25 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Team not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Team not found' }; }
 
   const team = await DeveloperTeam.findById(params.id);
   if (!team) { set.status = 404; return { error: 'Team not found' }; }
 
-  const requester = team.members.find((m: any) => m.userId.toString() === user._id.toString());
+  const requester = (team.members as any[]).find((m: any) => m.userId === user.id);
   if (!requester || (requester.role !== 'owner' && requester.role !== 'admin')) {
     set.status = 403; return { error: 'You do not have permission to remove members' };
   }
 
-  const target = team.members.find((m: any) => m.userId.toString() === params.memberId);
+  const target = (team.members as any[]).find((m: any) => m.userId === params.memberId);
   if (target?.role === 'owner') { set.status = 400; return { error: 'Cannot remove the team owner' }; }
 
-  team.members = team.members.filter((m: any) => m.userId.toString() !== params.memberId) as any;
-  await team.save();
+  team.members = (team.members as any[]).filter((m: any) => m.userId !== params.memberId);
+  await DeveloperTeam.updateById(team.id, { members: team.members });
   return { success: true };
 })
 
-// ─── OAuth2 Token Exchange ─────────────────────────────────
 
-.post('/oauth2/token', async ({ body, set }) => {
-  const formData = body as any;
-
-  // Support both JSON and form-encoded
-  const grantType = formData.grant_type;
-  const clientId = formData.client_id;
-  const clientSecret = formData.client_secret;
-
-  const app = await Application.findOne({ clientId });
-  if (!app) { set.status = 400; return { error: 'invalid_client' }; }
-
-  if (app.clientSecret !== clientSecret) {
-    set.status = 400; return { error: 'invalid_client' };
-  }
-
-  if (grantType === 'authorization_code') {
-    // Exchange code for token — in production, store codes and validate
-    const accessToken = generateToken('sc_');
-    const refreshToken = generateToken('sc_r_');
-
-    return {
-      access_token: accessToken,
-      token_type: 'Bearer',
-      expires_in: 604800,
-      refresh_token: refreshToken,
-      scope: app.scopes.join(' '),
-    };
-  }
-
-  if (grantType === 'refresh_token') {
-    const refreshToken = formData.refresh_token;
-    if (!refreshToken) { set.status = 400; return { error: 'invalid_request' }; }
-
-    const newAccessToken = generateToken('sc_');
-    return {
-      access_token: newAccessToken,
-      token_type: 'Bearer',
-      expires_in: 604800,
-      refresh_token: generateToken('sc_r_'),
-      scope: app.scopes.join(' '),
-    };
-  }
-
-  if (grantType === 'client_credentials') {
-    const accessToken = generateToken('sc_');
-    return {
-      access_token: accessToken,
-      token_type: 'Bearer',
-      expires_in: 3600,
-      scope: app.scopes.join(' '),
-    };
-  }
-
-  set.status = 400;
-  return { error: 'unsupported_grant_type' };
-})
-
-// OAuth2 authorize page info
-.get('/oauth2/authorize', async ({ query, set }) => {
-  const clientId = query.client_id as string;
-  const app = await Application.findOne({ clientId }).lean();
-  if (!app) { set.status = 404; return { error: 'Unknown application' }; }
-
-  return {
-    application: {
-      id: app._id.toString(),
-      name: app.name,
-      icon: app.icon,
-      description: app.description,
-    },
-    scopes: (query.scope as string || '').split(' ').filter(Boolean),
-    redirect_uri: query.redirect_uri as string,
-  };
-})
 
 // ─── Gateway URL ───────────────────────────────────────────
 
@@ -843,7 +787,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   if (!authHeader?.startsWith('Bot ')) { set.status = 401; return { error: 'Unauthorized' }; }
 
   const token = authHeader.slice(4);
-  const app = await Application.findOne({ botToken: token }).lean();
+  const app = await Application.findOne({ botToken: token });
   if (!app) { set.status = 401; return { error: 'Invalid token' }; }
 
   return {
@@ -858,17 +802,7 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   };
 })
 
-// ─── OAuth2 Token Revocation ───────────────────────────────
 
-.post('/oauth2/token/revoke', async ({ body, set }) => {
-  const formData = body as any;
-  const token = formData.token;
-  if (!token) { set.status = 400; return { error: 'invalid_request' }; }
-
-  // In production, invalidate the token in the store
-  // For now, return success
-  return {};
-})
 
 // ─── Application Analytics ─────────────────────────────────
 
@@ -876,10 +810,10 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
-  const app = await Application.findById(params.id).lean();
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
-  if (app.ownerId.toString() !== user._id.toString() && !(app.teamId && await isTeamMember(app.teamId, user._id))) {
+  if (app.ownerId !== user.id && !(app.teamId && await isTeamMember(app.teamId, user.id))) {
     set.status = 403; return { error: 'Forbidden' };
   }
 
@@ -888,8 +822,9 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
 
   // Get server count where bot is a member
   const { ServerMember } = await import('@/lib/models');
-  const botUser = app.botId ? await User.findById(app.botId).lean() : null;
-  const serverCount = botUser ? await ServerMember.countDocuments({ userId: botUser._id }) : 0;
+  const botUser = app.botId ? await User.findById(app.botId) : null;
+  const botMemberships = botUser ? await ServerMember.find({ userId: botUser.id }) : [];
+  const serverCount = botMemberships.length;
 
   return {
     server_count: serverCount,
@@ -908,10 +843,10 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
-  const app = await Application.findById(params.id).lean();
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
-  if (app.ownerId.toString() !== user._id.toString() && !(app.teamId && await isTeamMember(app.teamId, user._id))) {
+  if (app.ownerId !== user.id && !(app.teamId && await isTeamMember(app.teamId, user.id))) {
     set.status = 403; return { error: 'Forbidden' };
   }
 
@@ -933,17 +868,18 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
   const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
-  if (app.ownerId.toString() !== user._id.toString()) {
+  if (app.ownerId !== user.id) {
     set.status = 403; return { error: 'Forbidden' };
   }
 
   const patch = body as any;
-  if (patch.categories !== undefined) app.tags = patch.categories;
-  if (patch.summary !== undefined) app.description = patch.summary;
-  await app.save();
+  const updateData: Record<string, any> = {};
+  if (patch.categories !== undefined) updateData.tags = patch.categories;
+  if (patch.summary !== undefined) updateData.description = patch.summary;
+  await Application.updateById(app.id, updateData);
 
   return { success: true };
 })
@@ -954,15 +890,15 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.emojiId)) { set.status = 404; return { error: 'Emoji not found' }; }
-  const emoji = await AppEmoji.findById(params.emojiId).lean();
-  if (!emoji || emoji.applicationId.toString() !== params.id) {
+  if (!params.emojiId) { set.status = 404; return { error: 'Emoji not found' }; }
+  const emoji = await AppEmoji.findById(params.emojiId);
+  if (!emoji || emoji.applicationId !== params.id) {
     set.status = 404; return { error: 'Emoji not found' };
   }
   return {
-    id: emoji._id.toString(),
+    id: emoji.id,
     name: emoji.name,
-    image: emoji.imageUrl,
+    image: emoji.image,
     animated: emoji.animated ?? false,
   };
 })
@@ -973,13 +909,13 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.webhookId)) { set.status = 404; return { error: 'Webhook not found' }; }
-  const webhook = await AppWebhook.findById(params.webhookId).lean();
-  if (!webhook || webhook.applicationId.toString() !== params.id) {
+  if (!params.webhookId) { set.status = 404; return { error: 'Webhook not found' }; }
+  const webhook = await AppWebhook.findById(params.webhookId);
+  if (!webhook || webhook.applicationId !== params.id) {
     set.status = 404; return { error: 'Webhook not found' };
   }
   return {
-    id: webhook._id.toString(),
+    id: webhook.id,
     name: webhook.name,
     url: webhook.url,
     events: webhook.events,
@@ -993,21 +929,21 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
   if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
 
-  if (!Types.ObjectId.isValid(params.id)) { set.status = 404; return { error: 'Application not found' }; }
-  const app = await Application.findById(params.id).lean();
+  if (!params.id) { set.status = 404; return { error: 'Application not found' }; }
+  const app = await Application.findById(params.id);
   if (!app) { set.status = 404; return { error: 'Application not found' }; }
-  if (app.ownerId.toString() !== user._id.toString() && !(app.teamId && await isTeamMember(app.teamId, user._id))) {
+  if (app.ownerId !== user.id && !(app.teamId && await isTeamMember(app.teamId, user.id))) {
     set.status = 403; return { error: 'Forbidden' };
   }
 
   if (!app.botId) { return { bot: null }; }
 
-  const botUser = await User.findById(app.botId).lean();
+  const botUser = await User.findById(app.botId);
   if (!botUser) { return { bot: null }; }
 
   return {
     bot: {
-      id: botUser._id.toString(),
+      id: botUser.id,
       username: botUser.username,
       avatar: botUser.avatar,
       public: app.botPublic ?? false,
@@ -1016,3 +952,352 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
     },
   };
 });
+
+// ─── OAuth2 Router ─────────────────────────────────────────
+
+export const oauth2Routes = new Elysia({ prefix: '/oauth2' })
+  .post('/token', async ({ body, set }) => {
+    const formData = body as any;
+
+    const grantType = formData.grant_type;
+    const clientId = formData.client_id;
+    const clientSecret = formData.client_secret;
+
+    const { Application } = await import('@/lib/models');
+    const app = await Application.findOne({ clientId });
+    if (!app) { set.status = 400; return { error: 'invalid_client' }; }
+
+    if (app.clientSecret !== clientSecret) {
+      set.status = 400; return { error: 'invalid_client' };
+    }
+
+    if (grantType === 'authorization_code') {
+      const accessToken = generateToken('sc_');
+      const refreshToken = generateToken('sc_r_');
+
+      return {
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: 604800,
+        refresh_token: refreshToken,
+        scope: (app.scopes || []).join(' '),
+      };
+    }
+
+    if (grantType === 'refresh_token') {
+      const refreshToken = formData.refresh_token;
+      if (!refreshToken) { set.status = 400; return { error: 'invalid_request' }; }
+
+      const newAccessToken = generateToken('sc_');
+      return {
+        access_token: newAccessToken,
+        token_type: 'Bearer',
+        expires_in: 604800,
+        refresh_token: generateToken('sc_r_'),
+        scope: (app.scopes || []).join(' '),
+      };
+    }
+
+    if (grantType === 'client_credentials') {
+      const accessToken = generateToken('sc_');
+      return {
+        access_token: accessToken,
+        token_type: 'Bearer',
+        expires_in: 3600,
+        scope: (app.scopes || []).join(' '),
+      };
+    }
+
+    set.status = 400;
+    return { error: 'unsupported_grant_type' };
+  })
+
+  .get('/authorize', async ({ query, set, headers }) => {
+    const accept = headers['accept'] || '';
+    if (accept.includes('text/html')) {
+      const searchParams = new URLSearchParams();
+      for (const [key, val] of Object.entries(query)) {
+        if (val !== undefined) searchParams.append(key, String(val));
+      }
+      return Response.redirect(`/oauth2/authorize?${searchParams.toString()}`, 302);
+    }
+
+    const clientId = query.client_id as string;
+    const { Application } = await import('@/lib/models');
+    let app = await Application.findOne({ clientId });
+    if (!app) {
+      set.status = 404;
+      return { error: 'Unknown application' };
+    }
+
+    const scopes = (query.scope as string || '').split(' ').filter(Boolean);
+    if (scopes.includes('bot') && (!app.botId || !app.botToken)) {
+      const { ensureBotProvisioned } = await import('@/lib/services/appIdentity');
+      app = await ensureBotProvisioned(app);
+    }
+
+    return {
+      application: {
+        id: app.id,
+        name: app.name,
+        icon: app.icon || `https://api.dicebear.com/7.x/bottts/svg?seed=${encodeURIComponent(app.name)}`,
+        description: app.description,
+      },
+      scopes,
+      redirect_uri: query.redirect_uri as string,
+    };
+  })
+
+  .post('/token/revoke', async ({ body, set }) => {
+    const formData = body as any;
+    const token = formData.token;
+    if (!token) { set.status = 400; return { error: 'invalid_request' }; }
+    return {};
+  })
+
+  .post('/authorize', async ({ headers, cookie, query, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const payload = body as any;
+    const clientId = payload.client_id || (query.client_id as string);
+    const serverId = payload.serverId;
+    const permissions = BigInt(payload.permissions || '0');
+    const requestedScopes = (payload.scopes as string[]) || (query.scope as string || '').split(' ').filter(Boolean);
+    const redirectUri = payload.redirect_uri || (query.redirect_uri as string);
+    const state = payload.state || (query.state as string);
+    const responseType = payload.response_type || (query.response_type as string) || 'code';
+
+    if (!clientId) {
+      set.status = 400;
+      return { error: 'Missing client_id' };
+    }
+
+    const { Application, User, ServerMember, Server, Role, AuthorizedApp, Channel } = await import('@/lib/models');
+
+    const app = await Application.findOne({ clientId });
+    if (!app) {
+      set.status = 404;
+      return { error: 'Unknown application' };
+    }
+
+    const existingAuth = await AuthorizedApp.findOne({ userId: user.id, name: app.name });
+    if (existingAuth) {
+      const mergedScopes = Array.from(new Set([...(existingAuth.scopes || []), ...requestedScopes]));
+      await AuthorizedApp.updateById(existingAuth.id, {
+        scopes: mergedScopes,
+        lastUsedAt: new Date(),
+      });
+    } else {
+      await AuthorizedApp.create({
+        userId: user.id,
+        name: app.name,
+        description: app.description || '',
+        icon: app.icon || '',
+        scopes: requestedScopes,
+        lastUsedAt: new Date(),
+      });
+    }
+
+    let botAdded = false;
+
+    if (requestedScopes.includes('bot')) {
+      if (!serverId) {
+        set.status = 400;
+        return { error: 'bot scope requires serverId' };
+      }
+
+      let currentApp = app;
+      if (!currentApp.botId || !currentApp.botToken) {
+        const { ensureBotProvisioned } = await import('@/lib/services/appIdentity');
+        currentApp = await ensureBotProvisioned(app);
+      }
+
+      const botUser = currentApp.botId ? await User.findById(currentApp.botId) : null;
+      if (!botUser) {
+        set.status = 400;
+        return { error: 'Application bot user not found' };
+      }
+
+      const targetServer = await Server.findById(serverId);
+      if (!targetServer) {
+        set.status = 404;
+        return { error: 'Target server not found' };
+      }
+
+      const userMembership = await ServerMember.findOne({ serverId, userId: user.id });
+      if (!userMembership && targetServer.ownerId !== user.id) {
+        set.status = 403;
+        return { error: 'You must be a member of the server' };
+      }
+
+      let hasPermission = targetServer.ownerId === user.id;
+      if (!hasPermission && userMembership) {
+        const serverRoles = await Role.find({ serverId });
+        const memberRoles = serverRoles.filter(r => (userMembership.roles || []).includes(r.id) || r.isDefault);
+        let userPerms = 0n;
+        for (const role of memberRoles) {
+          userPerms |= BigInt(role.permissions || '0');
+        }
+        const PERM_ADMINISTRATOR = 1n << 3n;
+        const PERM_MANAGE_SERVER = 1n << 5n;
+        if ((userPerms & PERM_ADMINISTRATOR) !== 0n || (userPerms & PERM_MANAGE_SERVER) !== 0n) {
+          hasPermission = true;
+        }
+      }
+
+      if (!hasPermission) {
+        set.status = 403;
+        return { error: 'You do not have permission to add bots to this server' };
+      }
+
+      let botMembership = await ServerMember.findOne({ serverId, userId: botUser.id });
+      if (!botMembership) {
+        const everyoneRole = await Role.findOne({ serverId, isDefault: true });
+        const existingRoles = await Role.find({ serverId });
+        const highestPosition = existingRoles.reduce((max, r) => Math.max(max, r.position ?? 0), 0);
+
+        const botRole = await Role.create({
+          serverId,
+          name: botUser.username,
+          position: highestPosition + 1,
+          permissions: String(permissions),
+          managed: true,
+          hoist: false,
+          mentionable: false,
+          color: 3447003,
+        });
+
+        const botRolesList = [everyoneRole.id, botRole.id];
+        botMembership = await ServerMember.create({
+          serverId,
+          userId: botUser.id,
+          roles: botRolesList,
+          joinedAt: new Date(),
+        });
+
+        await Server.updateById(serverId, {
+          memberCount: (targetServer.memberCount ?? 0) + 1,
+        });
+
+        const { emitGuildMemberAdd, emitGuildCreate } = await import('@/lib/services/gatewayEvents');
+
+        const memberDto = {
+          user: {
+            id: botUser.id,
+            username: botUser.username,
+            avatar: botUser.avatar || null,
+            bot: true,
+            discriminator: '0',
+          },
+          nick: null,
+          roles: botRolesList,
+          joined_at: new Date().toISOString(),
+          deaf: false,
+          mute: false,
+        };
+
+        await emitGuildMemberAdd({ guildId: serverId, member: memberDto });
+
+        const serverChannels = await Channel.find({ serverId });
+        const serverRolesUpdated = await Role.find({ serverId });
+        
+        const mappedRoles = serverRolesUpdated.map(r => ({
+          id: r.id,
+          name: r.name,
+          color: Number(r.color) || 0,
+          hoist: Boolean(r.hoist),
+          position: r.position ?? 0,
+          permissions: r.permissions || '0',
+          managed: Boolean(r.managed),
+          mentionable: Boolean(r.mentionable),
+        }));
+
+        const typeMap: Record<string, number> = {
+          text: 0,
+          dm: 1,
+          voice: 2,
+          group_dm: 3,
+          category: 4,
+          announcement: 5,
+          forum: 15,
+        };
+
+        const mappedChannels = serverChannels.map(c => ({
+          id: c.id,
+          type: typeMap[c.type] ?? 0,
+          name: c.name,
+          position: c.position ?? 0,
+          parent_id: c.parentId ?? null,
+          topic: c.topic ?? null,
+          nsfw: Boolean(c.nsfw),
+          rate_limit_per_user: c.rateLimitPerUser ?? 0,
+        }));
+
+        const allServerMembers = await ServerMember.find({ serverId });
+        const allUserIds = allServerMembers.map(m => m.userId);
+        const allUsers = await User.find({ id: { in: allUserIds } });
+        const userMap = new Map(allUsers.map(u => [u.id, u]));
+
+        const mappedMembers = allServerMembers.map(m => {
+          const u = userMap.get(m.userId) || { id: m.userId, username: 'Unknown', isBot: false, avatar: null };
+          return {
+            user: {
+              id: u.id,
+              username: u.username,
+              avatar: u.avatar || null,
+              bot: Boolean(u.isBot),
+              discriminator: '0',
+            },
+            nick: m.nickname || null,
+            roles: m.roles || [],
+            joined_at: m.joinedAt ? new Date(m.joinedAt).toISOString() : new Date().toISOString(),
+            deaf: Boolean(m.deaf),
+            mute: Boolean(m.mute),
+          };
+        });
+
+        const guildCreatePayload = {
+          id: targetServer.id,
+          name: targetServer.name,
+          icon: targetServer.icon ?? null,
+          owner_id: targetServer.ownerId,
+          roles: mappedRoles,
+          channels: mappedChannels,
+          members: mappedMembers,
+          member_count: mappedMembers.length,
+          joined_at: new Date().toISOString(),
+          large: false,
+          unavailable: false,
+        };
+
+        await emitGuildCreate({
+          guildId: serverId,
+          targetBotId: botUser.id,
+          guild: guildCreatePayload,
+        });
+
+        botAdded = true;
+      }
+    }
+
+    if (redirectUri) {
+      let callbackUrl = redirectUri;
+      if (responseType === 'token') {
+        const accessToken = generateToken('sc_');
+        callbackUrl += `#access_token=${accessToken}&token_type=Bearer&expires_in=604800&scope=${encodeURIComponent(requestedScopes.join(' '))}`;
+        if (state) callbackUrl += `&state=${encodeURIComponent(state)}`;
+      } else {
+        const code = generateToken('sc_code_');
+        callbackUrl += callbackUrl.includes('?') ? '&' : '?';
+        callbackUrl += `code=${code}`;
+        if (state) callbackUrl += `&state=${encodeURIComponent(state)}`;
+      }
+      return { redirect: callbackUrl };
+    }
+
+    return { success: true, botAdded };
+  });

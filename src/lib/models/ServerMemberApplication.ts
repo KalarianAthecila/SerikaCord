@@ -1,69 +1,65 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export type ApplicationStatus = 'pending' | 'approved' | 'rejected' | 'interviewed';
+export type IServerMemberApplication = typeof schema.serverMemberApplications.$inferSelect;
 
-export interface IApplicationAnswer {
-  question: string;
-  answer: string;
-  isPrivate?: boolean;
-}
+export const ServerMemberApplication = {
+  table: schema.serverMemberApplications,
 
-export interface IServerMemberApplication extends Document {
-  _id: Types.ObjectId;
-  serverId: Types.ObjectId;
-  userId: Types.ObjectId;
-  status: ApplicationStatus;
-  answers: IApplicationAnswer[];
-  processedBy?: Types.ObjectId;
-  processedAt?: Date;
-  rejectionReason?: string;
-  createdAt: Date;
-  updatedAt: Date;
-}
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.serverMemberApplications).where(eq(schema.serverMemberApplications.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-const ServerMemberApplicationSchema = new Schema<IServerMemberApplication>({
-  serverId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Server',
-    required: true,
-    index: true,
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(eq(schema.serverMemberApplications.id, normalizeId(value as string))); break;
+        case 'serverId': conditions.push(eq(schema.serverMemberApplications.serverId, normalizeId(value as string))); break;
+        case 'userId': conditions.push(eq(schema.serverMemberApplications.userId, normalizeId(value as string))); break;
+        case 'status': conditions.push(eq(schema.serverMemberApplications.status, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.serverMemberApplications);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
   },
-  userId: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    index: true,
-  },
-  status: {
-    type: String,
-    enum: ['pending', 'approved', 'rejected', 'interviewed'],
-    default: 'pending',
-    index: true,
-  },
-  answers: [{
-    question: { type: String, required: true },
-    answer: { type: String, required: true },
-    isPrivate: { type: Boolean, default: true },
-  }],
-  processedBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    default: null,
-  },
-  processedAt: {
-    type: Date,
-    default: null,
-  },
-  rejectionReason: {
-    type: String,
-    maxlength: 500,
-    default: null,
-  },
-}, {
-  timestamps: true,
-});
 
-// Ensure one active application per user per server
-ServerMemberApplicationSchema.index({ serverId: 1, userId: 1, status: 1 });
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(eq(schema.serverMemberApplications.id, normalizeId(value as string))); break;
+        case 'serverId': conditions.push(eq(schema.serverMemberApplications.serverId, normalizeId(value as string))); break;
+        case 'userId': conditions.push(eq(schema.serverMemberApplications.userId, normalizeId(value as string))); break;
+        case 'status': conditions.push(eq(schema.serverMemberApplications.status, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.serverMemberApplications);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
 
-export const ServerMemberApplication = mongoose.models.ServerMemberApplication || mongoose.model<IServerMemberApplication>('ServerMemberApplication', ServerMemberApplicationSchema);
+  async create(data: typeof schema.serverMemberApplications.$inferInsert) {
+    const [row] = await db.insert(schema.serverMemberApplications).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.serverMemberApplications.$inferInsert>) {
+    const [row] = await db.update(schema.serverMemberApplications).set({ ...data, updatedAt: new Date() }).where(eq(schema.serverMemberApplications.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.serverMemberApplications).where(eq(schema.serverMemberApplications.id, normalizeId(id)));
+  },
+};

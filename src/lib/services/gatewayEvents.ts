@@ -30,6 +30,8 @@ export interface GatewayDispatch {
   intent: number;
   /** Discord-shaped payload. */
   d: unknown;
+  /** Optional target bot ID to send this dispatch strictly to. */
+  targetBotId?: string;
 }
 
 async function publish(dispatch: GatewayDispatch) {
@@ -184,6 +186,16 @@ export function emitGuildMemberRemove(opts: { guildId: string; user: unknown }) 
     guildId: opts.guildId,
     intent: Intents.GUILD_MEMBERS,
     d: { guild_id: opts.guildId, user: opts.user },
+  });
+}
+
+export function emitGuildCreate(opts: { guildId: string; targetBotId: string; guild: unknown }) {
+  return publish({
+    t: 'GUILD_CREATE',
+    guildId: opts.guildId,
+    intent: 0,
+    targetBotId: opts.targetBotId,
+    d: opts.guild,
   });
 }
 

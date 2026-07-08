@@ -119,40 +119,38 @@ export class GatewayHub {
     const token = rawToken.startsWith('Bot ') ? rawToken.slice(4) : rawToken;
     const intents = Number(d?.intents) || 0;
 
-    const app = await Application.findOne({ botToken: token }).lean();
+    const app = await Application.findOne({ botToken: token });
     if (!app || !app.botId) {
       this.send(conn, OP.INVALID_SESSION, false);
       conn.close(4004, 'Authentication failed');
       return;
     }
 
-    const botUser = await User.findById(app.botId).lean();
+    const botUser = await User.findById(app.botId);
     if (!botUser) {
       this.send(conn, OP.INVALID_SESSION, false);
       conn.close(4004, 'Authentication failed');
       return;
     }
 
-    const memberships = await ServerMember.find({ userId: app.botId }).select('serverId').lean();
-    const guildIds = memberships.map((m: { serverId: { toString(): string } }) => m.serverId.toString());
+    const memberships = await ServerMember.find({ userId: app.botId });
+    const guildIds = memberships.map((m: { serverId: string }) => m.serverId);
 
-    const dmChannels = await Channel.find({ type: { $in: ['dm', 'group_dm'] }, recipientIds: app.botId })
-      .select('_id').lean();
+    const dmChannels = await Channel.find({ type: { in: ['dm', 'group_dm'] }, recipientIds: app.botId });
 
     conn.data.authenticated = true;
-    conn.data.botId = app.botId.toString();
-    conn.data.applicationId = app._id.toString();
+    conn.data.botId = app.botId;
+    conn.data.applicationId = app.id;
     conn.data.intents = intents;
     conn.data.guildIds = new Set(guildIds);
-    conn.data.dmChannelIds = new Set(dmChannels.map((c: { _id: { toString(): string } }) => c._id.toString()));
+    conn.data.dmChannelIds = new Set(dmChannels.map((c: { id: string }) => c.id));
     this.connections.add(conn);
 
-    const u = botUser as unknown as { _id: { toString(): string }; username: string; displayName?: string; avatar?: string | null };
     const user = {
-      id: u._id.toString(),
-      username: u.username,
-      global_name: u.displayName || u.username,
-      avatar: u.avatar ?? null,
+      id: botUser.id,
+      username: botUser.username,
+      global_name: botUser.displayName || botUser.username,
+      avatar: botUser.avatar ?? null,
       bot: true,
       discriminator: '0',
       verified: true,
@@ -165,16 +163,27 @@ export class GatewayHub {
       guilds: guildIds.map((id) => ({ id, unavailable: true })),
       session_id: conn.data.sessionId,
       resume_gateway_url: config.GATEWAY_URL,
-      application: { id: app._id.toString(), flags: app.flags ?? 0 },
+      application: { id: app.id, flags: app.flags ?? 0 },
     }, { t: 'READY', s: ++conn.data.seq });
   }
 
   routeDispatch(dispatch: GatewayDispatch) {
     for (const conn of this.connections) {
       if (!conn.data.authenticated) continue;
+
+      // If targetBotId is specified, only deliver to that bot connection.
+      if (dispatch.targetBotId && conn.data.botId !== dispatch.targetBotId) continue;
+
       if (dispatch.intent && (conn.data.intents & dispatch.intent) === 0) continue;
 
       if (dispatch.guildId) {
+        // If this is a GUILD_CREATE for this bot, or a GUILD_MEMBER_ADD for this bot, add to guildIds
+        const isBotJoin = (dispatch.t === 'GUILD_MEMBER_ADD' && (dispatch.d as any)?.user?.id === conn.data.botId) ||
+                          (dispatch.t === 'GUILD_CREATE' && dispatch.targetBotId === conn.data.botId);
+        if (isBotJoin) {
+          conn.data.guildIds.add(dispatch.guildId);
+        }
+
         if (!conn.data.guildIds.has(dispatch.guildId)) continue;
       } else {
         const channelId = (dispatch.d as { channel_id?: string })?.channel_id;

@@ -452,15 +452,15 @@ export default function MobileSettingsSectionPage() {
         {section === "apps" && (
           <div className="space-y-3">
             {apps.length === 0 ? <p className="text-[var(--text-secondary)] text-sm">No authorized apps.</p> : apps.map((app) => (
-              <div key={app._id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 flex items-center justify-between">
+              <div key={app.id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-4 flex items-center justify-between">
                 <div>
                   <p className="text-[var(--text-primary)] font-medium">{app.name}</p>
                   <p className="text-xs text-[var(--text-secondary)]">{app.description || "No description"}</p>
                 </div>
                 <button
                   onClick={async () => {
-                    await fetch(`/api/users/me/authorized-apps/${app._id}`, { method: "DELETE" });
-                    setApps((prev) => prev.filter((a) => a._id !== app._id));
+                    await fetch(`/api/users/me/authorized-apps/${app.id}`, { method: "DELETE" });
+                    setApps((prev) => prev.filter((a) => a.id !== app.id));
                     toast.success("App access revoked");
                   }}
                   className="p-2 rounded-md hover:bg-red-500/10 text-red-400"
@@ -547,7 +547,7 @@ export default function MobileSettingsSectionPage() {
           <div className="mt-6 space-y-3">
             <h3 className="text-sm text-[var(--text-secondary)]">Connected Devices</h3>
             {devices.map((device) => (
-              <div key={device._id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3 flex items-center justify-between">
+              <div key={device.id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3 flex items-center justify-between">
                 <div>
                   <p className="text-[var(--text-primary)] text-sm">{device.deviceName}</p>
                   <p className="text-xs text-[var(--text-secondary)]">{device.platform} • {new Date(device.lastActiveAt).toLocaleString()}</p>
@@ -555,8 +555,8 @@ export default function MobileSettingsSectionPage() {
                 {!device.current && (
                   <button
                     onClick={async () => {
-                      await fetch(`/api/users/me/devices/${device._id}`, { method: "DELETE" });
-                      setDevices((prev) => prev.filter((d) => d._id !== device._id));
+                      await fetch(`/api/users/me/devices/${device.id}`, { method: "DELETE" });
+                      setDevices((prev) => prev.filter((d) => d.id !== device.id));
                       toast.success("Device removed");
                     }}
                     className="text-red-400 text-xs"
@@ -569,15 +569,15 @@ export default function MobileSettingsSectionPage() {
 
             <h3 className="text-sm text-[var(--text-secondary)] pt-2">Connections</h3>
             {connections.length === 0 ? <p className="text-xs text-[var(--text-muted)]">No social connections.</p> : connections.map((connection) => (
-              <div key={connection._id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3 flex items-center justify-between">
+              <div key={connection.id} className="rounded-xl border border-[var(--border-subtle)] bg-[var(--bg-card)] p-3 flex items-center justify-between">
                 <div>
                   <p className="text-[var(--text-primary)] text-sm capitalize">{connection.provider}</p>
                   <p className="text-xs text-[var(--text-secondary)]">{connection.displayName || connection.username || connection.accountId}</p>
                 </div>
                 <button
                   onClick={async () => {
-                    await fetch(`/api/users/me/connections/${connection._id}`, { method: "DELETE" });
-                    setConnections((prev) => prev.filter((c) => c._id !== connection._id));
+                    await fetch(`/api/users/me/connections/${connection.id}`, { method: "DELETE" });
+                    setConnections((prev) => prev.filter((c) => c.id !== connection.id));
                     toast.success("Disconnected");
                   }}
                   className="text-red-400 text-xs"
@@ -1454,9 +1454,9 @@ export default function MobileSettingsSectionPage() {
                             {conn ? (
                               <button
                                 onClick={async () => {
-                                  const res = await fetch(`/api/users/me/connections/${conn._id}`, { method: "DELETE" });
+                                  const res = await fetch(`/api/users/me/connections/${conn.id}`, { method: "DELETE" });
                                   if (res.ok) {
-                                    setConnections((prev) => prev.filter((c) => c._id !== conn._id));
+                                    setConnections((prev) => prev.filter((c) => c.id !== conn.id));
                                     toast.success(`${prov.label} disconnected`);
                                   } else {
                                     toast.error("Failed to disconnect");
@@ -1512,7 +1512,7 @@ export default function MobileSettingsSectionPage() {
                                 checked={conn.visible !== false}
                                 onCheckedChange={async (checked) => {
                                   try {
-                                    const res = await fetch(`/api/users/me/connections/${conn._id}`, {
+                                    const res = await fetch(`/api/users/me/connections/${conn.id}`, {
                                       method: "PATCH",
                                       headers: { "Content-Type": "application/json" },
                                       body: JSON.stringify({ visible: checked }),
@@ -1520,7 +1520,7 @@ export default function MobileSettingsSectionPage() {
                                     if (res.ok) {
                                       const data = await res.json();
                                       setConnections((prev) =>
-                                        prev.map((c) => (c._id === conn._id ? data.connection : c))
+                                        prev.map((c) => (c.id === conn.id ? data.connection : c))
                                       );
                                       toast.success("Visibility updated");
                                     } else {
