@@ -27,7 +27,7 @@ export function GifFavoriteButton({ url, title, source, className }: GifFavorite
       }}
       title={favorite ? "Remove from favorites" : "Add to favorites"}
       className={cn(
-        "p-1.5 rounded-full bg-black/60 hover:bg-black/80 text-white backdrop-blur-sm transition-all",
+        "!p-0 w-4 h-4 rounded-full bg-transparent hover:bg-transparent/80 text-inherit backdrop-blur-sm transition-all",
         favorite ? "text-yellow-400" : "text-white/80 hover:text-yellow-300",
         className
       )}

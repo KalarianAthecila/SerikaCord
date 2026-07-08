@@ -285,7 +285,7 @@ export const MessageContent = memo(function MessageContent({
     const onlyGif = isGifUrl(imageOnlyUrl);
     return (
       <div className={className}>
-        <div className={cn("inline-block w-fit relative group", onlyGif && "rounded-lg overflow-hidden")}>
+        <div className={cn("inline-block w-fit relative group", onlyGif && "rounded-lg")}>
           <img
             src={imageOnlyUrl}
             alt="Image"
@@ -294,8 +294,8 @@ export const MessageContent = memo(function MessageContent({
             loading="lazy"
           />
           {onlyGif && (
-            <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-              <GifFavoriteButton url={imageOnlyUrl} />
+            <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-black/60 backdrop-blur-sm rounded-full">
+              <GifFavoriteButton url={imageOnlyUrl} className="p-0" />
             </div>
           )}
         </div>
@@ -333,17 +333,17 @@ export const MessageContent = memo(function MessageContent({
           const inlineGif = isGifUrl(part.url);
           return (
             <span key={`image-${index}`} className="block my-2">
-              <span className={cn("inline-block w-fit relative group", inlineGif && "rounded-lg overflow-hidden")}>
+              <span className={cn("relative group", inlineGif && "inline-block w-fit rounded-lg")}>
                 <img
                   src={part.url}
                   alt="Image"
                   className="chat-media cursor-pointer hover:opacity-90 transition-opacity block"
                   onClick={() => handleMediaClick(part.url!, "Image")}
                   loading="lazy"
-                />
-                {inlineGif && (
-                  <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <GifFavoriteButton url={part.url} />
+                  />
+                  {inlineGif && (
+                    <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-black/60 backdrop-blur-sm rounded-full">
+                      <GifFavoriteButton url={part.url} className="p-0" />
                   </div>
                 )}
               </span>
