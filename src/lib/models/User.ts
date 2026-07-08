@@ -153,9 +153,12 @@ export const User = {
     for (const [key, value] of Object.entries(filter)) {
       if (value === undefined || value === null) continue;
       switch (key) {
+        case 'id': conditions.push(buildCondition(schema.users.id, value, true)); break;
         case 'username': conditions.push(eq(schema.users.username, value as string)); break;
         case 'email': conditions.push(eq(schema.users.email, value as string)); break;
         case 'discordId': conditions.push(eq(schema.users.discordId, normalizeId(value as string))); break;
+        case 'verificationToken': conditions.push(eq(schema.users.verificationToken, value as string)); break;
+        case 'resetToken': conditions.push(eq(schema.users.resetToken, value as string)); break;
         case 'isBot': conditions.push(eq(schema.users.isBot, value as boolean)); break;
         case 'isSystem': conditions.push(eq(schema.users.isSystem, value as boolean)); break;
         case 'isStaff': conditions.push(eq(schema.users.isStaff, value as boolean)); break;

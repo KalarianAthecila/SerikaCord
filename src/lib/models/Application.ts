@@ -17,10 +17,12 @@ export const Application = {
     for (const [key, value] of Object.entries(filter)) {
       if (value === undefined || value === null) continue;
       switch (key) {
+        case 'id': conditions.push(eq(schema.applications.id, normalizeId(value as string))); break;
         case 'ownerId': conditions.push(eq(schema.applications.ownerId, normalizeId(value as string))); break;
         case 'teamId': conditions.push(eq(schema.applications.teamId, normalizeId(value as string))); break;
         case 'clientId': conditions.push(eq(schema.applications.clientId, normalizeId(value as string))); break;
         case 'botId': conditions.push(eq(schema.applications.botId, normalizeId(value as string))); break;
+        case 'botToken': conditions.push(eq(schema.applications.botToken, value as string)); break;
       }
     }
     let query = db.select().from(schema.applications);

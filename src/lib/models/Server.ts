@@ -40,6 +40,7 @@ export const Server = {
       switch (key) {
         case 'id': conditions.push(buildCondition(schema.servers.id, value, true)); break;
         case 'ownerId': conditions.push(buildCondition(schema.servers.ownerId, value, true)); break;
+        case 'vanityUrlCode': conditions.push(eq(schema.servers.vanityUrlCode, value as string)); break;
         case 'joinMode': conditions.push(eq(schema.servers.joinMode, value as string)); break;
         case 'isPartnered': conditions.push(eq(schema.servers.isPartnered, value as boolean)); break;
         case 'isDiscoverable': conditions.push(eq(schema.servers.isDiscoverable, value as boolean)); break;

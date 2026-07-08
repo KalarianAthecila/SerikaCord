@@ -17,7 +17,9 @@ export const UserDeviceSession = {
     for (const [key, value] of Object.entries(filter)) {
       if (value === undefined || value === null) continue;
       switch (key) {
+        case 'id': conditions.push(eq(schema.userDeviceSessions.id, normalizeId(value as string))); break;
         case 'userId': conditions.push(eq(schema.userDeviceSessions.userId, normalizeId(value as string))); break;
+        case 'current': conditions.push(eq(schema.userDeviceSessions.current, value as boolean)); break;
       }
     }
     let query = db.select().from(schema.userDeviceSessions);

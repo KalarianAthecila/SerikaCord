@@ -17,6 +17,7 @@ export const ServerMemberApplication = {
     for (const [key, value] of Object.entries(filter)) {
       if (value === undefined || value === null) continue;
       switch (key) {
+        case 'id': conditions.push(eq(schema.serverMemberApplications.id, normalizeId(value as string))); break;
         case 'serverId': conditions.push(eq(schema.serverMemberApplications.serverId, normalizeId(value as string))); break;
         case 'userId': conditions.push(eq(schema.serverMemberApplications.userId, normalizeId(value as string))); break;
         case 'status': conditions.push(eq(schema.serverMemberApplications.status, value as any)); break;
@@ -35,6 +36,7 @@ export const ServerMemberApplication = {
     for (const [key, value] of Object.entries(filter)) {
       if (value === undefined || value === null) continue;
       switch (key) {
+        case 'id': conditions.push(eq(schema.serverMemberApplications.id, normalizeId(value as string))); break;
         case 'serverId': conditions.push(eq(schema.serverMemberApplications.serverId, normalizeId(value as string))); break;
         case 'userId': conditions.push(eq(schema.serverMemberApplications.userId, normalizeId(value as string))); break;
         case 'status': conditions.push(eq(schema.serverMemberApplications.status, value as any)); break;

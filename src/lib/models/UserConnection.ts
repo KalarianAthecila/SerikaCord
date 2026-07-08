@@ -17,8 +17,10 @@ export const UserConnection = {
     for (const [key, value] of Object.entries(filter)) {
       if (value === undefined || value === null) continue;
       switch (key) {
+        case 'id': conditions.push(eq(schema.userConnections.id, normalizeId(value as string))); break;
         case 'userId': conditions.push(eq(schema.userConnections.userId, normalizeId(value as string))); break;
         case 'provider': conditions.push(eq(schema.userConnections.provider, value as any)); break;
+        case 'accountId': conditions.push(eq(schema.userConnections.accountId, value as string)); break;
       }
     }
     let query = db.select().from(schema.userConnections);

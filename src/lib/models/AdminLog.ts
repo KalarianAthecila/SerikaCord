@@ -21,6 +21,7 @@ export const AdminLog = {
         case 'adminId': conditions.push(eq(schema.adminLogs.adminId, normalizeId(value as string))); break;
         case 'action': conditions.push(eq(schema.adminLogs.action, value as any)); break;
         case 'targetId': conditions.push(eq(schema.adminLogs.targetId, normalizeId(value as string))); break;
+        case 'targetType': conditions.push(eq(schema.adminLogs.targetType, value as any)); break;
       }
     }
     let query = db.select().from(schema.adminLogs);
@@ -39,6 +40,7 @@ export const AdminLog = {
         case 'adminId': conditions.push(eq(schema.adminLogs.adminId, normalizeId(value as string))); break;
         case 'action': conditions.push(eq(schema.adminLogs.action, value as any)); break;
         case 'targetId': conditions.push(eq(schema.adminLogs.targetId, normalizeId(value as string))); break;
+        case 'targetType': conditions.push(eq(schema.adminLogs.targetType, value as any)); break;
       }
     }
     let query = db.select().from(schema.adminLogs);

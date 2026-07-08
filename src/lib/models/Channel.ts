@@ -37,6 +37,14 @@ export const Channel = {
         case 'parentId': conditions.push(buildCondition(schema.channels.parentId, value, true)); break;
         case 'lastMessageId': conditions.push(buildCondition(schema.channels.lastMessageId, value, true)); break;
         case 'recipientId': conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${normalizeId(value as string)}]::uuid[]`); break;
+        case 'recipientIds': {
+          // Match channels whose recipient set contains ALL given ids (used to
+          // locate the DM between specific users). Combined with type:'dm' this
+          // uniquely identifies the 1:1 DM.
+          const ids = (value as string[]).map((v) => normalizeId(v));
+          conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${sql.join(ids.map((i) => sql`${i}`), sql`, `)}]::uuid[]`);
+          break;
+        }
       }
     }
     let query = db.select().from(schema.channels);
@@ -57,6 +65,14 @@ export const Channel = {
         case 'parentId': conditions.push(buildCondition(schema.channels.parentId, value, true)); break;
         case 'id': conditions.push(buildCondition(schema.channels.id, value, true)); break;
         case 'recipientId': conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${normalizeId(value as string)}]::uuid[]`); break;
+        case 'recipientIds': {
+          // Match channels whose recipient set contains ALL given ids (used to
+          // locate the DM between specific users). Combined with type:'dm' this
+          // uniquely identifies the 1:1 DM.
+          const ids = (value as string[]).map((v) => normalizeId(v));
+          conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${sql.join(ids.map((i) => sql`${i}`), sql`, `)}]::uuid[]`);
+          break;
+        }
       }
     }
     let query = db.select().from(schema.channels);
