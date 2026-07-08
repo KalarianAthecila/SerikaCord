@@ -360,6 +360,16 @@ html.theme-midnight body {
   border-radius: 0.5rem;
 }
 
+/* Wrapper for a GIF + its floating favorite button. A plain shrink-to-fit
+   wrapper sizes to the image's UNCONSTRAINED intrinsic width, leaving dead
+   space beside a max-width/height-capped image where the star would float.
+   Mirroring the media's max constraints here makes the wrapper hug the
+   rendered image so the button stays pinned to the corner. */
+.chat-gif-wrap {
+  max-width: min(100%, var(--chat-media-max-inline));
+  max-height: min(40vh, 18rem);
+}
+
 /* Twemoji styling */
 .twemoji img.emoji {
   display: inline-block;
@@ -369,13 +379,12 @@ html.theme-midnight body {
   margin: 0 0.05em;
 }
 
-/* Custom emoji styling */
-.twemoji img.custom-emoji,
-.twemoji-large img.custom-emoji {
+/* Custom emoji styling — sized to match unicode emojis exactly */
+.twemoji img.custom-emoji {
   display: inline-block;
-  width: 1.5em;
-  height: 1.5em;
-  vertical-align: -0.3em;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.2em;
   margin: 0 0.05em;
   object-fit: contain;
 }
@@ -390,9 +399,12 @@ html.theme-midnight body {
 }
 
 .twemoji-large img.custom-emoji {
-  width: 3.5em;
-  height: 3.5em;
-  vertical-align: -0.5em;
+  display: inline-block;
+  width: 3em;
+  height: 3em;
+  vertical-align: -0.4em;
+  margin: 0 0.1em;
+  object-fit: contain;
 }
 
 /* Mobile safe area utilities */
@@ -584,6 +596,12 @@ html.theme-midnight body {
 .msg-group-cv {
   content-visibility: auto;
   contain-intrinsic-size: auto 88px;
+  /* content-visibility forces paint containment, which clips anything drawn
+     outside the box — including the hover toolbar floated above the first row
+     (-top-3). Reserve headroom + a matching negative margin so the toolbar
+     stays inside the painted box without adding vertical gaps between groups. */
+  padding-top: 0.75rem;
+  margin-top: -0.75rem;
 }
 
 /* Reduced motion: collapse animations/transitions for users who ask for it */

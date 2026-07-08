@@ -21,6 +21,10 @@ export interface EmojiParseResult {
 // Regex for custom emoji format: <:name:id> or <a:name:id> for animated
 // Also supports shorthand :name:id for backward compatibility
 const CUSTOM_EMOJI_REGEX = /<?(a)?:([a-zA-Z0-9_]{2,32}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>?/gi;
+// Non-global variant for parsing a SINGLE token. String.match() with a /g
+// regex returns matched substrings, not capture groups — so single-token
+// parsers must use this (or .exec) to read the name/id groups.
+const CUSTOM_EMOJI_REGEX_SINGLE = /<?(a)?:([a-zA-Z0-9_]{2,32}):([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>?/i;
 
 // Cache for emoji lookups - expires after 5 minutes
 const emojiCache = new Map<string, { emoji: IServerEmoji | null; timestamp: number }>();
@@ -204,7 +208,7 @@ export function extractEmojiIds(content: string): string[] {
  * Check if a string is a valid custom emoji reference
  */
 export function isCustomEmoji(str: string): boolean {
-  return CUSTOM_EMOJI_REGEX.test(str);
+  return CUSTOM_EMOJI_REGEX_SINGLE.test(str);
 }
 
 /**
@@ -216,9 +220,9 @@ export async function getReactionEmoji(emojiStr: string): Promise<{
   animated?: boolean;
   url?: string;
 } | null> {
-  // Check if it's a custom emoji
-  const match = emojiStr.match(CUSTOM_EMOJI_REGEX);
-  
+  // Check if it's a custom emoji (non-global regex so capture groups resolve)
+  const match = CUSTOM_EMOJI_REGEX_SINGLE.exec(emojiStr);
+
   if (match) {
     const [, animated, name, id] = match;
     
