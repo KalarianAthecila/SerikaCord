@@ -207,10 +207,6 @@ export function useChatSession<M extends ChatMessage>({
   // overwriting the current one after a fast switch.
   const activeFetchContextRef = useRef<string | null>(null);
 
-  // Ref-based sending guard to prevent duplicate sends when state hasn't
-  // flushed yet (e.g. rapid double-Enter).
-  const isSendingRef = useRef(false);
-
   // Track in-flight / resolved authors who loaded as "Unknown" so we don't spam fetch
   const fetchedUnknownAuthorsRef = useRef<Set<string>>(new Set());
 
@@ -514,8 +510,7 @@ export function useChatSession<M extends ChatMessage>({
    */
   const sendMessage = useCallback(
     async ({ contentOverride, sticker }: SendMessageInput = {}) => {
-      if (!apiBase || !contextId || isSendingRef.current || !user) return;
-      isSendingRef.current = true;
+      if (!apiBase || !contextId || !user) return;
 
       const isOverrideSend = typeof contentOverride === "string";
       const composer = messageBarRef.current?.getComposer();
@@ -526,7 +521,6 @@ export function useChatSession<M extends ChatMessage>({
       const pendingAttachments = isOverrideSend ? [] : (messageBarRef.current?.getAttachments() ?? []);
 
       if (!messageContent.trim() && pendingAttachments.length === 0 && !sticker) {
-        isSendingRef.current = false;
         return;
       }
 
@@ -582,6 +576,7 @@ export function useChatSession<M extends ChatMessage>({
             : undefined,
           reactions: [],
           customEmojis: [],
+          pending: true,
         } as unknown as M;
 
         setMessages((prev) => [...prev, optimisticMessage]);
@@ -605,7 +600,7 @@ export function useChatSession<M extends ChatMessage>({
           if (raw && (raw.id || raw._id)) {
             const confirmed = normalizeIncomingMessage<M>(raw);
             setMessages((prev) =>
-              prev.map((m) => (m.id === tempId ? { ...m, ...confirmed } : m))
+              prev.map((m) => (m.id === tempId ? { ...m, ...confirmed, pending: false } : m))
             );
           }
         } else {
@@ -622,7 +617,6 @@ export function useChatSession<M extends ChatMessage>({
         restoreDraft();
         toast.error("Failed to send message. Check your connection.");
       } finally {
-        isSendingRef.current = false;
         setIsSending(false);
         actions.setReplyToMessage(null);
       }

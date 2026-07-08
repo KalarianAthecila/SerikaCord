@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { Channel, Message, User, ServerMember, ServerSticker } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
-import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
+import { parseCustomEmojis, batchParseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
 import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, encryptForStorage, decryptFromStorage, rejectInvalidObjectIdParams } from '@/lib/security';
 import { decodeHtmlEntities } from '@/lib/chat/messages';
@@ -196,8 +196,11 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const dmChannels = await Channel.find({ type: 'dm', recipientId: user.id });
-    const groupDmChannels = await Channel.find({ type: 'group_dm', recipientId: user.id });
+    // Fetch DM and group_dm channels in parallel
+    const [dmChannels, groupDmChannels] = await Promise.all([
+      Channel.find({ type: 'dm', recipientId: user.id }),
+      Channel.find({ type: 'group_dm', recipientId: user.id }),
+    ]);
     const channels = [...dmChannels, ...groupDmChannels]
       .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
 
@@ -213,11 +216,21 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     const allLastMessages = allLastMessageIds.length > 0 ? await Message.find({ id: { in: allLastMessageIds } }) : [];
     const lastMessageMap = new Map(allLastMessages.map(m => [m.id, m]));
 
+    // Batch-decrypt all last messages in a single Promise.all (already parallel,
+    // but this avoids interleaving with the channel mapping loop)
+    const lastMsgsToDecrypt = channels
+      .map(c => c.lastMessageId ? lastMessageMap.get(c.lastMessageId) : null)
+      .filter(Boolean) as any[];
+    const decryptedLastContents = await Promise.all(
+      lastMsgsToDecrypt.map(m => decryptFromStorage(m.content || ''))
+    );
+    const lastContentMap = new Map<string, string>();
+    lastMsgsToDecrypt.forEach((m, i) => lastContentMap.set(m.id, decryptedLastContents[i]));
+
     // Populate recipient info, deduplicating by recipient to avoid showing same user twice
     const seenRecipientIds = new Set<string>();
     const channelsWithRecipients = (
-      await Promise.all(
-        channels.map(async (channel) => {
+      channels.map((channel) => {
           const recipientIds = (channel.recipientIds || []).filter(
             (id: string) => id !== user.id
           );
@@ -228,7 +241,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
             try {
               const msg = lastMessageMap.get(channel.lastMessageId);
               if (msg) {
-                const decryptedContent = msg.content ? await decryptFromStorage(msg.content) : '';
+                const decryptedContent = lastContentMap.get(msg.id) || '';
                 let displayContent = decryptedContent;
                 if (!displayContent) {
                   if (msg.attachments && (msg.attachments as any[]).length > 0) {
@@ -271,7 +284,6 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
             _recipientKey: recipientIds.sort().join(','),
           };
         })
-      )
     ).filter((ch) => {
       // For DMs: deduplicate by the other participant's ID (keep the first/most-recent)
       if (ch.type === 'dm') {
@@ -394,12 +406,29 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     const refMsgs = refIds.length > 0 ? await Message.find({ id: { in: refIds } }) : [];
     const refMap = new Map(refMsgs.map((m: any) => [m.id, m]));
 
-    // Decrypt messages
-    const decryptedMessages = await Promise.all(msgs.map(async (msg: any) => {
+    // Decrypt messages — batch decrypt + batch emoji parse
+    const decryptedContents = await Promise.all(
+      msgs.map((msg: any) => decryptFromStorage(msg.content || ''))
+    );
+    const emojiResults = await batchParseCustomEmojis(decryptedContents);
+
+    // Batch decrypt referenced message contents
+    const refDecryptEntries = msgs
+      .filter((msg: any) => msg.referencedMessageId && refMap.get(msg.referencedMessageId))
+      .map((msg: any) => {
+        const refMsg = refMap.get(msg.referencedMessageId)!;
+        return { refId: msg.referencedMessageId, content: refMsg.content || '' };
+      });
+    const refDecrypted = await Promise.all(
+      refDecryptEntries.map((entry) => decryptFromStorage(entry.content))
+    );
+    const refContentMap = new Map<string, string>();
+    refDecryptEntries.forEach((entry, i) => refContentMap.set(entry.refId, refDecrypted[i]));
+
+    const decryptedMessages = msgs.map((msg: any, idx: number) => {
       const author = authorMap.get(msg.authorId);
-      const decryptedContent = await decryptFromStorage(msg.content);
-      const emojiResult = await parseCustomEmojis(decryptedContent);
-      const customEmojis = emojiResult.emojis.map(e => ({
+      const decryptedContent = decryptedContents[idx];
+      const customEmojis = emojiResults[idx].emojis.map(e => ({
         id: e.id,
         name: e.name,
         animated: e.animated,
@@ -411,11 +440,10 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       if (refRaw && typeof refRaw === 'string') {
         const refMsg = refMap.get(refRaw);
         if (refMsg) {
-          const refAuthor = refMsg.authorId ? authorMap.get(refMsg.authorId) || await User.findById(refMsg.authorId) : null;
-          const refDecrypted = refMsg.content ? await decryptFromStorage(refMsg.content) : '';
+          const refAuthor = refMsg.authorId ? authorMap.get(refMsg.authorId) : null;
           referencedMessage = {
             id: refMsg.id,
-            content: refDecrypted,
+            content: refContentMap.get(refRaw) || '',
             author: refAuthor ? {
               id: refAuthor.id,
               username: refAuthor.username,
@@ -459,7 +487,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         referencedMessage,
         sticker: msg.sticker || undefined,
       };
-    }));
+    });
 
     return {
       messages: decryptedMessages,
@@ -529,9 +557,16 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       }
       let stickerServerName: string | undefined;
       if (stickerDoc.serverId) {
-        const { Server } = await import('@/lib/models/Server');
-        const stickerServer = await Server.findById(stickerDoc.serverId);
-        stickerServerName = stickerServer?.name;
+        const cacheKey = `server:name:${stickerDoc.serverId}`;
+        const cached = await cache.get<string>(cacheKey);
+        if (cached) {
+          stickerServerName = cached;
+        } else {
+          const { Server } = await import('@/lib/models/Server');
+          const stickerServer = await Server.findById(stickerDoc.serverId);
+          stickerServerName = stickerServer?.name;
+          if (stickerServerName) await cache.set(cacheKey, stickerServerName, 3600);
+        }
       }
       stickerData = {
         id: stickerDoc.id,
@@ -551,8 +586,13 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     // Normalize emoji format
     sanitizedContent = normalizeEmojiFormat(sanitizedContent);
 
-    // Get user's servers for emoji validation
-    const userServerMemberships = await ServerMember.find({ userId: user.id });
+    // Get user's servers for emoji validation, create/get DM channel, and
+    // encrypt content — all three are independent and can run in parallel.
+    const [userServerMemberships, channel, encryptedContent] = await Promise.all([
+      ServerMember.find({ userId: user.id }),
+      getOrCreateDMChannel(user.id, params.recipientId),
+      encryptForStorage(sanitizedContent),
+    ]);
     const userServerIds = userServerMemberships.map((m: any) => m.serverId);
 
     // Parse and validate custom emojis
@@ -566,11 +606,6 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       url: e.url,
     }));
 
-    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
-
-    // Encrypt content for storage
-    const encryptedContent = await encryptForStorage(sanitizedContent);
-
     // Validate reply target if provided
     let replyRef: string | undefined;
     let referencedMessage: { id: string; content: string; author?: { id: string; username: string; displayName: string; avatar?: string; isBot?: boolean; isVerified?: boolean }; createdAt?: string } | undefined;
@@ -578,8 +613,10 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       const refMsg = await Message.findOne({ id: replyTo, channelId: channel.id, isDeleted: false });
       if (refMsg) {
         replyRef = replyTo;
-        const refAuthor = refMsg.authorId ? await User.findById(refMsg.authorId) : null;
-        const refDecrypted = refMsg.content ? await decryptFromStorage(refMsg.content) : '';
+        const [refAuthor, refDecrypted] = await Promise.all([
+          refMsg.authorId ? User.findById(refMsg.authorId) : Promise.resolve(null),
+          refMsg.content ? decryptFromStorage(refMsg.content) : Promise.resolve(''),
+        ]);
         referencedMessage = {
           id: refMsg.id,
           content: refDecrypted,
@@ -1090,28 +1127,30 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
     const authorMap = new Map(authors.map(a => [a.id, a]));
 
-    const messages = await Promise.all(
-      pinnedMsgs.map(async (msg: any) => {
-        const author = msg.authorId ? authorMap.get(msg.authorId) : null;
-        const decryptedContent = msg.content ? await decryptFromStorage(msg.content) : '';
-        return {
-          id: msg.id,
-          content: decryptedContent,
-          authorId: msg.authorId,
-          author: author ? {
-            id: author.id,
-            username: author.username,
-            displayName: author.displayName || author.username,
-            avatar: author.avatar,
-          } : null,
-          channelId: msg.channelId,
-          createdAt: msg.createdAt,
-          updatedAt: msg.updatedAt,
-          pinned: true,
-          attachments: msg.attachments || [],
-        };
-      })
+    // Batch-decrypt all pinned messages in parallel
+    const decryptedContents = await Promise.all(
+      pinnedMsgs.map((msg: any) => msg.content ? decryptFromStorage(msg.content) : Promise.resolve(''))
     );
+
+    const messages = pinnedMsgs.map((msg: any, idx: number) => {
+      const author = msg.authorId ? authorMap.get(msg.authorId) : null;
+      return {
+        id: msg.id,
+        content: decryptedContents[idx],
+        authorId: msg.authorId,
+        author: author ? {
+          id: author.id,
+          username: author.username,
+          displayName: author.displayName || author.username,
+          avatar: author.avatar,
+        } : null,
+        channelId: msg.channelId,
+        createdAt: msg.createdAt,
+        updatedAt: msg.updatedAt,
+        pinned: true,
+        attachments: msg.attachments || [],
+      };
+    });
 
     return { messages };
   }, {

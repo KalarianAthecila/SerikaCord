@@ -21,6 +21,11 @@ export const Message = {
     return row || null;
   },
 
+  async findByDiscordMessageId(discordMessageId: string) {
+    const [row] = await db.select().from(schema.messages).where(eq(schema.messages.discordMessageId, discordMessageId)).limit(1);
+    return row || null;
+  },
+
   async findOne(filter: Record<string, unknown>) {
     const conditions: SQL[] = [];
     for (const [key, value] of Object.entries(filter)) {

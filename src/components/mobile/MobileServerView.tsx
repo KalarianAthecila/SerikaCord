@@ -160,15 +160,10 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
     }
   };
 
-  const handleChannelClick = async (channel: typeof channels[0]) => {
-    if (channel.type === "voice") {
-      if (voiceService.currentRoomId === channel.id) {
-        await voiceService.leaveChannel();
-      } else {
-        await voiceService.joinChannel(channel.id);
-      }
-      return;
-    }
+  const handleChannelClick = (channel: typeof channels[0]) => {
+    // Voice channels behave like text channels on mobile: tapping opens the
+    // channel's call view (participants + a Join button), rather than silently
+    // joining/leaving from the sidebar. Joining happens from the call screen.
     setCurrentChannel(channel);
     router.push(`/channels/${currentServer.id}/${channel.id}`);
   };

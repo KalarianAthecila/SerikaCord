@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
 
 export interface ThemeSettings {
   theme: "dark" | "midnight" | "light";
@@ -215,21 +215,26 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   }, [settings, isLoaded]);
 
-  const updateSetting = <K extends keyof ThemeSettings>(key: K, value: ThemeSettings[K]) => {
+  const updateSetting = useCallback(<K extends keyof ThemeSettings>(key: K, value: ThemeSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
-  };
+  }, []);
 
-  const updateSettings = (patch: Partial<ThemeSettings>) => {
+  const updateSettings = useCallback((patch: Partial<ThemeSettings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
-  };
+  }, []);
 
-  const resetSettings = () => {
+  const resetSettings = useCallback(() => {
     setSettings(defaultSettings);
     localStorage.removeItem("serika-theme-settings");
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ settings, updateSetting, updateSettings, applyUserSettingsPatch, resetSettings }),
+    [settings, updateSetting, updateSettings, applyUserSettingsPatch, resetSettings]
+  );
 
   return (
-    <ThemeContext.Provider value={{ settings, updateSetting, updateSettings, applyUserSettingsPatch, resetSettings }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   );

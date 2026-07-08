@@ -45,6 +45,8 @@ import {
 import { showNotification } from "@/lib/services/notificationService";
 import { useMentions, type MentionData } from "@/hooks/useMentions";
 import { useChatSession } from "@/hooks/useChatSession";
+import { usePermissions } from "@/hooks/usePermissions";
+import { playTts } from "@/lib/chat/tts";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
 import { useIsMobile } from "@/hooks/useIsMobile";
@@ -125,6 +127,8 @@ interface ChatAreaProps {
 export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const { currentChannel, currentServer, channels } = useServer();
   const { user } = useAuth();
+  const perms = usePermissions(currentServer?.id);
+  const canModerateMessages = perms.isOwner || perms.can("MANAGE_MESSAGES");
   const router = useRouter();
   const isMobile = useIsMobile();
   const messageBarRef = useRef<MessageBarHandle>(null);
@@ -413,32 +417,19 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         );
       }
 
-      // Auto TTS: speak incoming messages when accessibility.tts is enabled (or when /tts prefix present)
+      // Auto TTS: speak incoming messages when the listener has TTS enabled, or
+      // whenever the message was explicitly sent with the /tts prefix (so a
+      // /tts message is heard by everyone in the channel — web and desktop).
       const ttsEnabled = user?.settings?.accessibility?.tts === true;
       const hasTtsPrefix = typeof message.content === "string" && message.content.startsWith("/tts ");
-      if ((ttsEnabled || hasTtsPrefix) && message.content && typeof window !== "undefined" && "speechSynthesis" in window) {
+      if ((ttsEnabled || hasTtsPrefix) && message.content) {
         const authorName = message.author?.displayName || message.author?.username || "Someone";
-        // Strip custom emoji tokens, markdown, HTML entities, and /tts prefix
-        const rawForTts = hasTtsPrefix ? message.content.slice(5) : message.content;
-        const cleanContent = rawForTts
-          .replace(/<(a)?:[a-zA-Z0-9_]+:[a-f0-9]+>/gi, "")
-          .replace(/<@!?[a-f0-9]+>/gi, "")
-          .replace(/<@&[a-f0-9]+>/gi, "")
-          .replace(/<#[a-f0-9]+>/gi, "")
-          .replace(/<t:[^>]+>/gi, "")
-          .replace(/[*_~`#>|]/g, "")
-          .replace(/&amp;/g, "&")
-          .replace(/&lt;/g, "<")
-          .replace(/&gt;/g, ">")
-          .replace(/&quot;/g, '"')
-          .replace(/&#39;/g, "'")
-          .trim();
-        if (cleanContent) {
-          const utterance = new SpeechSynthesisUtterance(`${authorName} said "${cleanContent}"`);
-          utterance.rate = 1;
-          utterance.pitch = 1;
-          window.speechSynthesis.speak(utterance);
-        }
+        void playTts({
+          content: message.content,
+          authorName,
+          rate: user?.settings?.accessibility?.ttsRate,
+          voiceGender: user?.settings?.accessibility?.ttsVoice,
+        });
       }
 
       if (isHidden || isMentioned) {
@@ -512,8 +503,14 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       if (result.handled) {
         // Clear the composer if the command was consumed
         if (result.ttsText) {
-          // TTS: speak locally then send with /tts prefix so others can hear it too
+          // TTS: send with /tts prefix so every other client hears it, and play
+          // locally for the sender (own messages don't come back through SSE).
           composer?.clear();
+          void playTts({
+            content: result.ttsText,
+            rate: user?.settings?.accessibility?.ttsRate,
+            voiceGender: user?.settings?.accessibility?.ttsVoice,
+          });
           await chat.sendMessage({ contentOverride: `/tts ${result.ttsText}` });
         } else if (result.sendAsMessage) {
           // Commands like /me, /shrug, /8ball, /roll produce a message
@@ -529,7 +526,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
     // Normal send
     void chat.sendMessage();
-  }, [executeCommand, chat]);
+  }, [executeCommand, chat, user?.settings?.accessibility?.ttsRate, user?.settings?.accessibility?.ttsVoice]);
 
   const lightbox = useMediaLightbox(chat.mediaGallery);
 
@@ -1029,35 +1026,30 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setActiveMentionIndex(0);
         return;
       }
-      if ((e.key === "Enter" && !e.shiftKey) || e.key === "Tab") {
+      // Tab inserts the selected suggestion (autocomplete)
+      if (e.key === "Tab") {
         const selected = mentionSuggestions[activeMentionIndex];
-        // For command suggestions: if the typed text exactly matches the
-        // selected command name, fall through to handleSend instead of
-        // re-inserting the command.  Also skip param-hint suggestions
-        // (they're informational, not selectable values).
         if (selected) {
           if (selected.kind === "param-hint") {
-            // Dismiss the hint but DO NOT block — fall through so Enter sends the message
             mentionRangeRef.current = null;
             setMentionSuggestions([]);
             setActiveMentionIndex(0);
-            // Fall through to handleSend below
-          } else {
-            const composer = messageBarRef.current?.getComposer();
-            const currentText = composer?.getText()?.trim() ?? "";
-            if (selected.kind === "command" && currentText === `/${selected.label}`) {
-              // Exact match — dismiss suggestions and fall through to send
-              mentionRangeRef.current = null;
-              setMentionSuggestions([]);
-              setActiveMentionIndex(0);
-              // Fall through to Enter handler below
-            } else {
-              e.preventDefault();
-              insertMentionFromSuggestion(selected);
-              return;
-            }
+            return;
           }
+          e.preventDefault();
+          insertMentionFromSuggestion(selected);
         }
+        return;
+      }
+      // Enter always sends — don't let suggestions intercept it
+      if (e.key === "Enter" && !e.shiftKey) {
+        // Dismiss any visible suggestions first
+        mentionRangeRef.current = null;
+        setMentionSuggestions([]);
+        setActiveMentionIndex(0);
+        e.preventDefault();
+        void handleSend();
+        return;
       }
     }
 
@@ -1255,6 +1247,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         loadOlderMessages={chat.loadOlderMessages}
         actions={chat.actions}
         currentUserId={user?.id}
+        canModerate={canModerateMessages}
         serverId={currentServer?.id}
         serverName={currentServer?.name}
         swipeEnabled={isMobile}
@@ -1409,6 +1402,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       <MessageContextMenu
         menu={chat.actions.contextMenu}
         isOwn={(message) => message.authorId === user?.id}
+        canModerate={canModerateMessages}
         onClose={() => chat.actions.setContextMenu(null)}
         onReply={(message) => {
           chat.actions.setReplyToMessage(message);

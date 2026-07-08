@@ -95,7 +95,15 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
             {author.isOwner && (
               <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
             )}
-            {author.isBot && (
+            {author.isSystem && (
+              <SystemPill isSystem={author.isSystem} />
+            )}
+            {author.isDiscord && (
+              <span className="inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase scale-90 origin-left bg-[#5865F2] text-white">
+                Discord
+              </span>
+            )}
+            {author.isBot && !author.isSystem && !author.isDiscord && (
               <span className={cn(
                 "inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase scale-90 origin-left",
                 author.isVerified 
@@ -109,9 +117,29 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
           </button>
         </MemberProfilePopup>
       ) : (
-        <span className={cn("!text-[0.8rem] font-medium leading-tight whitespace-nowrap text-[var(--text-primary)]", styleClasses)} style={chatInline}>{name}</span>
+        <span className={cn("!text-[0.8rem] font-medium leading-tight whitespace-nowrap text-[var(--text-primary)] flex items-center gap-1", styleClasses)} style={chatInline}>
+          <span>{name}</span>
+          {author.isSystem && (
+            <SystemPill isSystem={author.isSystem} />
+          )}
+          {author.isDiscord && (
+            <span className="inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase scale-90 origin-left bg-[#5865F2] text-white">
+              Discord
+            </span>
+          )}
+          {author.isBot && !author.isSystem && !author.isDiscord && (
+            <span className={cn(
+              "inline-flex items-center gap-0.5 px-1 py-0.5 text-[9px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase scale-90 origin-left",
+              author.isVerified 
+                ? "bg-[#5865F2] text-white" 
+                : "bg-[#4f545c]/30 text-[#b9bbbe] border border-white/[0.04]"
+            )}>
+              {author.isVerified && <Check className="w-2.5 h-2.5 shrink-0 stroke-[3px]" />}
+              Bot
+            </span>
+          )}
+        </span>
       )}
-      <SystemPill isSystem={author.isSystem} />
       <StaffPill badges={author.badges} />
       <span className="text-[10px] leading-none text-[var(--text-muted)] whitespace-nowrap">{formatMessageTimestamp(timestamp)}</span>
     </div>

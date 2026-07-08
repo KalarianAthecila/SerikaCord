@@ -49,6 +49,8 @@ interface MessageListProps<M extends ChatMessage> {
   loadOlderMessages: () => Promise<boolean>;
   actions: ReturnType<typeof useMessageActions<M>>;
   currentUserId?: string;
+  /** Owner / MANAGE_MESSAGES — can delete other people's messages. */
+  canModerate?: boolean;
   serverId?: string;
   serverName?: string;
   swipeEnabled?: boolean;
@@ -79,6 +81,7 @@ function MessageListInner<M extends ChatMessage>(
     loadOlderMessages,
     actions,
     currentUserId,
+    canModerate = false,
     serverId,
     serverName,
     swipeEnabled = false,
@@ -335,6 +338,7 @@ function MessageListInner<M extends ChatMessage>(
                 <MessageGroup
                   group={group}
                   currentUserId={currentUserId}
+                  canModerate={canModerate}
                   serverId={serverId}
                   serverName={serverName}
                   swipeEnabled={swipeEnabled}

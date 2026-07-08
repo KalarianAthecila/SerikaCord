@@ -303,10 +303,7 @@ export async function authenticateRequest(
           isPremium: accountsUser.isPremium || false,
           isVerified: accountsUser.isVerified || true,
         };
-        if (accountsUser.displayName) {
-          updateFields.displayName = accountsUser.displayName;
-        }
-        if (accountsUser.email && !dbUser.email) {
+          if (accountsUser.email && !dbUser.email) {
           updateFields.email = accountsUser.email;
         }
         dbUser = await User.updateById(dbUser.id, updateFields) || dbUser;
@@ -330,9 +327,6 @@ export async function authenticateRequest(
         isPremium: accountsUser.isPremium || false,
         isVerified: accountsUser.isVerified || true,
       };
-      if (accountsUser.displayName) {
-        updateFields.displayName = accountsUser.displayName;
-      }
       dbUser = await User.updateById(userId, updateFields) || dbUser;
     }
     

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
@@ -19,6 +19,19 @@ import {
   Sparkles,
   Globe,
   Loader2,
+  Flame,
+  Clock,
+  CheckCircle2,
+  X,
+  Activity,
+  Heart,
+  Camera,
+  Dumbbell,
+  Languages,
+  Microscope,
+  Pizza,
+  Plane,
+  Briefcase,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
@@ -31,19 +44,46 @@ interface Server {
   memberCount: number;
   onlineCount?: number;
   isPartnered?: boolean;
+  isVerified?: boolean;
   joinMode?: string;
   category?: string;
   tags?: string[];
+  createdAt?: string;
 }
 
+interface DiscoverResponse {
+  servers: Server[];
+  categoryCounts?: Record<string, number>;
+  totalServers?: number;
+  totalMembers?: number;
+  totalOnline?: number;
+}
+
+type SortMode = "popular" | "new" | "trending";
+
 const categories = [
-  { id: "all", name: "All", icon: Globe },
-  { id: "gaming", name: "Gaming", icon: Gamepad2 },
-  { id: "music", name: "Music", icon: Music },
-  { id: "tech", name: "Tech & Programming", icon: Code },
-  { id: "art", name: "Art & Design", icon: Palette },
-  { id: "education", name: "Education", icon: BookOpen },
-  { id: "entertainment", name: "Entertainment", icon: Film },
+  { id: "all", name: "All Communities", icon: Globe, color: "#5865F2" },
+  { id: "gaming", name: "Gaming", icon: Gamepad2, color: "#9146FF" },
+  { id: "music", name: "Music", icon: Music, color: "#1DB954" },
+  { id: "tech", name: "Tech & Programming", icon: Code, color: "#00B0FF" },
+  { id: "art", name: "Art & Design", icon: Palette, color: "#FF4081" },
+  { id: "education", name: "Education", icon: BookOpen, color: "#FFC107" },
+  { id: "entertainment", name: "Entertainment", icon: Film, color: "#FF5722" },
+  { id: "anime", name: "Anime & Manga", icon: Sparkles, color: "#E040FB" },
+  { id: "science", name: "Science", icon: Microscope, color: "#00BCD4" },
+  { id: "sports", name: "Sports & Fitness", icon: Dumbbell, color: "#4CAF50" },
+  { id: "food", name: "Food & Drink", icon: Pizza, color: "#FF9800" },
+  { id: "travel", name: "Travel", icon: Plane, color: "#2979FF" },
+  { id: "languages", name: "Languages", icon: Languages, color: "#7C4DFF" },
+  { id: "photography", name: "Photography", icon: Camera, color: "#F50057" },
+  { id: "business", name: "Business", icon: Briefcase, color: "#607D8B" },
+  { id: "lifestyle", name: "Lifestyle", icon: Heart, color: "#FF1744" },
+];
+
+const sortOptions: { id: SortMode; label: string; icon: typeof TrendingUp }[] = [
+  { id: "popular", label: "Popular", icon: TrendingUp },
+  { id: "trending", label: "Trending", icon: Flame },
+  { id: "new", label: "New", icon: Clock },
 ];
 
 const DISCOVER_GRADIENTS = [
@@ -79,6 +119,23 @@ function formatMemberCount(count: number) {
   return count.toString();
 }
 
+function isNewServer(createdAt?: string) {
+  if (!createdAt) return false;
+  const diff = Date.now() - new Date(createdAt).getTime();
+  return diff < 7 * 24 * 60 * 60 * 1000; // 7 days
+}
+
+function timeAgo(createdAt?: string) {
+  if (!createdAt) return "";
+  const diff = Date.now() - new Date(createdAt).getTime();
+  const days = Math.floor(diff / (24 * 60 * 60 * 1000));
+  if (days < 1) return "Today";
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
 function ServerCard({
   server,
   featured,
@@ -91,88 +148,125 @@ function ServerCard({
   joining: boolean;
 }) {
   const gradient = getServerGradient(server.id + server.name);
+  const isNew = isNewServer(server.createdAt);
 
   return (
     <div
-      className="group bg-[#111214] rounded-xl overflow-hidden border border-[#1f1f22] hover:border-[#404249] hover:shadow-xl transition-all cursor-pointer"
+      className={cn(
+        "group relative bg-[#111214] rounded-2xl overflow-hidden border border-[#1f1f22]",
+        "hover:border-[#5865F2]/50 hover:shadow-2xl hover:shadow-[#5865F2]/10",
+        "transition-all duration-300 cursor-pointer hover:-translate-y-1 flex flex-col",
+      )}
       onClick={onJoin}
     >
-      {/* Banner */}
-      <div className={cn("relative", featured ? "h-32" : "h-24")}>
+      {/* === BANNER (top) === */}
+      <div className={cn("relative overflow-hidden w-full", featured ? "h-36" : "h-28")}>
         {server.banner ? (
-          <img src={server.banner} alt="" className="w-full h-full object-cover" />
+          <img src={server.banner} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
         ) : (
           <div
-            className="w-full h-full"
+            className="w-full h-full group-hover:scale-105 transition-transform duration-500"
             style={{ background: `linear-gradient(135deg, ${gradient.from}, ${gradient.to})` }}
-          />
+          >
+            <div className="absolute inset-0 bg-gradient-to-br from-white/10 to-transparent" />
+          </div>
+        )}
+        {/* New badge */}
+        {isNew && (
+          <div className="absolute top-2 right-2 px-2 py-0.5 bg-[#23A55A] text-white text-[10px] font-bold rounded-full flex items-center gap-1 shadow-lg z-10">
+            <Sparkles className="w-2.5 h-2.5" />
+            NEW
+          </div>
+        )}
+        {/* Online pulse on banner */}
+        {(server.onlineCount ?? 0) > 0 && (
+          <div className="absolute bottom-2 left-2 flex items-center gap-1.5 px-2 py-0.5 bg-black/60 backdrop-blur-sm rounded-full z-10">
+            <div className="relative">
+              <div className="w-2 h-2 rounded-full bg-[#23A55A]" />
+              <div className="absolute inset-0 w-2 h-2 rounded-full bg-[#23A55A] animate-ping opacity-75" />
+            </div>
+            <span className="text-[10px] text-white font-medium">{formatMemberCount(server.onlineCount || 0)} online</span>
+          </div>
         )}
       </div>
 
-      <div className="p-4 relative">
-        <div className="flex gap-3">
-          <Avatar
-            className={cn(
-              "flex-shrink-0 border-4 border-[#111214] -mt-10",
-              featured ? "w-20 h-20" : "w-16 h-16"
-            )}
+      {/* === PFP (middle, overlapping banner) === */}
+      <div className="flex justify-center -mt-10 mb-2 relative z-10">
+        <Avatar
+          className={cn(
+            "flex-shrink-0 border-4 border-[#111214] ring-2 ring-transparent group-hover:ring-[#5865F2]/30 transition-all",
+            featured ? "w-20 h-20" : "w-16 h-16"
+          )}
+        >
+          <AvatarImage src={server.icon} />
+          <AvatarFallback
+            className="text-white text-xl font-bold"
+            style={{ backgroundColor: gradient.from }}
           >
-            <AvatarImage src={server.icon} />
-            <AvatarFallback
-              className="text-white text-lg"
-              style={{ backgroundColor: gradient.from }}
-            >
-              {server.name.charAt(0)}
-            </AvatarFallback>
-          </Avatar>
+            {server.name.charAt(0).toUpperCase()}
+          </AvatarFallback>
+        </Avatar>
+      </div>
 
-          <div className="min-w-0 flex-1 pt-1">
-            <div className="flex items-center gap-1.5">
-              {server.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
-              <h3 className="text-white font-bold truncate">{server.name}</h3>
-            </div>
-            <p className="text-[#949ba4] text-sm line-clamp-2 mt-1">
-              {server.description || "No description"}
-            </p>
-          </div>
+      {/* === SERVER INFO (below) === */}
+      <div className="px-4 pb-4 flex flex-col items-center text-center flex-1">
+        <div className="flex items-center gap-1.5 justify-center flex-wrap">
+          {server.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
+          {server.isVerified && (
+            <CheckCircle2 className="w-4 h-4 text-[#5865F2] flex-shrink-0" />
+          )}
+          <h3 className="text-white font-bold truncate text-base">{server.name}</h3>
         </div>
 
-        <div className="flex items-center justify-between mt-4">
-          <div className="flex items-center gap-3 text-xs text-[#949ba4]">
-            <span className="flex items-center gap-1.5">
-              <div className="w-2 h-2 rounded-full bg-[#23A55A]" />
-              {formatMemberCount(server.onlineCount || 0)} Online
-            </span>
-            <span className="flex items-center gap-1">
-              <Users className="w-3.5 h-3.5" />
-              {formatMemberCount(server.memberCount)} Members
-            </span>
-          </div>
+        <p className="text-[#949ba4] text-sm line-clamp-2 mt-1.5 min-h-[2.5rem]">
+          {server.description || "No description"}
+        </p>
 
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onJoin();
-            }}
-            disabled={joining}
-            className="px-4 py-1.5 rounded-full bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-colors disabled:opacity-60"
-          >
-            {joining ? <Loader2 className="w-4 h-4 animate-spin" /> : server.joinMode === "apply_to_join" ? "Apply" : "Join"}
-          </button>
+        {/* Stats row */}
+        <div className="flex items-center gap-4 mt-3 text-xs text-[#949ba4]">
+          <span className="flex items-center gap-1.5">
+            <div className="w-2 h-2 rounded-full bg-[#23A55A]" />
+            {formatMemberCount(server.onlineCount || 0)} Online
+          </span>
+          <span className="flex items-center gap-1">
+            <Users className="w-3.5 h-3.5" />
+            {formatMemberCount(server.memberCount)} Members
+          </span>
         </div>
 
+        {/* Tags */}
         {server.tags && server.tags.length > 0 && (
-          <div className="flex gap-1.5 mt-3 flex-wrap">
-            {server.tags.slice(0, 3).map((tag) => (
-              <span
-                key={tag}
-                className="px-2 py-0.5 bg-[#1f1f22] text-[#949ba4] text-xs rounded-full"
-              >
-                {tag}
-              </span>
-            ))}
+          <div className="flex gap-1.5 mt-3 flex-wrap justify-center">
+            {server.tags.slice(0, 3).map((tag) => {
+              const cat = categories.find((c) => c.id === tag);
+              return (
+                <span
+                  key={tag}
+                  className="px-2 py-0.5 text-xs rounded-full border"
+                  style={{
+                    color: cat?.color || "#949ba4",
+                    borderColor: `${cat?.color || "#949ba4"}30`,
+                    backgroundColor: `${cat?.color || "#949ba4"}10`,
+                  }}
+                >
+                  {cat?.name || tag}
+                </span>
+              );
+            })}
           </div>
         )}
+
+        {/* Join button */}
+        <button
+          onClick={(e) => {
+            e.stopPropagation();
+            onJoin();
+          }}
+          disabled={joining}
+          className="mt-4 w-full px-4 py-2 rounded-full bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-60 disabled:hover:scale-100"
+        >
+          {joining ? <Loader2 className="w-4 h-4 animate-spin mx-auto" /> : server.joinMode === "apply_to_join" ? "Apply to Join" : "Join Server"}
+        </button>
       </div>
     </div>
   );
@@ -182,7 +276,10 @@ export default function ExplorePage() {
   const router = useRouter();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
+  const [sortMode, setSortMode] = useState<SortMode>("popular");
   const [servers, setServers] = useState<Server[]>([]);
+  const [categoryCounts, setCategoryCounts] = useState<Record<string, number>>({});
+  const [stats, setStats] = useState({ totalServers: 0, totalMembers: 0, totalOnline: 0 });
   const [isLoading, setIsLoading] = useState(true);
   const [joiningServerId, setJoiningServerId] = useState<string | null>(null);
   const [applyServer, setApplyServer] = useState<Server | null>(null);
@@ -201,12 +298,21 @@ export default function ExplorePage() {
     const params = new URLSearchParams();
     if (selectedCategory !== "all") params.set("category", selectedCategory);
     if (debouncedSearch) params.set("search", debouncedSearch);
+    params.set("sort", sortMode);
     fetch(`/api/servers/discoverable?${params.toString()}`)
       .then((r) => r.json())
-      .then((data) => setServers(data.servers ?? []))
+      .then((data: DiscoverResponse) => {
+        setServers(data.servers ?? []);
+        setCategoryCounts(data.categoryCounts ?? {});
+        setStats({
+          totalServers: data.totalServers ?? 0,
+          totalMembers: data.totalMembers ?? 0,
+          totalOnline: data.totalOnline ?? 0,
+        });
+      })
       .catch(() => setServers([]))
       .finally(() => setIsLoading(false));
-  }, [selectedCategory, debouncedSearch]);
+  }, [selectedCategory, debouncedSearch, sortMode]);
 
   const handleJoinServer = async (serverId: string) => {
     const server = servers.find((s) => s.id === serverId);
@@ -256,52 +362,106 @@ export default function ExplorePage() {
     }
   };
 
-  const filteredServers = debouncedSearch
-    ? servers
-    : servers.filter((s) => !s.isPartnered || selectedCategory !== "all");
+  const filteredServers = useMemo(() => {
+    if (debouncedSearch) return servers;
+    return servers.filter((s) => !s.isPartnered || selectedCategory !== "all");
+  }, [servers, debouncedSearch, selectedCategory]);
 
-  const featuredServers = servers.filter((s) => s.isPartnered).slice(0, 4);
+  const featuredServers = useMemo(
+    () => servers.filter((s) => s.isPartnered).slice(0, 4),
+    [servers]
+  );
+
+  const selectedCat = categories.find((c) => c.id === selectedCategory);
 
   return (
     <div className="flex-1 flex min-h-0 bg-[#0a0a0a]">
       {/* Sidebar */}
-      <aside className="w-60 hidden md:flex flex-col border-r border-[#1f1f22] bg-[#111214]">
-        <div className="p-4">
+      <aside className="w-64 hidden md:flex flex-col border-r border-[#1f1f22] bg-[#111214] flex-shrink-0">
+        <div className="p-4 flex-1 overflow-y-auto">
           <h2 className="text-xs font-bold text-[#949ba4] uppercase tracking-wider mb-3">
             Discover
           </h2>
           <nav className="space-y-1">
             {categories.map((category) => {
               const Icon = category.icon;
+              const count = category.id === "all" ? stats.totalServers : (categoryCounts[category.id] || 0);
+              const isActive = selectedCategory === category.id;
               return (
                 <button
                   key={category.id}
                   onClick={() => setSelectedCategory(category.id)}
                   className={cn(
-                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-colors",
-                    selectedCategory === category.id
+                    "w-full flex items-center gap-3 px-3 py-2 rounded-lg text-sm font-medium transition-all",
+                    isActive
                       ? "bg-[#404249] text-white"
                       : "text-[#b5bac1] hover:bg-[#2b2d31] hover:text-white"
                   )}
                 >
-                  <Icon className="w-4 h-4" />
-                  {category.name}
+                  <Icon
+                    className="w-4 h-4 flex-shrink-0"
+                    style={isActive ? { color: category.color } : undefined}
+                  />
+                  <span className="flex-1 text-left truncate">{category.name}</span>
+                  {count > 0 && (
+                    <span
+                      className={cn(
+                        "text-[10px] font-bold px-1.5 py-0.5 rounded-full",
+                        isActive ? "bg-[#5865F2] text-white" : "bg-[#2b2d31] text-[#949ba4]"
+                      )}
+                    >
+                      {count}
+                    </span>
+                  )}
                 </button>
               );
             })}
           </nav>
+        </div>
+
+        {/* Stats footer */}
+        <div className="p-4 border-t border-[#1f1f22] space-y-2">
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-[#949ba4] flex items-center gap-1.5">
+              <Globe className="w-3.5 h-3.5" />
+              Communities
+            </span>
+            <span className="text-white font-bold">{formatMemberCount(stats.totalServers)}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-[#949ba4] flex items-center gap-1.5">
+              <Users className="w-3.5 h-3.5" />
+              Total Members
+            </span>
+            <span className="text-white font-bold">{formatMemberCount(stats.totalMembers)}</span>
+          </div>
+          <div className="flex items-center justify-between text-xs">
+            <span className="text-[#949ba4] flex items-center gap-1.5">
+              <Activity className="w-3.5 h-3.5 text-[#23A55A]" />
+              Online Now
+            </span>
+            <span className="text-[#23A55A] font-bold">{formatMemberCount(stats.totalOnline)}</span>
+          </div>
         </div>
       </aside>
 
       {/* Main Content */}
       <ScrollArea className="flex-1 min-h-0">
         {/* Hero */}
-        <div className="relative h-[220px] md:h-[300px] bg-gradient-to-br from-[#5865F2] via-[#8B5CF6] to-[#EB459E] overflow-hidden flex-shrink-0">
+        <div className="relative h-[220px] md:h-[320px] overflow-hidden flex-shrink-0">
+          {/* Animated gradient background */}
+          <div className="absolute inset-0 bg-gradient-to-br from-[#5865F2] via-[#8B5CF6] to-[#EB459E]" />
+          {/* Floating orbs */}
+          <div className="absolute top-10 left-10 w-40 h-40 bg-white/10 rounded-full blur-3xl animate-pulse" />
+          <div className="absolute bottom-10 right-20 w-52 h-52 bg-[#EB459E]/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
+          <div className="absolute top-1/2 left-1/3 w-32 h-32 bg-[#5865F2]/20 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
+          {/* Grid overlay */}
           <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-20" />
-          <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] to-transparent" />
+          {/* Fade to background */}
+          <div className="absolute inset-0 bg-gradient-to-t from-[#0a0a0a] via-[#0a0a0a]/40 to-transparent" />
 
           <div className="relative h-full flex flex-col items-center justify-center px-4 text-center">
-            <h1 className="text-3xl md:text-5xl font-extrabold text-white mb-2">
+            <h1 className="text-3xl md:text-5xl font-extrabold text-white mb-2 drop-shadow-lg">
               Find your community
             </h1>
             <p className="text-white/80 text-sm md:text-lg max-w-xl mb-6">
@@ -313,22 +473,99 @@ export default function ExplorePage() {
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
-                placeholder="Explore communities"
+                placeholder="Explore communities..."
                 className="pl-12 h-12 bg-[#111111]/90 backdrop-blur border-none text-white text-base placeholder:text-[#888888] rounded-full"
               />
+              {searchQuery && (
+                <button
+                  onClick={() => setSearchQuery("")}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-[#2b2d31] transition-colors"
+                >
+                  <X className="w-4 h-4 text-[#888888]" />
+                </button>
+              )}
             </div>
           </div>
         </div>
 
+        {/* Mobile category pills */}
+        <div className="md:hidden sticky top-0 z-10 bg-[#0a0a0a]/95 backdrop-blur border-b border-[#1f1f22] px-4 py-3">
+          <div className="flex gap-2 overflow-x-auto no-scrollbar">
+            {categories.map((category) => {
+              const Icon = category.icon;
+              const isActive = selectedCategory === category.id;
+              return (
+                <button
+                  key={category.id}
+                  onClick={() => setSelectedCategory(category.id)}
+                  className={cn(
+                    "flex items-center gap-2 px-3 py-1.5 rounded-full text-sm font-medium whitespace-nowrap transition-all flex-shrink-0",
+                    isActive
+                      ? "text-white"
+                      : "text-[#b5bac1] bg-[#1f1f22] hover:bg-[#2b2d31]"
+                  )}
+                  style={isActive ? { backgroundColor: category.color } : undefined}
+                >
+                  <Icon className="w-4 h-4" />
+                  {category.name}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         <div className="max-w-6xl mx-auto px-4 py-8">
+          {/* Sort tabs + section title */}
+          <div className="flex items-center justify-between mb-6 flex-wrap gap-4">
+            <div>
+              <h2 className="text-xl font-bold text-white">
+                {debouncedSearch
+                  ? `Results for "${debouncedSearch}"`
+                  : selectedCategory === "all"
+                  ? sortMode === "new" ? "Newest Communities" : sortMode === "trending" ? "Trending Now" : "Popular Communities"
+                  : `${selectedCat?.name ?? "Communities"}`}
+              </h2>
+              <p className="text-sm text-[#949ba4] mt-0.5">
+                {filteredServers.length} {filteredServers.length === 1 ? "community" : "communities"}
+                {selectedCategory === "all" && !debouncedSearch && ` • ${formatMemberCount(stats.totalMembers)} total members`}
+              </p>
+            </div>
+
+            {/* Sort tabs */}
+            <div className="flex items-center gap-1 bg-[#1f1f22] rounded-lg p-1">
+              {sortOptions.map((option) => {
+                const Icon = option.icon;
+                const isActive = sortMode === option.id;
+                return (
+                  <button
+                    key={option.id}
+                    onClick={() => setSortMode(option.id)}
+                    className={cn(
+                      "flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all",
+                      isActive
+                        ? "bg-[#404249] text-white"
+                        : "text-[#949ba4] hover:text-white"
+                    )}
+                  >
+                    <Icon className="w-3.5 h-3.5" />
+                    {option.label}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+
           {/* Featured */}
-          {selectedCategory === "all" && !debouncedSearch && featuredServers.length > 0 && (
+          {selectedCategory === "all" && !debouncedSearch && sortMode === "popular" && featuredServers.length > 0 && (
             <section className="mb-10">
               <div className="flex items-center gap-2 mb-4">
-                <TrendingUp className="w-5 h-5 text-[var(--accent-color)]" />
-                <h2 className="text-lg font-bold text-white">Featured Communities</h2>
+                <div className="w-1 h-5 bg-gradient-to-b from-[#FFD12A] to-[#FF5722] rounded-full" />
+                <h3 className="text-lg font-bold text-white">Featured Communities</h3>
+                <span className="px-2 py-0.5 bg-[#FFD12A]/10 text-[#FFD12A] text-[10px] font-bold rounded-full border border-[#FFD12A]/20">
+                  PARTNERED
+                </span>
               </div>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {featuredServers.map((server) => (
                   <ServerCard
                     key={server.id}
@@ -342,32 +579,49 @@ export default function ExplorePage() {
             </section>
           )}
 
-          {/* All / Popular */}
+          {/* All Servers */}
           <section>
-            <h2 className="text-lg font-bold text-white mb-4">
-              {searchQuery
-                ? `Results for "${searchQuery}"`
-                : selectedCategory === "all"
-                ? "Popular Communities"
-                : `${categories.find((c) => c.id === selectedCategory)?.name} Communities`}
-            </h2>
-
             {isLoading ? (
-              <div className="flex items-center justify-center py-12">
-                <Loader2 className="w-8 h-8 text-[var(--accent-color)] animate-spin" />
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+                {Array.from({ length: 8 }).map((_, i) => (
+                  <div key={i} className="bg-[#111214] rounded-2xl border border-[#1f1f22] overflow-hidden animate-pulse flex flex-col">
+                    <div className="h-28 bg-[#1f1f22]" />
+                    <div className="flex justify-center -mt-10 mb-2">
+                      <div className="w-16 h-16 rounded-full bg-[#1f1f22] border-4 border-[#111214]" />
+                    </div>
+                    <div className="px-4 pb-4 flex flex-col items-center gap-2">
+                      <div className="h-4 bg-[#1f1f22] rounded w-2/3" />
+                      <div className="h-3 bg-[#1f1f22] rounded w-full" />
+                      <div className="h-3 bg-[#1f1f22] rounded w-1/2" />
+                      <div className="h-8 bg-[#1f1f22] rounded-full w-full mt-2" />
+                    </div>
+                  </div>
+                ))}
               </div>
             ) : filteredServers.length === 0 ? (
-              <div className="text-center py-12">
-                <Search className="w-12 h-12 text-[#555555] mx-auto mb-3" />
-                <h3 className="text-lg font-bold text-white mb-2">
-                  No communities found
+              <div className="text-center py-20">
+                <div className="w-20 h-20 mx-auto mb-4 rounded-full bg-[#1f1f22] flex items-center justify-center">
+                  <Search className="w-10 h-10 text-[#555555]" />
+                </div>
+                <h3 className="text-xl font-bold text-white mb-2">
+                  {debouncedSearch ? "No communities found" : "No communities in this category yet"}
                 </h3>
-                <p className="text-[#888888] text-sm">
-                  Try a different search term or browse categories
+                <p className="text-[#888888] text-sm max-w-md mx-auto">
+                  {debouncedSearch
+                    ? "Try a different search term or browse other categories."
+                    : "Be the first to list your server in this category! Enable Discoverable in your server settings."}
                 </p>
+                {!debouncedSearch && selectedCategory !== "all" && (
+                  <button
+                    onClick={() => setSelectedCategory("all")}
+                    className="mt-4 px-4 py-2 bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium rounded-full transition-colors"
+                  >
+                    Browse all communities
+                  </button>
+                )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
                 {filteredServers.map((server) => (
                   <ServerCard
                     key={server.id}

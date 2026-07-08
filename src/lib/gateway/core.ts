@@ -126,17 +126,19 @@ export class GatewayHub {
       return;
     }
 
-    const botUser = await User.findById(app.botId);
+    // Fetch bot user, memberships, and DM channels in parallel
+    const [botUser, memberships, dmChannels] = await Promise.all([
+      User.findById(app.botId),
+      ServerMember.find({ userId: app.botId }),
+      Channel.find({ type: { in: ['dm', 'group_dm'] }, recipientIds: app.botId }),
+    ]);
     if (!botUser) {
       this.send(conn, OP.INVALID_SESSION, false);
       conn.close(4004, 'Authentication failed');
       return;
     }
 
-    const memberships = await ServerMember.find({ userId: app.botId });
     const guildIds = memberships.map((m: { serverId: string }) => m.serverId);
-
-    const dmChannels = await Channel.find({ type: { in: ['dm', 'group_dm'] }, recipientIds: app.botId });
 
     conn.data.authenticated = true;
     conn.data.botId = app.botId;

@@ -810,6 +810,13 @@ class VoiceService {
   async startScreenShare(): Promise<boolean> {
     if (!this.roomId) return false;
 
+    // getDisplayMedia is unavailable on most mobile browsers (iOS Safari has no
+    // support at all). Surface a clear message instead of a generic "denied".
+    if (typeof navigator === "undefined" || !navigator.mediaDevices?.getDisplayMedia) {
+      this.emit({ type: "error", message: "Screen sharing isn't supported on this device or browser." });
+      return false;
+    }
+
     try {
       this.screenStream = await navigator.mediaDevices.getDisplayMedia({
         video: { cursor: "always" } as MediaTrackConstraints,
@@ -838,8 +845,18 @@ class VoiceService {
 
       this.emit({ type: "screen_share_toggled", enabled: true });
       return true;
-    } catch {
-      this.emit({ type: "error", message: "Screen share permission denied." });
+    } catch (err) {
+      // Distinguish an explicit user cancel from a real failure so the UI can
+      // stay quiet on cancel but report actual errors.
+      const name = (err as { name?: string })?.name;
+      if (name === "NotAllowedError" || name === "AbortError") {
+        // User dismissed the picker — not an error worth surfacing loudly.
+        this.emit({ type: "screen_share_toggled", enabled: false });
+      } else {
+        this.emit({ type: "error", message: `Could not start screen share${name ? ` (${name})` : ""}.` });
+      }
+      this.screenStream = null;
+      this.isScreenSharing = false;
       return false;
     }
   }

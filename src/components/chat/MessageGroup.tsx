@@ -1,7 +1,7 @@
 "use client";
 
 import { memo, useMemo } from "react";
-import { Pencil, Pin, Reply, Smile, Trash2 } from "lucide-react";
+import { Pencil, Pin, Reply, Smile, Trash2, Clock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { SwipeableRow, type SwipeAction } from "@/components/ui/swipe-actions";
 import { MessageContent } from "@/components/chat/MessageContent";
@@ -31,6 +31,8 @@ interface MentionRole {
 export interface MessageGroupProps<M extends ChatMessage> {
   group: MessageGroupData<M>;
   currentUserId?: string;
+  /** Owner / MANAGE_MESSAGES — can delete other people's messages. */
+  canModerate?: boolean;
   serverId?: string;
   serverName?: string;
   /** Enables swipe actions on the entire row (mobile). */
@@ -74,6 +76,7 @@ export interface MessageGroupProps<M extends ChatMessage> {
 function MessageGroupInner<M extends ChatMessage>({
   group,
   currentUserId,
+  canModerate = false,
   serverId,
   serverName,
   swipeEnabled = false,
@@ -165,21 +168,22 @@ function MessageGroupInner<M extends ChatMessage>({
         className: "bg-[#6366f1]",
       },
     ];
-    if (message.authorId === currentUserId) {
-      actions.push(
-        {
-          label: "Edit",
-          icon: <Pencil className="w-5 h-5" />,
-          onAction: () => onEdit(message),
-          className: "bg-[#3b82f6]",
-        },
-        {
-          label: "Delete",
-          icon: <Trash2 className="w-5 h-5" />,
-          onAction: () => onDelete(message),
-          className: "bg-red-500",
-        }
-      );
+    const isOwnMessage = message.authorId === currentUserId;
+    if (isOwnMessage) {
+      actions.push({
+        label: "Edit",
+        icon: <Pencil className="w-5 h-5" />,
+        onAction: () => onEdit(message),
+        className: "bg-[#3b82f6]",
+      });
+    }
+    if (isOwnMessage || canModerate) {
+      actions.push({
+        label: "Delete",
+        icon: <Trash2 className="w-5 h-5" />,
+        onAction: () => onDelete(message),
+        className: "bg-red-500",
+      });
     }
     return actions;
   };
@@ -194,7 +198,7 @@ function MessageGroupInner<M extends ChatMessage>({
           <SwipeableRow key={message.id} actions={buildSwipeActions(message)} className="hover:z-40">
             <div
               id={`message-${message.id}`}
-              className="flex gap-4 relative group/message hover:z-50"
+              className={cn("flex gap-4 relative group/message hover:z-50", message.pending && "opacity-60")}
               onContextMenu={(e) => onContextMenu(e, message)}
             >
               <div className="w-10 flex-shrink-0">
@@ -269,6 +273,13 @@ function MessageGroupInner<M extends ChatMessage>({
                       messageId={message.id}
                     />
 
+                    {message.pending && (
+                      <span className="inline-flex items-center gap-1 ml-1 text-[11px] text-[var(--app-muted)] align-middle">
+                        <Clock className="w-3 h-3 animate-pulse" />
+                        Sending…
+                      </span>
+                    )}
+
                     {message.pinned && (
                       <div className="mt-1 text-[11px] text-[var(--app-muted)] inline-flex items-center gap-1">
                         <Pin className="w-3 h-3" />
@@ -276,7 +287,10 @@ function MessageGroupInner<M extends ChatMessage>({
                       </div>
                     )}
 
-                    <LinkEmbed content={message.content} />
+                    <LinkEmbed
+                      content={message.content}
+                      onMediaClick={(src, alt) => onMediaClick(src, alt, message.id)}
+                    />
 
                     <MessageAttachments
                       attachments={message.attachments}

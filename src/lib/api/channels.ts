@@ -1,7 +1,7 @@
 import { Elysia, t } from 'elysia';
 import { Channel, Message, Role, Server, ServerMember, ServerSticker, User } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
-import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
+import { parseCustomEmojis, batchParseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
 import { checkRateLimit, sanitizeInput, validateMessageContent, encryptForStorage, decryptFromStorage } from '@/lib/security';
 import { decodeHtmlEntities } from '@/lib/chat/messages';
 import { cache, getPublisher } from '@/lib/db';
@@ -16,6 +16,139 @@ function compareIds(id1: string, id2: string): boolean {
 // Permission bits
 const PERM_ADMINISTRATOR = 1n << 3n;
 const PERM_MANAGE_MESSAGES = 1n << 13n;
+const PERM_VIEW_CHANNEL = 1n << 10n;
+const PERM_MANAGE_CHANNELS = 1n << 4n;
+
+/**
+ * Whether a user can moderate messages in a server — i.e. delete other people's
+ * messages / bulk-clear. True for the server owner or anyone whose roles grant
+ * MANAGE_MESSAGES or ADMINISTRATOR.
+ */
+async function canManageMessagesInServer(
+  serverId: string | null | undefined,
+  userId: string,
+  membership?: { roles?: string[] | null } | null,
+): Promise<boolean> {
+  if (!serverId) return false;
+  // Try Redis cache for server owner to avoid a DB round-trip
+  const cachedOwner = await cache.get<string>(`server:owner:${serverId}`);
+  const [server, member] = await Promise.all([
+    cachedOwner ? null : Server.findById(serverId),
+    membership ?? ServerMember.findOne({ serverId, userId }),
+  ]);
+  const serverOwnerId = cachedOwner || server?.ownerId;
+  if (serverOwnerId && compareIds(serverOwnerId, userId)) return true;
+  const roleIds = (member?.roles || []) as string[];
+  if (roleIds.length === 0) return false;
+  // Use cached role permissions instead of raw Role.find
+  const rolePerms = await getRolePermissions(roleIds, serverId);
+  for (const [, perms] of rolePerms) {
+    if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
+    if ((perms & PERM_MANAGE_MESSAGES) === PERM_MANAGE_MESSAGES) return true;
+  }
+  return false;
+}
+
+/**
+ * Check if a user can view a channel based on permissionOverwrites.
+ * Returns true if:
+ * - User is server owner (always allowed)
+ * - User has Administrator permission (always allowed)
+ * - No overwrites deny VIEW_CHANNEL to the user's roles or @everyone
+ * - User's roles explicitly allow VIEW_CHANNEL
+ */
+// In-memory cache for role permission checks: serverId+roleId -> permissions bigint string
+// TTL 60s — roles change rarely, but we don't want stale perms forever.
+const rolePermCache = new Map<string, string>();
+const ROLE_CACHE_TTL_MS = 60_000;
+
+async function getRolePermissions(roleIds: string[], serverId: string): Promise<Map<string, bigint>> {
+  const result = new Map<string, bigint>();
+  const now = Date.now();
+  const uncachedIds: string[] = [];
+  for (const id of roleIds) {
+    const key = `${serverId}:${id}`;
+    const cached = rolePermCache.get(key);
+    if (cached !== undefined) {
+      result.set(id, BigInt(cached));
+    } else {
+      uncachedIds.push(id);
+    }
+  }
+  if (uncachedIds.length > 0) {
+    const roles = await Role.find({ id: { in: uncachedIds }, serverId });
+    for (const role of roles) {
+      const perms = role.permissions || '0';
+      result.set(role.id, BigInt(perms));
+      rolePermCache.set(`${serverId}:${role.id}`, perms);
+    }
+    // Schedule cleanup
+    setTimeout(() => {
+      for (const id of uncachedIds) rolePermCache.delete(`${serverId}:${id}`);
+    }, ROLE_CACHE_TTL_MS);
+  }
+  return result;
+}
+
+async function canViewChannel(
+  channel: { permissionOverwrites?: any[]; serverId?: string | null },
+  userId: string,
+  membership: { roles?: string[] | null } | null,
+  serverOwnerId?: string | null,
+): Promise<boolean> {
+  if (serverOwnerId && compareIds(serverOwnerId, userId)) return true;
+
+  const overwrites = channel.permissionOverwrites || [];
+  if (!overwrites || overwrites.length === 0) return true;
+
+  // Check if user has Administrator via roles (cached)
+  if (membership?.roles?.length && channel.serverId) {
+    const rolePerms = await getRolePermissions(membership.roles, channel.serverId);
+    for (const [, perms] of rolePerms) {
+      if ((perms & PERM_ADMINISTRATOR) === PERM_ADMINISTRATOR) return true;
+      if ((perms & PERM_MANAGE_CHANNELS) === PERM_MANAGE_CHANNELS) return true;
+    }
+  }
+
+  // Find @everyone overwrite (type 'role', id matches serverId)
+  const everyoneOverwrite = overwrites.find((o: any) => o.type === 'role' && o.id === channel.serverId);
+  let baseAllow = 0n;
+  let baseDeny = 0n;
+  if (everyoneOverwrite) {
+    baseAllow = BigInt(everyoneOverwrite.allow || '0');
+    baseDeny = BigInt(everyoneOverwrite.deny || '0');
+  }
+
+  // Start with @everyone baseline
+  let effectiveAllow = baseAllow;
+  let effectiveDeny = baseDeny;
+
+  // Apply role-specific overwrites
+  if (membership?.roles?.length) {
+    for (const roleId of membership.roles) {
+      const roleOverwrite = overwrites.find((o: any) => o.type === 'role' && o.id === roleId);
+      if (roleOverwrite) {
+        effectiveAllow |= BigInt(roleOverwrite.allow || '0');
+        effectiveDeny |= BigInt(roleOverwrite.deny || '0');
+      }
+    }
+  }
+
+  // Apply member-specific overwrites (highest priority)
+  const memberOverwrite = overwrites.find((o: any) => o.type === 'member' && o.id === userId);
+  if (memberOverwrite) {
+    effectiveAllow |= BigInt(memberOverwrite.allow || '0');
+    effectiveDeny |= BigInt(memberOverwrite.deny || '0');
+  }
+
+  // If explicitly denied VIEW_CHANNEL, block
+  if ((effectiveDeny & PERM_VIEW_CHANNEL) === PERM_VIEW_CHANNEL) return false;
+  // If explicitly allowed VIEW_CHANNEL, permit
+  if ((effectiveAllow & PERM_VIEW_CHANNEL) === PERM_VIEW_CHANNEL) return true;
+  // Default: allow if @everyone doesn't deny it
+  if ((baseDeny & PERM_VIEW_CHANNEL) === PERM_VIEW_CHANNEL) return false;
+  return true;
+}
 
 const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>|<@&[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>|<#(?:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>|<t:-?\d{1,13}(?::[tTdDfFRC](?:\[[^\]]*\])?)?>|<t:-?\d{1,13}>/g;
 const USER_MENTION_REGEX = /<@!?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/g;
@@ -241,10 +374,12 @@ export async function checkChannelAccess(userId: string, channelId: string, opts
 
   // Server channels
   if (channel.serverId) {
-    const membership = await ServerMember.findOne({
-      serverId: channel.serverId,
-      userId,
-    });
+    // Fetch membership and server in parallel — they're independent queries
+    // that were previously serial, adding an extra round-trip on every request.
+    const [membership, server] = await Promise.all([
+      ServerMember.findOne({ serverId: channel.serverId, userId }),
+      Server.findById(channel.serverId),
+    ]);
 
     if (!membership) {
       return { hasAccess: false, error: 'You are not a member of this server' };
@@ -256,7 +391,6 @@ export async function checkChannelAccess(userId: string, channelId: string, opts
       const isOwner = compareIds(channel.ownerId ?? '', userId);
       const isMember = (channel.threadMemberIds || []).some((m: string) => compareIds(m, userId));
       if (!isOwner && !isMember) {
-        const server = await Server.findById(channel.serverId);
         const isServerOwner = server ? compareIds(server.ownerId, userId) : false;
         let hasAccessRole = false;
         if (!isServerOwner && channel.parentId) {
@@ -271,6 +405,18 @@ export async function checkChannelAccess(userId: string, channelId: string, opts
           return { hasAccess: false, error: 'You do not have access to this thread' };
         }
       }
+    }
+
+    // Check channel permission overwrites for VIEW_CHANNEL
+    const serverOwnerId = server?.ownerId ?? null;
+    const canView = await canViewChannel(
+      { permissionOverwrites: (channel.permissionOverwrites || []) as any[], serverId: channel.serverId },
+      userId,
+      membership,
+      serverOwnerId,
+    );
+    if (!canView) {
+      return { hasAccess: false, error: 'You do not have permission to view this channel' };
     }
 
     return { hasAccess: true, channel, membership };
@@ -294,6 +440,197 @@ async function canAccessAllTickets(
   const access = (ticketAccessRoleIds || []).map((r) => r);
   const mine = (memberRoleIds || []).map((r) => r);
   return mine.some((r) => access.includes(r));
+}
+
+// Discord bridge replication helper
+
+/**
+ * Convert Serika-formatted content to Discord-friendly text.
+ * Serika uses UUID-based mention tokens (<@uuid>, <@&uuid>, <#uuid>) and
+ * UUID-based custom emoji tokens (<:name:uuid>). Discord can't resolve these,
+ * so we convert them to readable text fallbacks.
+ */
+function formatSerikaContentForDiscord(content: string): string {
+  if (!content) return '';
+  let result = content;
+  // User mentions: <@uuid> → @username (we don't have the username here, so just @user)
+  result = result.replace(/<@!?[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/g, '@user');
+  // Role mentions: <@&uuid> → @rolename
+  result = result.replace(/<@&[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/g, '@role');
+  // Channel mentions: <#uuid> → #channel
+  result = result.replace(/<#[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/g, '#channel');
+  // Custom emoji: <:name:uuid> or <:name:uuid> → :name: (Discord can't resolve Serika emoji IDs)
+  result = result.replace(/<a?:([a-zA-Z0-9_]+):[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/g, ':$1:');
+  // @everyone / @here are already plain text, pass through
+  return result;
+}
+
+async function replicateToDiscord(action: 'create' | 'edit' | 'delete', channelId: string, message: any) {
+  try {
+    const channel = await Channel.findById(channelId);
+    if (!channel || !channel.serverId) return;
+    const server = await Server.findById(channel.serverId);
+    if (!server) return;
+    const integrations = (server.settings as any)?.integrations || {};
+    if (!integrations.discord) return;
+
+    // Avoid feedback loops from Discord-bridged users
+    if (message.author?.isDiscord || message.author?.username?.startsWith('discord-')) {
+      return;
+    }
+
+    const guildId = integrations.discordGuildId;
+    const webhookUrl = integrations.discordWebhooks?.[channelId];
+
+    if (!webhookUrl) return;
+
+    console.log(`[Discord Bridge] Replicating ${action} on channel #${channel.name} to Discord (Guild: ${guildId})`);
+
+    const username = message.author?.displayName || message.author?.username || 'User';
+    const avatarUrl = message.author?.avatar || undefined;
+    const webhookUserPart = {
+      username: `${username} (Serika)`,
+      avatar_url: avatarUrl,
+    };
+
+    // Build Discord-friendly content from Serika content
+    const discordContent = formatSerikaContentForDiscord(message.content || '');
+
+    // Build embeds from attachments — handle images, videos, and other files
+    const buildAttachmentEmbeds = (attachments: any[]): any[] => {
+      if (!attachments || !Array.isArray(attachments)) return [];
+      const embeds: any[] = [];
+      for (const att of attachments) {
+        const url = att.url || att;
+        const contentType = att.contentType || '';
+        const filename = att.filename || '';
+        if (contentType.startsWith('image/')) {
+          embeds.push({ image: { url } });
+        } else if (contentType.startsWith('video/')) {
+          embeds.push({ video: { url } });
+        } else if (contentType.startsWith('audio/')) {
+          embeds.push({
+            title: filename || 'Audio file',
+            description: `[${filename || 'Audio file'}](${url})`,
+            color: 0x8B5CF6,
+          });
+        } else {
+          // Other files (PDF, text, etc.) — link in description
+          embeds.push({
+            title: filename || 'File',
+            description: `[${filename || 'Download file'}](${url})`,
+            color: 0x5865F2,
+          });
+        }
+      }
+      return embeds;
+    };
+
+    if (action === 'create') {
+      const body: any = {
+        content: discordContent,
+        ...webhookUserPart,
+      };
+      const embeds = buildAttachmentEmbeds(message.attachments);
+      if (embeds.length > 0) body.embeds = embeds;
+
+      // Add sticker as embed if present
+      if (message.sticker?.imageUrl) {
+        body.embeds = [...(body.embeds || []), { image: { url: message.sticker.imageUrl } }];
+      }
+
+      const res = await fetch(webhookUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      }).catch(err => console.error('[Discord Bridge] Failed to post to webhook:', err));
+
+      // Store the Discord message ID for future edit/delete
+      if (res && res.ok) {
+        const discordMsg = await res.json().catch(() => null);
+        if (discordMsg?.id && message.id) {
+          await Message.updateById(message.id, { discordMessageId: discordMsg.id }).catch(() => {});
+          console.log(`[Discord Bridge] Stored Discord message ID ${discordMsg.id} for Serika message ${message.id}`);
+        }
+      }
+    }
+
+    if (action === 'edit') {
+      // Look up the Discord message ID from the Serika message
+      const serikaMsg = message.id ? await Message.findById(message.id) : null;
+      const discordMsgId = serikaMsg?.discordMessageId;
+
+      if (discordMsgId) {
+        // Edit the existing webhook message via PATCH
+        const editUrl = `${webhookUrl}/messages/${discordMsgId}`;
+        const body: any = {
+          content: discordContent,
+        };
+        const embeds = buildAttachmentEmbeds(message.attachments);
+        if (embeds.length > 0) body.embeds = embeds;
+
+        const res = await fetch(editUrl, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).catch(err => console.error('[Discord Bridge] Failed to edit webhook message:', err));
+
+        if (res && !res.ok) {
+          // If edit fails (message too old, deleted, etc.), fall back to delete + repost
+          console.warn(`[Discord Bridge] Edit failed (${res.status}), falling back to delete + repost`);
+          await fetch(editUrl, { method: 'DELETE' }).catch(() => {});
+          // Post a new message
+          const repostBody: any = {
+            content: discordContent,
+            ...webhookUserPart,
+          };
+          if (embeds.length > 0) repostBody.embeds = embeds;
+          const repostRes = await fetch(webhookUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(repostBody),
+          }).catch(() => null);
+          if (repostRes && repostRes.ok) {
+            const newDiscordMsg = await repostRes.json().catch(() => null);
+            if (newDiscordMsg?.id && message.id) {
+              await Message.updateById(message.id, { discordMessageId: newDiscordMsg.id }).catch(() => {});
+            }
+          }
+        }
+      } else {
+        // No Discord message ID stored — post as new message with edit indicator
+        const body: any = {
+          content: `*(edited)* ${discordContent}`,
+          ...webhookUserPart,
+        };
+        const embeds = buildAttachmentEmbeds(message.attachments);
+        if (embeds.length > 0) body.embeds = embeds;
+        await fetch(webhookUrl, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        }).catch(err => console.error('[Discord Bridge] Failed to post edit fallback:', err));
+      }
+    }
+
+    if (action === 'delete') {
+      // Look up the Discord message ID
+      const serikaMsg = message.id ? await Message.findById(message.id) : null;
+      const discordMsgId = serikaMsg?.discordMessageId;
+
+      if (discordMsgId) {
+        const deleteUrl = `${webhookUrl}/messages/${discordMsgId}`;
+        await fetch(deleteUrl, {
+          method: 'DELETE',
+        }).catch(err => console.error('[Discord Bridge] Failed to delete webhook message:', err));
+        console.log(`[Discord Bridge] Deleted Discord message ${discordMsgId} for Serika message ${message.id}`);
+      } else {
+        console.log(`[Discord Bridge] No Discord message ID stored for Serika message ${message.id} — cannot delete on Discord.`);
+      }
+    }
+  } catch (err) {
+    console.error('[Discord Bridge] Error in replicateToDiscord:', err);
+  }
 }
 
 export const channelRoutes = new Elysia({ prefix: '/channels' })
@@ -793,11 +1130,18 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Now fetch server owner and nicknames only for the authors in this page
     if (serverId) {
       const authorIds = [...new Set(messages.map((m: any) => m.authorId).filter(Boolean))];
+      // Try Redis cache for server owner to avoid a DB round-trip on every page fetch
+      const cachedOwner = await cache.get<string>(`server:owner:${serverId}`);
       const [server, authorMembers] = await Promise.all([
-        Server.findById(serverId),
+        cachedOwner ? null : Server.findById(serverId),
         authorIds.length > 0 ? ServerMember.find({ serverId, userId: { in: authorIds } }) : [],
       ]);
-      serverOwnerId = server?.ownerId ?? null;
+      if (cachedOwner) {
+        serverOwnerId = cachedOwner;
+      } else if (server?.ownerId) {
+        serverOwnerId = server.ownerId;
+        void cache.set(`server:owner:${serverId}`, server.ownerId, 3600);
+      }
       for (const m of authorMembers as any[]) {
         if (m.nickname) {
           nicknameMap.set(m.userId, m.nickname);
@@ -820,8 +1164,34 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const refAuthorMap = new Map(refAuthors.map((a: any) => [a.id, a]));
 
     // Transform for frontend - return array directly and map id
-    // Decrypt messages
-    const decryptedMessages = await Promise.all((messages as any[]).map(async (msg) => {
+    // Phase 1: Decrypt all message contents in parallel
+    const decryptedContents = await Promise.all(
+      (messages as any[]).map((msg) => decryptFromStorage(msg.content || ''))
+    );
+
+    // Phase 2: Batch-parse custom emojis across all decrypted contents in a
+    // single pass — one DB query for all cache misses instead of N per-message
+    // parseCustomEmojis calls. No server restriction here: access was validated
+    // at send time, and restricting to the message's own server broke rendering
+    // of cross-server emojis on fetch.
+    const emojiResults = await batchParseCustomEmojis(decryptedContents);
+
+    // Phase 3: Decrypt referenced message contents (batch, parallel)
+    const refDecryptEntries = (messages as any[])
+      .filter((msg) => msg.referencedMessageId && refMap.get(msg.referencedMessageId))
+      .map((msg) => {
+        const refMsg = refMap.get(msg.referencedMessageId!)!;
+        return { refId: msg.referencedMessageId!, content: refMsg.content || '' };
+      });
+    const refDecrypted = await Promise.all(
+      refDecryptEntries.map((entry) => decryptFromStorage(entry.content))
+    );
+    const refContentMap = new Map<string, string>();
+    refDecryptEntries.forEach((entry, i) => refContentMap.set(entry.refId, refDecrypted[i]));
+
+    // Phase 4: Assemble final response objects (synchronous, no DB/await)
+    const decryptedMessages = (messages as any[]).map((msg, idx) => {
+      const decryptedContent = decryptedContents[idx];
       const authorData = msg.authorId ? authorMap.get(msg.authorId) : null;
       const populatedAuthor = authorData ? {
         id: authorData.id,
@@ -834,14 +1204,10 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         isSystem: authorData.isSystem,
         isBot: Boolean(authorData.isBot),
         isVerified: Boolean(authorData.isVerified),
+        isDiscord: authorData.username?.startsWith('discord-') || false,
       } : null;
-      const decryptedContent = await decryptFromStorage(msg.content || '');
 
-      // Parse custom emojis from the decrypted content. No server restriction
-      // here: access was validated at send time, and restricting to the
-      // message's own server broke rendering of cross-server emojis on fetch.
-      const emojiResult = await parseCustomEmojis(decryptedContent);
-      const customEmojis = emojiResult.emojis.map(e => ({
+      const customEmojis = emojiResults[idx].emojis.map(e => ({
         id: e.id,
         name: e.name,
         animated: e.animated,
@@ -871,7 +1237,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           const refAuthorData = refMsg.authorId ? refAuthorMap.get(refMsg.authorId) : null;
           referencedMessage = {
             id: refMsg.id,
-            content: refMsg.content ? await decryptFromStorage(refMsg.content) : '',
+            content: refContentMap.get(refId) || '',
             author: refAuthorData ? {
               id: refAuthorData.id,
               username: refAuthorData.username,
@@ -900,6 +1266,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           isSystem: populatedAuthor.isSystem || false,
           isBot: populatedAuthor.isBot,
           isVerified: populatedAuthor.isVerified,
+          isDiscord: populatedAuthor.isDiscord || false,
           customization: populatedAuthor.customization || null,
         } : null,
         channelId: msg.channelId,
@@ -920,7 +1287,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
         sticker: msg.sticker || undefined,
       };
-    }));
+    });
 
     return decryptedMessages;
   }, {
@@ -1032,24 +1399,40 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: error || 'Access denied' };
     }
 
-    // ownerId for the isOwner flag; the sender's nickname is reused from the
-    // membership already resolved by checkChannelAccess (one fewer query).
-    let serverOwnerId: string | null = null;
-    const senderNickname: string | null = membership?.nickname || null;
-    if (channel.serverId) {
-      const server = await Server.findById(channel.serverId);
-      serverOwnerId = server?.ownerId ?? null;
+    if (channel.type === 'public_thread' || channel.type === 'private_thread') {
+      const threadMembers = Array.isArray(channel.threadMemberIds) ? (channel.threadMemberIds as string[]) : [];
+      if (!threadMembers.includes(user.id)) {
+        const nextMembers = [...threadMembers, user.id];
+        await Channel.updateById(channel.id, { threadMemberIds: nextMembers });
+        channel.threadMemberIds = nextMembers;
+      }
     }
 
-    // Rate limit messages
-    const rateLimit = await checkRateLimit('message', `${user.id}:${params.channelId}`);
+    // ownerId for the isOwner flag; the sender's nickname is reused from the
+    // membership already resolved by checkChannelAccess (one fewer query).
+    // Fetch serverOwnerId (from Redis cache with DB fallback) in parallel with
+    // rate limit checks to save a serial round-trip on the hot path.
+    const senderNickname: string | null = membership?.nickname || null;
+    const serverOwnerPromise = (async () => {
+      if (!channel.serverId) return null;
+      const cacheKey = `server:owner:${channel.serverId}`;
+      const cached = await cache.get<string>(cacheKey);
+      if (cached !== null) return cached;
+      const server = await Server.findById(channel.serverId);
+      const ownerId = server?.ownerId ?? null;
+      if (ownerId) await cache.set(cacheKey, ownerId, 3600); // 1 hour TTL
+      return ownerId;
+    })();
+
+    const [rateLimit, globalRateLimit, serverOwnerId] = await Promise.all([
+      checkRateLimit('message', `${user.id}:${params.channelId}`),
+      checkRateLimit('messageGlobal', user.id),
+      serverOwnerPromise,
+    ]);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Message rate limited', retryAfter: rateLimit.retryAfter };
     }
-
-    // Global rate limit
-    const globalRateLimit = await checkRateLimit('messageGlobal', user.id);
     if (!globalRateLimit.success) {
       set.status = 429;
       return { error: 'Global message rate limited', retryAfter: globalRateLimit.retryAfter };
@@ -1095,13 +1478,20 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         set.status = 400;
         return { error: 'Sticker not found' };
       }
-      const stickerServer = stickerDoc.serverId ? await Server.findById(stickerDoc.serverId) : null;
+      const stickerServer = stickerDoc.serverId
+        ? await cache.get<string>(`server:name:${stickerDoc.serverId}`).then(async (name) => {
+            if (name) return name;
+            const srv = await Server.findById(stickerDoc.serverId!);
+            if (srv?.name) { await cache.set(`server:name:${stickerDoc.serverId}`, srv.name, 3600); return srv.name; }
+            return undefined;
+          })
+        : null;
       stickerData = {
         id: stickerDoc.id,
         name: stickerDoc.name,
         imageUrl: stickerDoc.imageUrl,
         serverId: stickerDoc.serverId,
-        serverName: stickerServer?.name,
+        serverName: stickerServer ?? undefined,
       };
     }
 
@@ -1125,13 +1515,22 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       sanitizedContent = normalizeEmojiFormat(sanitizedContent);
     }
 
-    // Get user's servers for emoji validation
-    const userServerMemberships = await ServerMember.find({ userId: user.id });
-    const userServerIds = userServerMemberships.map((m: any) => m.serverId);
+    // Parse custom emojis, resolve mentions, and encrypt — all independent of
+    // each other, so run them concurrently instead of serially. Emoji server
+    // access needs the sender's memberships, but only bother fetching them when
+    // the content actually contains a custom-emoji token (most messages don't).
+    const hasCustomEmoji = /<?a?:[a-zA-Z0-9_]{2,32}:[0-9a-f]{8}-[0-9a-f]{4}-/i.test(sanitizedContent);
+    const [emojiResult, mentionData, encryptedContent] = await Promise.all([
+      (async () => {
+        if (!hasCustomEmoji) return { content: sanitizedContent, emojis: [], invalidEmojis: [] };
+        const userServerMemberships = await ServerMember.find({ userId: user.id });
+        const userServerIds = userServerMemberships.map((m: any) => m.serverId);
+        return parseCustomEmojis(sanitizedContent, channel.serverId, userServerIds);
+      })(),
+      extractMentionsFromContent(sanitizedContent, channel.serverId || null),
+      sanitizedContent ? encryptForStorage(sanitizedContent) : Promise.resolve(''),
+    ]);
 
-    // Parse and validate custom emojis
-    const emojiResult = await parseCustomEmojis(sanitizedContent, channel.serverId, userServerIds);
-    
     // Store parsed emoji data for the message response
     const customEmojis = emojiResult.emojis.map(e => ({
       id: e.id,
@@ -1139,11 +1538,6 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       animated: e.animated,
       url: e.url,
     }));
-
-    const mentionData = await extractMentionsFromContent(sanitizedContent, channel.serverId || null);
-
-    // Encrypt content for storage
-    const encryptedContent = sanitizedContent ? await encryptForStorage(sanitizedContent) : '';
 
     // Create message
     const message = await Message.create({
@@ -1161,11 +1555,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       mentionedChannelIds: mentionData.mentionedChannelIds,
     });
 
-    // Update channel's last message
-    await Channel.updateById(channel.id, { lastMessageId: message.id });
+    // Update channel's last message — not needed for the sender's response, so
+    // fire-and-forget to keep the send round-trip as short as possible.
+    void Channel.updateById(channel.id, { lastMessageId: message.id });
 
-    // Fetch author for response
-    const author = await User.findById(user.id);
+    // The authenticated `user` is already the full (cached) author record —
+    // reuse it instead of re-querying the DB on every send.
+    const author = user;
     let referencedMessage:
       | {
           id: string;
@@ -1185,10 +1581,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     if (message.referencedMessageId) {
       const reference = await Message.findById(message.referencedMessageId);
       if (reference) {
-        const refAuthor = reference.authorId ? await User.findById(reference.authorId) : null;
+        const [refAuthor, refDecrypted] = await Promise.all([
+          reference.authorId ? User.findById(reference.authorId) : Promise.resolve(null),
+          reference.content ? decryptFromStorage(reference.content) : Promise.resolve(''),
+        ]);
         referencedMessage = {
           id: reference.id,
-          content: reference.content ? await decryptFromStorage(reference.content) : '',
+          content: refDecrypted,
           author: refAuthor ? {
             id: refAuthor.id,
             username: refAuthor.username,
@@ -1217,6 +1616,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         isSystem: author.isSystem || false,
         isBot: Boolean(author.isBot),
         isVerified: Boolean(author.isVerified),
+        isDiscord: author.username?.startsWith('discord-') || false,
         customization: author.customization || null,
       } : null,
       channelId: message.channelId,
@@ -1245,6 +1645,8 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       type: 'message',
       message: messageResponse,
     });
+
+    void replicateToDiscord('create', params.channelId, messageResponse);
 
     // App-wide unread signal: notify every other member of this server so their
     // sidebar can glow / badge the channel even when they're not viewing it.
@@ -1343,40 +1745,42 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
     const authorMap = new Map(authors.map((a: any) => [a.id, a]));
 
-    const messages = await Promise.all(
-      (pinnedMessages as any[]).map(async (msg) => {
-        const authorData = msg.authorId ? authorMap.get(msg.authorId) : null;
-        const decryptedContent = msg.content ? await decryptFromStorage(msg.content) : '';
-        // No server restriction: cross-server emojis must render on fetch
-        const emojiResult = await parseCustomEmojis(decryptedContent);
-        const customEmojis = emojiResult.emojis.map(e => ({
-          id: e.id,
-          name: e.name,
-          animated: e.animated,
-          url: e.url,
-        }));
-        return {
-          id: msg.id,
-          content: decryptedContent,
-          authorId: authorData?.id || msg.authorId,
-          author: authorData
-            ? {
-                id: authorData.id,
-                username: authorData.username,
-                displayName: authorData.displayName || authorData.username,
-                avatar: authorData.avatar,
-                status: authorData.status,
-              }
-            : null,
-          channelId: msg.channelId,
-          createdAt: msg.createdAt,
-          updatedAt: msg.updatedAt,
-          pinned: true,
-          attachments: msg.attachments || [],
-          customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
-        };
-      })
+    // Batch decrypt + batch parse emojis for pinned messages
+    const pinnedContents = await Promise.all(
+      (pinnedMessages as any[]).map((msg) => decryptFromStorage(msg.content || ''))
     );
+    const pinnedEmojiResults = await batchParseCustomEmojis(pinnedContents);
+
+    const messages = (pinnedMessages as any[]).map((msg, idx) => {
+      const authorData = msg.authorId ? authorMap.get(msg.authorId) : null;
+      const decryptedContent = pinnedContents[idx];
+      const customEmojis = pinnedEmojiResults[idx].emojis.map(e => ({
+        id: e.id,
+        name: e.name,
+        animated: e.animated,
+        url: e.url,
+      }));
+      return {
+        id: msg.id,
+        content: decryptedContent,
+        authorId: authorData?.id || msg.authorId,
+        author: authorData
+          ? {
+              id: authorData.id,
+              username: authorData.username,
+              displayName: authorData.displayName || authorData.username,
+              avatar: authorData.avatar,
+              status: authorData.status,
+            }
+          : null,
+        channelId: msg.channelId,
+        createdAt: msg.createdAt,
+        updatedAt: msg.updatedAt,
+        pinned: true,
+        attachments: msg.attachments || [],
+        customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
+      };
+    });
 
     return { messages };
   }, {
@@ -1545,13 +1949,15 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
       sanitizedEditContent = sanitizeMessageContent(content);
       sanitizedEditContent = normalizeEmojiFormat(sanitizedEditContent);
-      const mentionData = await extractMentionsFromContent(sanitizedEditContent, channel.serverId || null);
+      const [mentionData, encryptedEdit] = await Promise.all([
+        extractMentionsFromContent(sanitizedEditContent, channel.serverId || null),
+        encryptForStorage(sanitizedEditContent),
+      ]);
       updateData.mentionEveryone = mentionData.mentionEveryone;
       updateData.mentionedUserIds = mentionData.mentionedUserIds;
       updateData.mentionedRoleIds = mentionData.mentionedRoleIds;
       updateData.mentionedChannelIds = mentionData.mentionedChannelIds;
-      // Encrypt content for storage
-      updateData.content = await encryptForStorage(sanitizedEditContent);
+      updateData.content = encryptedEdit;
       updateData.edited = true;
       updateData.editedTimestamp = new Date();
     }
@@ -1571,7 +1977,9 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     }
 
     const updatedMessage = await Message.findById(message.id);
-    return { success: true, message: { ...updatedMessage, content: sanitizedEditContent } };
+    const responseMsg = { ...updatedMessage, content: sanitizedEditContent };
+    void replicateToDiscord('edit', params.channelId, responseMsg);
+    return { success: true, message: responseMsg };
   }, {
     params: t.Object({
       channelId: t.String(),
@@ -1610,13 +2018,12 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: 'Message not found' };
     }
 
-    // Check if user can delete (author or has manage messages permission)
+    // Check if user can delete (author, server owner, or MANAGE_MESSAGES).
     const isAuthor = compareIds(message.authorId, user.id);
     let hasPermission = isAuthor;
 
     if (!isAuthor && channel.serverId) {
-      const server = await Server.findById(channel.serverId);
-      hasPermission = !!server && compareIds(server.ownerId, user.id);
+      hasPermission = await canManageMessagesInServer(channel.serverId, user.id);
     }
 
     if (!hasPermission) {
@@ -1643,11 +2050,72 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       messageId: params.messageId,
     });
 
+    void replicateToDiscord('delete', params.channelId, { id: params.messageId });
+
     return { success: true };
   }, {
     params: t.Object({
       channelId: t.String(),
       messageId: t.String(),
+    }),
+  })
+  // Bulk delete (used by the /clear command). Requires MANAGE_MESSAGES / owner.
+  .post('/:channelId/messages/bulk-delete', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const { hasAccess, channel, error } = await checkChannelAccess(user.id, params.channelId);
+    if (!hasAccess || !channel) {
+      set.status = 403;
+      return { error: error || 'Access denied' };
+    }
+
+    if (!channel.serverId || !(await canManageMessagesInServer(channel.serverId, user.id))) {
+      set.status = 403;
+      return { error: 'You do not have permission to manage messages' };
+    }
+
+    const count = Math.min(Math.max(1, Number(body.count) || 100), 100);
+    const targetUserId = body.userId;
+
+    // Grab the most recent messages (optionally from a single author).
+    const candidates = await Message.find({
+      channelId: params.channelId,
+      isDeleted: false,
+      ...(targetUserId ? { authorId: targetUserId } : {}),
+      _limit: count,
+    });
+
+    if (candidates.length === 0) {
+      return { deleted: 0 };
+    }
+
+    const publisher = getPublisher();
+    let deleted = 0;
+    for (const msg of candidates as any[]) {
+      await Message.updateById(msg.id, { isDeleted: true, deletedAt: new Date() });
+      deleted++;
+      publishToChannel(params.channelId, { type: 'delete', messageId: msg.id });
+      if (publisher) {
+        void publisher.publish('message:delete', JSON.stringify({
+          channelId: params.channelId,
+          serverId: channel.serverId,
+          messageId: msg.id,
+        }));
+      }
+    }
+
+    return { deleted };
+  }, {
+    params: t.Object({
+      channelId: t.String(),
+    }),
+    body: t.Object({
+      count: t.Optional(t.Number()),
+      userId: t.Optional(t.String()),
     }),
   })
   // Add reaction to message
@@ -1945,6 +2413,68 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     });
 
     return new Response(stream, { headers: sseHeaders });
+  }, {
+    params: t.Object({
+      channelId: t.String(),
+    }),
+  })
+  // Join thread
+  .put('/:channelId/join', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const { hasAccess, channel } = await checkChannelAccess(user.id, params.channelId);
+    if (!hasAccess || !channel) {
+      set.status = 403;
+      return { error: 'Access denied' };
+    }
+
+    if (channel.type !== 'public_thread' && channel.type !== 'private_thread') {
+      set.status = 400;
+      return { error: 'Channel is not a thread' };
+    }
+
+    const threadMemberIds = Array.isArray(channel.threadMemberIds) ? (channel.threadMemberIds as string[]) : [];
+    if (!threadMemberIds.includes(user.id)) {
+      const nextMembers = [...threadMemberIds, user.id];
+      await Channel.updateById(channel.id, { threadMemberIds: nextMembers });
+    }
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      channelId: t.String(),
+    }),
+  })
+  // Leave thread
+  .delete('/:channelId/leave', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const { hasAccess, channel } = await checkChannelAccess(user.id, params.channelId);
+    if (!hasAccess || !channel) {
+      set.status = 403;
+      return { error: 'Access denied' };
+    }
+
+    if (channel.type !== 'public_thread' && channel.type !== 'private_thread') {
+      set.status = 400;
+      return { error: 'Channel is not a thread' };
+    }
+
+    const threadMemberIds = Array.isArray(channel.threadMemberIds) ? (channel.threadMemberIds as string[]) : [];
+    if (threadMemberIds.includes(user.id)) {
+      const nextMembers = threadMemberIds.filter((id) => id !== user.id);
+      await Channel.updateById(channel.id, { threadMemberIds: nextMembers });
+    }
+
+    return { success: true };
   }, {
     params: t.Object({
       channelId: t.String(),

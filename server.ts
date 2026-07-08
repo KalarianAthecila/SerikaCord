@@ -145,6 +145,86 @@ async function main() {
     console.log(`🚀 SerikaCord ready on http://0.0.0.0:${port}`);
     console.log(`🔌 Gateway on ws://0.0.0.0:${port}${GATEWAY_PATH}`);
     console.log(`📡 SSE fast-path active for /api/channels/*/stream and /api/dms/*/stream`);
+
+    // Start Discord Bot real-time listener — only one instance should run
+    // the bot to avoid duplicate gateway connections. Use a Redis lock with
+    // a TTL so if the active instance crashes, another picks it up.
+    // Set DISABLE_DISCORD_BOT=1 on canary/dev to skip entirely.
+    if (process.env.DISABLE_DISCORD_BOT === '1' || process.env.DISABLE_DISCORD_BOT === 'true') {
+      console.log('[Discord Bot] DISABLE_DISCORD_BOT is set — skipping bot startup.');
+    } else {
+    (async () => {
+    const redis = (await import('@/lib/db/redis')).getRedis();
+    const instanceId = `${process.pid}-${Date.now()}`;
+    const LOCK_KEY = 'serikacord:discord-bot-lock';
+    const LOCK_TTL = 60; // seconds
+
+    async function tryAcquireBotLock(): Promise<boolean> {
+      if (!redis) return true; // No Redis — assume single instance
+      try {
+        const result = await redis.set(LOCK_KEY, instanceId, 'EX', LOCK_TTL, 'NX');
+        return result === 'OK';
+      } catch {
+        return true; // Redis error — assume single instance
+      }
+    }
+
+    async function renewBotLock(): Promise<boolean> {
+      if (!redis) return true;
+      try {
+        const current = await redis.get(LOCK_KEY);
+        if (current !== instanceId) return false;
+        await redis.expire(LOCK_KEY, LOCK_TTL);
+        return true;
+      } catch {
+        return true;
+      }
+    }
+
+    let botLockHeld = false;
+    let botLockTimer: ReturnType<typeof setInterval> | null = null;
+
+    async function startBotIfLeader() {
+      botLockHeld = await tryAcquireBotLock();
+      if (!botLockHeld) {
+        console.log('[Discord Bot] Another instance is running the bot — skipping startup.');
+        // Retry every 15s in case the leader crashes
+        botLockTimer = setInterval(async () => {
+          if (await tryAcquireBotLock()) {
+            if (botLockTimer) clearInterval(botLockTimer);
+            botLockTimer = null;
+            botLockHeld = true;
+            console.log('[Discord Bot] Acquired leadership — starting bot now.');
+            import('@/lib/discord/bot').then(({ startDiscordBot }) => {
+              startDiscordBot().catch((err) => console.error('[Discord Bot] Startup failed:', err));
+            }).catch((err) => console.error('[Discord Bot] Import failed:', err));
+            // Start renewal timer
+            setInterval(async () => {
+              if (!(await renewBotLock())) {
+                console.warn('[Discord Bot] Lost leadership — bot may duplicate. Stopping renewal.');
+              }
+            }, LOCK_TTL * 500); // Renew at half TTL
+          }
+        }, 15000);
+        return;
+      }
+
+      console.log('[Discord Bot] Acquired leadership — starting bot.');
+      import('@/lib/discord/bot').then(({ startDiscordBot }) => {
+        startDiscordBot().catch((err) => console.error('[Discord Bot] Startup failed:', err));
+      }).catch((err) => console.error('[Discord Bot] Import failed:', err));
+
+      // Renew lock periodically
+      setInterval(async () => {
+        if (!(await renewBotLock())) {
+          console.warn('[Discord Bot] Lost leadership — bot may duplicate. Stopping renewal.');
+        }
+      }, LOCK_TTL * 500); // Renew at half TTL
+    }
+
+    void startBotIfLeader();
+    })(); // end async IIFE
+    } // end else (DISABLE_DISCORD_BOT check)
   });
 }
 

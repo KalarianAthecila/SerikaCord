@@ -3,7 +3,7 @@
 import { useEffect, useRef, useMemo, memo } from "react";
 import twemoji from "twemoji";
 import { cn } from "@/lib/utils";
-import { isImageLikeUrl, isGifUrl } from "@/lib/chat/media";
+import { isImageLikeUrl, isGifUrl, isGifProviderUrl } from "@/lib/chat/media";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 import { GifFavoriteButton } from "@/components/chat/GifFavoriteButton";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
@@ -353,6 +353,11 @@ export const MessageContent = memo(function MessageContent({
           );
         }
         if (part.type === "link" && part.url) {
+          // GIF-provider page links (giphy/tenor/klipy) are rendered as an
+          // actual GIF by LinkEmbed, so don't also show the raw URL text.
+          if (isGifProviderUrl(part.url)) {
+            return null;
+          }
           return (
             <a
               key={`link-${index}`}

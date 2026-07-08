@@ -244,7 +244,8 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
           <Volume2 className="w-5 h-5 text-[#8B5CF6] flex-shrink-0" />
           <span className="font-semibold text-white truncate">{channelName}</span>
         </div>
-        <div className="text-xs text-[#6b7387]">
+        <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[#131a28] text-xs text-[#8d97ad] ring-1 ring-white/5">
+          <span className={cn("w-1.5 h-1.5 rounded-full", participants.length > 0 ? "bg-green-500" : "bg-[#3a4459]")} />
           {participants.length} {participants.length === 1 ? "participant" : "participants"}
         </div>
       </div>
@@ -254,8 +255,8 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
         {!isConnected ? (
           /* Not joined — show join screen */
           <div className="flex-1 flex flex-col items-center justify-center text-center">
-            <div className="w-20 h-20 rounded-full bg-[#131a28] flex items-center justify-center mb-4">
-              <Volume2 className="w-10 h-10 text-[#8B5CF6]" />
+            <div className="w-24 h-24 rounded-full bg-gradient-to-b from-[#8B5CF6]/20 to-[#131a28] ring-1 ring-[#8B5CF6]/20 shadow-[0_0_40px_rgba(139,92,246,0.25)] flex items-center justify-center mb-5">
+              <Volume2 className="w-11 h-11 text-[#8B5CF6]" />
             </div>
             <h2 className="text-lg font-semibold text-white mb-1">{channelName}</h2>
             <p className="text-sm text-[#6b7387] mb-4">
@@ -284,7 +285,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
             <button
               onClick={joinVoice}
               disabled={isJoining}
-              className="flex items-center gap-2 px-6 py-2.5 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium transition-colors disabled:opacity-50"
+              className="flex items-center gap-2 px-7 py-3 rounded-full bg-gradient-to-b from-[#8B5CF6] to-[#7C3AED] hover:from-[#9d70f8] hover:to-[#8B5CF6] text-white font-semibold shadow-[0_4px_20px_rgba(139,92,246,0.45)] transition-all active:scale-95 hover:scale-[1.03] disabled:opacity-50"
             >
               {isJoining ? <Loader2 className="w-5 h-5 animate-spin" /> : <PhoneOff className="w-5 h-5 rotate-[135deg]" />}
               {isJoining ? "Joining..." : "Join Voice"}
@@ -417,14 +418,14 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
               )}
             </div>
 
-            {/* Call controls bar */}
-            <div className="border-t border-[#1e2637] bg-[#0a0d15] px-3 sm:px-4 py-2 sm:py-3">
-              <div className="flex items-center justify-center gap-1.5 sm:gap-2">
+            {/* Call controls bar — floating dock */}
+            <div className="bg-transparent px-3 sm:px-4 pb-3 sm:pb-5 pt-1">
+              <div className="mx-auto w-fit flex items-center justify-center gap-1 sm:gap-1.5 rounded-2xl bg-[#131a28]/90 backdrop-blur-md px-2 py-1.5 sm:px-2.5 sm:py-2 shadow-[0_8px_30px_rgba(0,0,0,0.4)] ring-1 ring-white/5">
                 <button
                   onClick={handleMute}
                   title={isMuted ? "Unmute" : "Mute"}
                   className={cn(
-                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                     isMobile ? "w-9 h-9" : "w-10 h-10",
                     isMuted
                       ? "bg-[#ef4444]/20 text-[#ef4444] hover:bg-[#ef4444]/30"
@@ -438,7 +439,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                   onClick={handleDeafen}
                   title={isDeafened ? "Undeafen" : "Deafen"}
                   className={cn(
-                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                     isMobile ? "w-9 h-9" : "w-10 h-10",
                     isDeafened
                       ? "bg-[#ef4444]/20 text-[#ef4444] hover:bg-[#ef4444]/30"
@@ -452,7 +453,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                   onClick={handleVideo}
                   title={isVideoOn ? "Turn Off Camera" : "Turn On Camera"}
                   className={cn(
-                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                     isMobile ? "w-9 h-9" : "w-10 h-10",
                     isVideoOn
                       ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
@@ -467,7 +468,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                   onClick={handleToggleNoiseSuppression}
                   title={noiseSuppression ? "Disable Noise Suppression" : "Enable Noise Suppression"}
                   className={cn(
-                    "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                    "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                     isMobile ? "w-9 h-9" : "w-10 h-10",
                     noiseSuppression
                       ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
@@ -483,7 +484,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                     onClick={handleScreenShare}
                     title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
                     className={cn(
-                      "flex items-center justify-center w-10 h-10 rounded-lg transition-all active:scale-95",
+                      "flex items-center justify-center w-10 h-10 rounded-full transition-all active:scale-95 hover:scale-105",
                       isScreenSharing
                         ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
                         : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
@@ -499,7 +500,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                     onClick={() => setShowSoundboard(!showSoundboard)}
                     title="Soundboard"
                     className={cn(
-                      "flex items-center justify-center rounded-lg transition-all active:scale-95",
+                      "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                       isMobile ? "w-9 h-9" : "w-10 h-10",
                       showSoundboard
                         ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
@@ -510,14 +511,14 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                   </button>
                 )}
 
-                <div className="w-px h-6 bg-[#1e2637] mx-1" />
+                <div className="w-px h-6 bg-white/10 mx-1" />
 
                 <button
                   onClick={leaveVoice}
                   title="Leave Voice Channel"
                   className={cn(
-                    "flex items-center justify-center rounded-lg bg-[#ef4444]/15 text-[#ef4444] hover:bg-[#ef4444]/25 transition-all active:scale-95",
-                    isMobile ? "w-9 h-9" : "w-10 h-10"
+                    "flex items-center justify-center rounded-full bg-[#ef4444] text-white hover:bg-[#dc2626] shadow-[0_2px_10px_rgba(239,68,68,0.4)] transition-all active:scale-95 hover:scale-105",
+                    isMobile ? "w-9 h-9" : "w-12 h-10"
                   )}
                 >
                   <PhoneOff className={isMobile ? "w-4 h-4" : "w-5 h-5"} />

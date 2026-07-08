@@ -44,7 +44,9 @@ function isNativeApp(): boolean {
 export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
   const router = useRouter();
   const { servers, currentServer, setCurrentServer, leaveServer, prefetchServer } = useServer();
-  const [isNative, setIsNative] = useState(isNativeApp);
+  // Must start false to match SSR (window is unavailable on the server);
+  // the real value is resolved after mount to avoid a hydration mismatch.
+  const [isNative, setIsNative] = useState(false);
   const { serverMentionCounts, markServerRead } = useMentions();
   const { isMuted, toggleMute } = useServerMutes();
 

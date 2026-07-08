@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef, useMemo } from "react";
 import { upsertSavedAccount } from "@/lib/services/savedAccounts";
 
 export type BadgeId = 
@@ -209,7 +209,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     const response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -222,21 +222,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     await refresh();
-  };
+  }, [refresh]);
 
-  const logout = async () => {
+  const logout = useCallback(async () => {
     // Set offline before logging out
     await setOnlineStatus("offline");
     await fetch("/api/auth/logout", { method: "POST" });
     setUser(null);
-  };
+  }, [setOnlineStatus]);
 
-  const updateUser = (updates: Partial<User>) => {
+  const updateUser = useCallback((updates: Partial<User>) => {
     setUser(prev => prev ? { ...prev, ...updates } : null);
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ user, isLoading, login, logout, refresh, updateUser, setOnlineStatus }),
+    [user, isLoading, login, logout, refresh, updateUser, setOnlineStatus]
+  );
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, refresh, updateUser, setOnlineStatus }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

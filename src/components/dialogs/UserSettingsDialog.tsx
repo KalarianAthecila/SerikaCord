@@ -50,12 +50,14 @@ import {
   MonitorSmartphone,
   Award,
   Megaphone,
+  Mic2,
 } from "lucide-react";
 import { requestNotificationPermission } from "@/lib/services/notificationService";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
 import { NAMEPLATE_PRESETS, getNameplateBackground } from "@/lib/constants/nameplates";
 import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
+import { AdminTtsSoundsPanel, AdminTtsVoicesPanel } from "@/components/settings/AdminTtsPanel";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 import { toast } from "sonner";
 
@@ -86,7 +88,9 @@ type SettingsTab =
   | "admin-announcements"
   | "admin-settings"
   | "admin-logs"
-  | "admin-experiments";
+  | "admin-experiments"
+  | "admin-tts-sounds"
+  | "admin-tts-voices";
 
 const statusOptions = [
   { value: "online", label: "Online", color: "#8B5CF6" },
@@ -112,7 +116,8 @@ const CONNECTION_PROVIDERS: Array<{
   { id: "github",    label: "GitHub",      color: "#c9d1d9", bg: "#ffffff12", hint: "Authorise via GitHub.", category: "social" },
   { id: "twitter",   label: "X / Twitter", color: "#1d9bf0", bg: "#1d9bf020", hint: "Authorise via X.", category: "social" },
   { id: "instagram", label: "Instagram",   color: "#e1306c", bg: "#e1306c20", hint: "Authorise via Instagram.", category: "social" },
-  { id: "discord",   label: "Discord",     color: "#5865f2", bg: "#5865f220", hint: "Authorise via Discord.", category: "social" },
+  { id: "discord",   label: "Discord",     color: "#5865f2", bg: "#5865f220", hint: "Managed through your Serika account.", category: "social" },
+  { id: "serika",    label: "Serika",      color: "#8B5CF6", bg: "#8B5CF620", hint: "Managed through your Serika account.", category: "social" },
   { id: "website",   label: "Website",     color: "#8B5CF6", bg: "#8B5CF620", hint: "Enter your personal website URL.", category: "social" },
 ];
 
@@ -338,13 +343,23 @@ function ConnectionsTabContent({
                               }}
                             />
                           </div>
-                          <button
-                            onClick={() => void handleDisconnect(conn._id, p.id)}
-                            className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
-                          >
-                            Disconnect
-                          </button>
+                          {p.id === "serika" || p.id === "discord" ? (
+                            <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--app-accent)]/10 text-[var(--app-accent)] shrink-0">
+                              Managed
+                            </span>
+                          ) : (
+                            <button
+                              onClick={() => void handleDisconnect(conn._id, p.id)}
+                              className="px-3 py-1.5 rounded-lg text-xs font-medium bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors"
+                            >
+                              Disconnect
+                            </button>
+                          )}
                         </div>
+                      ) : p.id === "serika" || p.id === "discord" ? (
+                        <span className="px-3 py-1.5 rounded-lg text-xs font-medium bg-[var(--app-accent)]/10 text-[var(--app-accent)] shrink-0">
+                          Managed
+                        </span>
                       ) : disabledProviders.includes(p.id) ? (
                         <button
                           disabled
@@ -1496,6 +1511,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       items: [
         { id: "admin-logs" as SettingsTab, label: "Activity Logs", icon: Activity },
         { id: "admin-experiments" as SettingsTab, label: "Experiments", icon: FlaskConical },
+        { id: "admin-tts-sounds" as SettingsTab, label: "TTS Sounds", icon: Volume2 },
+        { id: "admin-tts-voices" as SettingsTab, label: "TTS Voices", icon: Mic2 },
       ],
     });
   }
@@ -2823,7 +2840,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               )}
 
               {/* Default fallback for other tabs */}
-              {!["profiles", "premium", "appearance", "voice-video", "notifications", "admin-users", "admin-servers", "admin-settings", "admin-logs", "admin-experiments", "admin-badges", "admin-announcements", "connections"].includes(activeTab) && (
+              {!["profiles", "premium", "appearance", "voice-video", "notifications", "admin-users", "admin-servers", "admin-settings", "admin-logs", "admin-experiments", "admin-tts-sounds", "admin-tts-voices", "admin-badges", "admin-announcements", "connections"].includes(activeTab) && (
                 <div>
                   <h2 className="text-xl font-bold text-white mb-5 capitalize">
                     {activeTab.replace(/-/g, " ")}
@@ -2947,6 +2964,62 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                           <label className="flex items-center justify-between py-2">
                             <span className="text-white">Text-to-Speech</span>
                             <ToggleSwitch size="sm" checked={Boolean(userSettings.accessibility?.tts)} onCheckedChange={(checked) => saveSettingsPatch({ accessibility: { ...(userSettings.accessibility || {}), tts: checked } }, "accessibility")} />
+                          </label>
+
+                          {/* TTS Usage Guide */}
+                          <div className="mt-2 mb-2 rounded-lg border border-[var(--border-color)] bg-[var(--bg-input)]/50 p-3 space-y-1.5">
+                            <p className="text-xs font-semibold text-[var(--app-accent)]">TTS Usage Guide</p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              Type <code className="px-1 py-0.5 rounded bg-white/10 text-white">/tts</code> before your message to send it as speech.
+                            </p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              Switch voice per message with keywords:
+                            </p>
+                            <p className="text-xs text-white pl-3">
+                              <code className="px-1 py-0.5 rounded bg-white/10">/tts [f] Hello</code> — female voice
+                            </p>
+                            <p className="text-xs text-white pl-3">
+                              <code className="px-1 py-0.5 rounded bg-white/10">/tts [m] Hello</code> — male voice
+                            </p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              Keywords: <span className="text-white">[f]</span>, <span className="text-white">[female]</span>, <span className="text-white">[girl]</span> for female &middot; <span className="text-white">[m]</span>, <span className="text-white">[male]</span>, <span className="text-white">[boy]</span> for male
+                            </p>
+                            <p className="text-xs text-[var(--text-muted)]">
+                              Voices are English-only. Set a default below or override per message.
+                            </p>
+                          </div>
+
+                          {/* Reading speed */}
+                          <div className="py-2">
+                            <div className="flex items-center justify-between mb-1">
+                              <span className="text-white">Reading speed</span>
+                              <span className="text-sm text-[var(--text-secondary)]">
+                                {(userSettings.accessibility?.ttsRate ?? 1).toFixed(1)}×
+                              </span>
+                            </div>
+                            <input
+                              type="range"
+                              min={0.5}
+                              max={2}
+                              step={0.1}
+                              value={userSettings.accessibility?.ttsRate ?? 1}
+                              onChange={(e) => saveSettingsPatch({ accessibility: { ...(userSettings.accessibility || {}), ttsRate: parseFloat(e.target.value) } }, "accessibility")}
+                              className="w-full accent-[#8B5CF6]"
+                            />
+                          </div>
+
+                          {/* Voice gender */}
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white">Voice</span>
+                            <select
+                              value={userSettings.accessibility?.ttsVoice ?? "auto"}
+                              onChange={(e) => saveSettingsPatch({ accessibility: { ...(userSettings.accessibility || {}), ttsVoice: e.target.value } }, "accessibility")}
+                              className="px-3 py-1.5 rounded-lg bg-[var(--bg-input)] text-white text-sm border border-[var(--border-color)] focus:border-[#8B5CF6] outline-none"
+                            >
+                              <option value="auto">Automatic</option>
+                              <option value="female">Female</option>
+                              <option value="male">Male</option>
+                            </select>
                           </label>
                         </>
                       )}
@@ -3891,6 +3964,16 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               {/* Admin Panel - Experiments */}
               {activeTab === "admin-experiments" && isStaff && (
                 <AdminExperimentsPanel />
+              )}
+
+              {/* Admin Panel - TTS Sounds */}
+              {activeTab === "admin-tts-sounds" && isStaff && (
+                <AdminTtsSoundsPanel />
+              )}
+
+              {/* Admin Panel - TTS Voices */}
+              {activeTab === "admin-tts-voices" && isStaff && (
+                <AdminTtsVoicesPanel />
               )}
             </div>
           </ScrollArea>

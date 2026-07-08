@@ -46,14 +46,8 @@ export function useSlashCommands({
             toast.error("Usage: /tts <message>");
             return { handled: true };
           }
-          // Use browser TTS
-          if (typeof window !== "undefined" && "speechSynthesis" in window) {
-            const utterance = new SpeechSynthesisUtterance(text);
-            utterance.rate = 1;
-            utterance.pitch = 1;
-            window.speechSynthesis.speak(utterance);
-          }
-          // Still send the text as a normal message
+          // Playback (speech + sound triggers) is handled centrally via
+          // playTts in the chat view, for both the sender and every recipient.
           return { handled: true, ttsText: text };
         }
 
@@ -152,11 +146,11 @@ export function useSlashCommands({
           const reason = parsed.args.slice(1).join(" ") || undefined;
           try {
             const res = await fetch(
-              `/api/servers/${serverId}/bans`,
+              `/api/servers/${serverId}/bans/${userId}`,
               {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ userId, reason }),
+                body: JSON.stringify({ reason }),
               },
             );
             if (res.ok) {

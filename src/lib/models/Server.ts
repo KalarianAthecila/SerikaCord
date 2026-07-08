@@ -23,6 +23,7 @@ export const Server = {
         case 'joinMode': conditions.push(eq(schema.servers.joinMode, value as string)); break;
         case 'isPartnered': conditions.push(eq(schema.servers.isPartnered, value as boolean)); break;
         case 'isDiscoverable': conditions.push(eq(schema.servers.isDiscoverable, value as boolean)); break;
+        case 'discoveryCategories': conditions.push(sql`COALESCE(${schema.servers.discoveryCategories}, ARRAY[]::text[]) @> ARRAY[${value}]::text[]`); break;
       }
     }
     let query = db.select().from(schema.servers);
@@ -44,6 +45,7 @@ export const Server = {
         case 'joinMode': conditions.push(eq(schema.servers.joinMode, value as string)); break;
         case 'isPartnered': conditions.push(eq(schema.servers.isPartnered, value as boolean)); break;
         case 'isDiscoverable': conditions.push(eq(schema.servers.isDiscoverable, value as boolean)); break;
+        case 'discoveryCategories': conditions.push(sql`COALESCE(${schema.servers.discoveryCategories}, ARRAY[]::text[]) @> ARRAY[${value}]::text[]`); break;
       }
     }
     let query = db.select().from(schema.servers);

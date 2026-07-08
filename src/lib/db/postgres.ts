@@ -3,36 +3,50 @@ import { Pool, type PoolClient } from 'pg';
 import { config } from '../config';
 import * as schema from './schema';
 
-let pool: Pool | null = null;
-let _dbInstance: DB | null = null;
-let isConnected = false;
-
 export type DB = ReturnType<typeof drizzle<typeof schema>>;
 
+// ── Global singleton ────────────────────────────────────────────────────────
+// Next.js dev mode hot-reloads modules, which creates new Pool instances on
+// every reload. Each Pool opens up to `max` TCP connections to PostgreSQL.
+// With 3–4 reloads that's 30–40 connections, easily exhausting a small
+// `max_connections` setting on the server. Storing the pool on `globalThis`
+// survives HMR, so only one pool ever exists.
+interface PgGlobal {
+  __pgPool?: Pool;
+  __pgDb?: DB;
+  __pgConnected?: boolean;
+}
+
+const g = globalThis as unknown as PgGlobal;
+
+function createPool(): Pool {
+  const p = new Pool({
+    connectionString: config.POSTGRES_URI,
+    max: config.POSTGRES_MAX_POOL_SIZE ?? 8,
+    min: 1,
+    idleTimeoutMillis: 10_000,
+    connectionTimeoutMillis: 5_000,
+  });
+
+  p.on('connect', () => {
+    g.__pgConnected = true;
+  });
+
+  p.on('error', (err) => {
+    console.error('❌ PostgreSQL pool error:', err.message);
+    g.__pgConnected = false;
+  });
+
+  console.log('✅ PostgreSQL pool created (max=' + (config.POSTGRES_MAX_POOL_SIZE ?? 8) + ')');
+  return p;
+}
+
 export function getDb(): DB {
-  if (!_dbInstance) {
-    pool = new Pool({
-      connectionString: config.POSTGRES_URI,
-      max: config.POSTGRES_MAX_POOL_SIZE ?? 20,
-      min: 2,
-      idleTimeoutMillis: 30000,
-      connectionTimeoutMillis: 5000,
-    });
-
-    _dbInstance = drizzle(pool, { schema });
-
-    pool.on('connect', () => {
-      isConnected = true;
-    });
-
-    pool.on('error', (err) => {
-      console.error('❌ PostgreSQL pool error:', err.message);
-      isConnected = false;
-    });
-
-    console.log('✅ PostgreSQL pool created');
+  if (!g.__pgDb || !g.__pgPool) {
+    g.__pgPool = createPool();
+    g.__pgDb = drizzle(g.__pgPool, { schema });
   }
-  return _dbInstance;
+  return g.__pgDb;
 }
 
 // Lazy proxy so `import { db } from './postgres'` works without calling getDb() first
@@ -43,38 +57,49 @@ export const db = new Proxy({} as DB, {
 });
 
 export async function connectDB(): Promise<DB> {
-  if (isConnected && _dbInstance) {
-    return _dbInstance;
+  if (g.__pgConnected && g.__pgDb) {
+    return g.__pgDb;
   }
 
   const database = getDb();
 
   try {
-    const client = await pool!.connect();
+    const client = await g.__pgPool!.connect();
     await client.query('SELECT 1');
     client.release();
-    isConnected = true;
+    g.__pgConnected = true;
     console.log('✅ PostgreSQL connected');
     return database;
   } catch (error) {
     console.error('❌ PostgreSQL connection error:', error);
-    isConnected = false;
+    g.__pgConnected = false;
     throw error;
   }
 }
 
 export async function disconnectDB(): Promise<void> {
-  if (!pool) return;
-  await pool.end();
-  pool = null;
-  _dbInstance = null;
-  isConnected = false;
-  console.log('🔌 PostgreSQL disconnected');
+  if (g.__pgPool) {
+    await g.__pgPool.end();
+    g.__pgPool = undefined;
+    g.__pgDb = undefined;
+    g.__pgConnected = false;
+    console.log('🔌 PostgreSQL disconnected');
+  }
 }
 
 export async function getClient(): Promise<PoolClient> {
-  if (!pool) getDb();
-  return pool!.connect();
+  if (!g.__pgPool) getDb();
+  return g.__pgPool!.connect();
+}
+
+// Expose active connection count for diagnostics
+export function getPoolStats() {
+  if (!g.__pgPool) return { total: 0, idle: 0, waiting: 0 };
+  return {
+    total: g.__pgPool.totalCount,
+    idle: g.__pgPool.idleCount,
+    waiting: g.__pgPool.waitingCount,
+  };
 }
 
 export { schema };

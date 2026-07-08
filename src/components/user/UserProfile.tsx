@@ -36,6 +36,7 @@ import {
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle, getProfileBannerStyle } from "@/lib/userDisplayNameStyle";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
+import { useCurrentTime } from "@/hooks/useCurrentTime";
 
 interface UserProfileProps {
   user: {
@@ -184,6 +185,7 @@ interface ProfileContentProps {
 
 function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expanded, isCurrentUser, openSettings }: ProfileContentProps) {
   const currentUser = useAuth().user;
+  const localTime = useCurrentTime(user.timezone);
   const bgStyle = getProfileBackgroundStyle(user.customization);
   const hasBgOverride = Boolean(bgStyle.background || bgStyle.backgroundColor);
   const isHolographic = user.customization?.profileCardEffect === 'holographic';
@@ -369,11 +371,11 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
           )}
 
           {/* Current Time */}
-          {user.showTimezone && user.timezone && (
+          {user.showTimezone && user.timezone && localTime && (
             <div className="flex items-center gap-2 mt-3 text-sm text-[#b5bac1]">
               <Clock className="w-4 h-4 text-[#949ba4]" />
               <span>
-                {new Date().toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: user.timezone })}
+                {localTime}
               </span>
               <span className="text-[#4e5058]">•</span>
               <span className="text-xs text-[#949ba4]">{user.timezone}</span>

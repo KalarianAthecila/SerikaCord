@@ -5,6 +5,7 @@ import { ServerMember } from '@/lib/models/ServerMember';
 import { Message } from '@/lib/models/Message';
 import { AdminLog, type AdminActionType } from '@/lib/models/AdminLog';
 import { getPlatformSettings, updatePlatformSettings } from '@/lib/models/PlatformSettings';
+import { TtsSound } from '@/lib/models/TtsSound';
 
 // System user ID for Serika Broadcast
 export const SERIKA_BROADCAST_ID = '00000000-0000-0000-0000-000000000001';
@@ -1248,4 +1249,215 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       banned: bannedUsers.length,
       newUsersToday,
     };
+  })
+
+  // ==================== TTS SOUND TRIGGERS ====================
+
+  // List all configured TTS sound triggers
+  .get('/tts-sounds', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const sounds = await TtsSound.find({});
+    return { sounds };
+  })
+
+  // Create a TTS sound trigger
+  .post('/tts-sounds', async ({ headers, cookie, body, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const { triggerWord, path, label, enabled } = body;
+    const cleanTrigger = triggerWord.trim().toLowerCase();
+    const cleanPath = path.trim();
+    if (!cleanTrigger || !cleanPath) {
+      set.status = 400;
+      return { error: 'triggerWord and path are required' };
+    }
+    // Normalise to a leading-slash public path so clients can load it directly.
+    const normalizedPath = cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
+    const sound = await TtsSound.create({
+      triggerWord: cleanTrigger,
+      path: normalizedPath,
+      label: label?.trim() || null,
+      enabled: enabled ?? true,
+      createdBy: user.id,
+    });
+    await logAdminAction(user.id, 'update_settings', 'platform', sound.id, { triggerWord: cleanTrigger, path: normalizedPath });
+    return { sound };
+  }, {
+    body: t.Object({
+      triggerWord: t.String(),
+      path: t.String(),
+      label: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Update a TTS sound trigger
+  .patch('/tts-sounds/:id', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const updates: Record<string, unknown> = {};
+    if (body.triggerWord !== undefined) updates.triggerWord = body.triggerWord.trim().toLowerCase();
+    if (body.path !== undefined) {
+      const p = body.path.trim();
+      updates.path = p.startsWith('/') ? p : `/${p}`;
+    }
+    if (body.label !== undefined) updates.label = body.label.trim() || null;
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    const sound = await TtsSound.updateById(params.id, updates);
+    if (!sound) {
+      set.status = 404;
+      return { error: 'Sound not found' };
+    }
+    return { sound };
+  }, {
+    body: t.Object({
+      triggerWord: t.Optional(t.String()),
+      path: t.Optional(t.String()),
+      label: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Delete a TTS sound trigger
+  .delete('/tts-sounds/:id', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    await TtsSound.deleteById(params.id);
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, { deleted: true });
+    return { success: true };
+  })
+
+  // ==================== TTS CUSTOM VOICES ====================
+
+  // List all configured TTS voices
+  .get('/tts-voices', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    const voices = await TtsVoice.find({});
+    return { voices };
+  })
+
+  // Create a TTS custom voice
+  .post('/tts-voices', async ({ headers, cookie, body, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const { name, provider, referenceId, description, enabled, isDefault } = body;
+    const cleanName = name.trim().toLowerCase();
+    const cleanProvider = provider.trim().toLowerCase();
+    const cleanRefId = referenceId.trim();
+    if (!cleanName || !cleanProvider || !cleanRefId) {
+      set.status = 400;
+      return { error: 'name, provider, and referenceId are required' };
+    }
+    if (!['fish', 'streamelements', 'se'].includes(cleanProvider)) {
+      set.status = 400;
+      return { error: 'provider must be "fish" or "streamelements"' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    if (isDefault) await TtsVoice.clearDefault();
+    const voice = await TtsVoice.create({
+      name: cleanName,
+      provider: cleanProvider,
+      referenceId: cleanRefId,
+      description: description?.trim() || null,
+      enabled: enabled ?? true,
+      isDefault: isDefault ?? false,
+      createdBy: user.id,
+    });
+    await logAdminAction(user.id, 'update_settings', 'platform', voice.id, { name: cleanName, provider: cleanProvider });
+    return { voice };
+  }, {
+    body: t.Object({
+      name: t.String(),
+      provider: t.String(),
+      referenceId: t.String(),
+      description: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+      isDefault: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Update a TTS voice
+  .patch('/tts-voices/:id', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    const updates: Record<string, unknown> = {};
+    if (body.name !== undefined) updates.name = body.name.trim().toLowerCase();
+    if (body.provider !== undefined) updates.provider = body.provider.trim().toLowerCase();
+    if (body.referenceId !== undefined) updates.referenceId = body.referenceId.trim();
+    if (body.description !== undefined) updates.description = body.description.trim() || null;
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.isDefault !== undefined) {
+      if (body.isDefault) await TtsVoice.clearDefault();
+      updates.isDefault = body.isDefault;
+    }
+    const voice = await TtsVoice.updateById(params.id, updates);
+    if (!voice) {
+      set.status = 404;
+      return { error: 'Voice not found' };
+    }
+    return { voice };
+  }, {
+    body: t.Object({
+      name: t.Optional(t.String()),
+      provider: t.Optional(t.String()),
+      referenceId: t.Optional(t.String()),
+      description: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+      isDefault: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Set a voice as the platform default
+  .patch('/tts-voices/:id/default', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    const voice = await TtsVoice.setDefault(params.id);
+    if (!voice) {
+      set.status = 404;
+      return { error: 'Voice not found' };
+    }
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, { setDefault: true });
+    return { voice };
+  })
+
+  // Delete a TTS voice
+  .delete('/tts-voices/:id', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = 403;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    await TtsVoice.deleteById(params.id);
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, { deleted: true });
+    return { success: true };
   });

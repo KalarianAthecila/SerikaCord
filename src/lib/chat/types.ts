@@ -14,6 +14,7 @@ export interface MessageAuthor {
   isSystem?: boolean;
   isBot?: boolean;
   isVerified?: boolean;
+  isDiscord?: boolean;
   customization?: {
     profileColor?: string;
     profileAccentColor?: string;
@@ -96,6 +97,8 @@ export interface ChatMessage {
   mentionedUserIds?: string[];
   mentionedRoleIds?: string[];
   mentionedChannelIds?: string[];
+  /** True while the message is an optimistic send awaiting server confirmation. */
+  pending?: boolean;
 }
 
 export interface MessageGroupData<M extends ChatMessage = ChatMessage> {

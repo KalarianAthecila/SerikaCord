@@ -44,7 +44,7 @@ const adminActionTypeEnum = pgEnum('admin_action_type', [
 const adminTargetTypeEnum = pgEnum('admin_target_type', ['user', 'server', 'message', 'platform']);
 const connectionProviderEnum = pgEnum('connection_provider', [
   'discord', 'twitch', 'youtube', 'github', 'spotify', 'website',
-  'lastfm', 'steam', 'xbox', 'psn', 'roblox', 'twitter', 'instagram', 'battlenet',
+  'lastfm', 'steam', 'xbox', 'psn', 'roblox', 'twitter', 'instagram', 'battlenet', 'serika',
 ]);
 
 // ─── Tables ───────────────────────────────────────────────
@@ -208,6 +208,7 @@ export const messages = pgTable('messages', {
   threadId: uuid('thread_id'),
   isDeleted: boolean('is_deleted').default(false),
   deletedAt: timestamp('deleted_at'),
+  discordMessageId: text('discord_message_id'),
   createdAt: timestamp('created_at').defaultNow(),
   updatedAt: timestamp('updated_at').defaultNow(),
 }, (t) => ({
@@ -220,6 +221,7 @@ export const messages = pgTable('messages', {
   channelPinnedIdx: index('messages_channel_id_pinned_idx').on(t.channelId, t.pinned),
   channelDeletedCreatedIdx: index('messages_channel_id_is_deleted_created_at_idx').on(t.channelId, t.isDeleted, t.createdAt),
   channelAuthorCreatedIdx: index('messages_channel_id_author_id_created_at_idx').on(t.channelId, t.authorId, t.createdAt),
+  referencedIdx: index('messages_referenced_message_id_idx').on(t.referencedMessageId),
 }));
 
 export const roles = pgTable('roles', {
@@ -306,6 +308,41 @@ export const serverEmojis = pgTable('server_emojis', {
 }, (t) => ({
   serverIdx: index('server_emojis_server_id_idx').on(t.serverId),
   serverNameUnique: uniqueIndex('server_emojis_server_id_name_unique').on(t.serverId, t.name),
+}));
+
+// Globally-configured TTS sound triggers. When a chat message contains a
+// trigger word (e.g. "meow"), clients play a random sound whose triggerWord
+// matches instead of / alongside the spoken text. Managed from the admin panel.
+export const ttsSounds = pgTable('tts_sounds', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  triggerWord: text('trigger_word').notNull(),
+  path: text('path').notNull(),
+  label: text('label'),
+  enabled: boolean('enabled').default(true),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (t) => ({
+  triggerIdx: index('tts_sounds_trigger_word_idx').on(t.triggerWord),
+}));
+
+// Globally-configured TTS custom voices. Admins can add Fish Audio model IDs
+// or StreamElements voice names as presets (e.g. "miku" → fish model ID).
+// Users reference them via /tts [fish:miku] or [se:Brian]. One voice can be
+// marked as the platform default (used for Firefox fallback, etc.).
+export const ttsVoices = pgTable('tts_voices', {
+  id: uuid('id').primaryKey().default(sql`gen_random_uuid()`),
+  name: text('name').notNull(),
+  provider: text('provider').notNull(),
+  referenceId: text('reference_id').notNull(),
+  description: text('description'),
+  enabled: boolean('enabled').default(true),
+  isDefault: boolean('is_default').default(false),
+  createdBy: uuid('created_by'),
+  createdAt: timestamp('created_at').defaultNow(),
+  updatedAt: timestamp('updated_at').defaultNow(),
+}, (t) => ({
+  nameIdx: index('tts_voices_name_idx').on(t.name),
 }));
 
 export const serverStickers = pgTable('server_stickers', {

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { usePolling } from "./usePolling";
 
 export interface MentionData {
@@ -88,19 +88,20 @@ export function useMentions(serverId?: string) {
      
   })();
 
-  // Per-channel unread counts
-  const channelMentionCounts = new Map<string, number>();
-  for (const m of unreadMentions) {
-    channelMentionCounts.set(m.channelId, (channelMentionCounts.get(m.channelId) || 0) + 1);
-  }
-
-  // Per-server unread counts
-  const serverMentionCounts = new Map<string, number>();
-  for (const m of unreadMentions) {
-    if (m.serverId) {
-      serverMentionCounts.set(m.serverId, (serverMentionCounts.get(m.serverId) || 0) + 1);
+  // Per-channel unread counts (memoized to avoid recreating Maps every render)
+  const { channelMentionCounts, serverMentionCounts } = useMemo(() => {
+    const chCounts = new Map<string, number>();
+    for (const m of unreadMentions) {
+      chCounts.set(m.channelId, (chCounts.get(m.channelId) || 0) + 1);
     }
-  }
+    const srvCounts = new Map<string, number>();
+    for (const m of unreadMentions) {
+      if (m.serverId) {
+        srvCounts.set(m.serverId, (srvCounts.get(m.serverId) || 0) + 1);
+      }
+    }
+    return { channelMentionCounts: chCounts, serverMentionCounts: srvCounts };
+  }, [unreadMentions]);
 
   const totalUnread = unreadMentions.length;
 
