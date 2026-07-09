@@ -35,7 +35,6 @@ export const docNav: DocNavSection[] = [
     title: "Bots",
     items: [
       { label: "Overview", slug: "bots/overview" },
-      { label: "Gateway", slug: "topics/gateway" },
       { label: "Slash Commands", slug: "bots/slash-commands" },
       { label: "Interactions", slug: "bots/interactions" },
     ],

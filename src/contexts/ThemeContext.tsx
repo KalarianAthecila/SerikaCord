@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { setUserNotificationSettings } from "@/lib/services/notificationUX";
 
 export interface ThemeSettings {
   theme: "dark" | "midnight" | "light";
@@ -113,6 +114,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       .then((data) => {
         if (!active || !data?.settings) return;
         applyUserSettingsPatch(data.settings);
+        setUserNotificationSettings(data.settings?.notifications);
       })
       .catch(() => {
         // optional hydration; ignore when unauthenticated

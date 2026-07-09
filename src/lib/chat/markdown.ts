@@ -1,5 +1,5 @@
 export interface MarkdownNode {
-  type: "text" | "bold" | "italic" | "underline" | "strikethrough" | "code" | "codeblock" | "link" | "linebreak" | "timestamp" | "channel_mention";
+  type: "text" | "bold" | "italic" | "underline" | "strikethrough" | "code" | "codeblock" | "link" | "linebreak" | "timestamp" | "channel_mention" | "spoiler";
   content: string;
   href?: string;
   format?: string;
@@ -12,8 +12,9 @@ const BOLD_RE = /\*\*([^*]+)\*\*/;
 const ITALIC_RE = /(?<!\*)\*([^*]+)\*(?!\*)/;
 const UNDERLINE_RE = /__([^_]+)__/;
 const STRIKE_RE = /~~([^~]+)~~/;
+const SPOILER_RE = /\|\|([^|]+)\|\|/;
 const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/;
-const TIMESTAMP_RE = /<t:(-?\d+)(?::([tTdDfFRC])(?:\[([^\]]*)\])?)?>/;
+const TIMESTAMP_RE = /<t:(-?\d+)(?::([tTdDfFRC])((?:\[[^\]]*\])*))?>/;
 const CHANNEL_MENTION_RE = /<#([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/;
 
 function parseInline(text: string): MarkdownNode[] {
@@ -29,6 +30,7 @@ function parseInline(text: string): MarkdownNode[] {
       { regex: BOLD_RE, type: "bold", build: (m) => ({ type: "bold", content: m[1], key: `b-${key++}` } as MarkdownNode) },
       { regex: UNDERLINE_RE, type: "underline", build: (m) => ({ type: "underline", content: m[1], key: `u-${key++}` } as MarkdownNode) },
       { regex: STRIKE_RE, type: "strikethrough", build: (m) => ({ type: "strikethrough", content: m[1], key: `s-${key++}` } as MarkdownNode) },
+      { regex: SPOILER_RE, type: "spoiler", build: (m) => ({ type: "spoiler", content: m[1], key: `sp-${key++}` } as MarkdownNode) },
       { regex: ITALIC_RE, type: "italic", build: (m) => ({ type: "italic", content: m[1], key: `i-${key++}` } as MarkdownNode) },
       { regex: LINK_RE, type: "link", build: (m) => ({ type: "link", content: m[1], href: m[2], key: `l-${key++}` } as MarkdownNode) },
       { regex: TIMESTAMP_RE, type: "timestamp", build: (m) => ({ type: "timestamp", content: m[1], format: m[2] || "f", options: m[3], key: `ts-${key++}` } as MarkdownNode) },
@@ -55,7 +57,7 @@ function parseInline(text: string): MarkdownNode[] {
       nodes.push({ type: "text", content: remaining.slice(0, earliestMatch.index) });
     }
 
-    if (earliestMatch.node.type === "bold" || earliestMatch.node.type === "italic" || earliestMatch.node.type === "underline" || earliestMatch.node.type === "strikethrough") {
+    if (earliestMatch.node.type === "bold" || earliestMatch.node.type === "italic" || earliestMatch.node.type === "underline" || earliestMatch.node.type === "strikethrough" || earliestMatch.node.type === "spoiler") {
       earliestMatch.node.children = parseInline(earliestMatch.node.content);
       earliestMatch.node.content = "";
     }
@@ -142,15 +144,9 @@ export function parseMarkdown(text: string): ParsedMarkdown[] {
       continue;
     }
 
-    // Empty line - skip
-    if (line.trim() === "") {
-      i++;
-      continue;
-    }
-
-    // Paragraph - collect consecutive non-empty lines
+    // Paragraph - collect consecutive lines (including empty ones for multiline support)
     const paraLines: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "" && !lines[i].trim().startsWith("```") && !lines[i].match(/^#{1,3}\s*.+/) && !lines[i].match(/^-(#{1,3})\s*.+/) && !lines[i].trim().startsWith(">")) {
+    while (i < lines.length && !lines[i].trim().startsWith("```") && !lines[i].match(/^#{1,3}\s*.+/) && !lines[i].match(/^-(#{1,3})\s*.+/) && !lines[i].trim().startsWith(">")) {
       paraLines.push(lines[i]);
       i++;
     }

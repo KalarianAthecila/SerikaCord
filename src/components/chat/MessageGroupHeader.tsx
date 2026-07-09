@@ -74,7 +74,7 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
     : (effectiveColor ? { color: effectiveColor } : {});
 
   return (
-    <div className="flex items-baseline gap-2 mb-1">
+    <div className="flex items-center gap-2 mb-1">
       {author.id && author.id !== "unknown" ? (
         <MemberProfilePopup
           member={{

@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Application Role Connection Metadata",
+  description: "SerikaCord Application Role Connection Metadata: metadata types, object structure, endpoints, and limits for linking external accounts with guild roles.",
+  path: "/developers/docs/resources/application-role-connection-metadata",
+  keywords: ["SerikaCord role connection", "role connection metadata", "application metadata"],
+});
 
 export default function ApplicationRoleConnectionMetadataDoc() {
   return (

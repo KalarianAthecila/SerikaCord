@@ -1,4 +1,4 @@
-import { DocPage, P, H2, CodeBlock, Callout, Strong, InlineCode, Link2, CardGrid, Card } from "../DocPage";
+import { DocPage, P, H2, UL, CodeBlock, Callout, Strong, InlineCode, Link2, CardGrid, Card } from "../DocPage";
 import { Bot, Zap, Cable, KeyRound, Webhook, TerminalSquare, ShieldCheck, Users } from "lucide-react";
 import { buildMetadata } from "@/lib/seo";
 
@@ -88,6 +88,42 @@ OAuth2   https://api.serika.chat/api/oauth2/authorize`}</CodeBlock>
         throttling. Bots that reach 100+ servers should read{" "}
         <Link2 href="/developers/docs/topics/bot-verification">Bot Verification</Link2>.
       </P>
+
+      <H2 id="what-is-serikacord">What is SerikaCord?</H2>
+      <P>
+        SerikaCord is a self-hosted, Discord-compatible chat platform. It implements the Discord v10 bot
+        API — REST routes, Gateway WebSocket protocol, OAuth2 flows, and data structures — so that any
+        bot built for Discord can be pointed at SerikaCord by changing two URLs:
+      </P>
+      <CodeBlock lang="javascript">{`// discord.js — the only two lines that change
+client.rest.setBaseURL("https://api.serika.chat/api/v10");
+client.options.ws.url = "wss://api.serika.chat/api/v10/gateway";`}</CodeBlock>
+      <P>
+        The server runs a single-process architecture: a Next.js web app and the bot Gateway share the
+        same port. The REST API is served by an <InlineCode>Elysia</InlineCode> router under{" "}
+        <InlineCode>/api/v10/*</InlineCode>, and the Gateway WebSocket is upgraded at{" "}
+        <InlineCode>/api/v10/gateway</InlineCode>. For horizontal scaling, a standalone Gateway server
+        (<InlineCode>scripts/gateway.ts</InlineCode>) can run separately with Redis-based event fan-out.
+      </P>
+
+      <H2 id="features">Supported features</H2>
+      <P>The SerikaCord bot API implements the following Discord v10 features:</P>
+      <UL>
+        <li>Bot authentication via token</li>
+        <li>User, Guild, Channel, Message, Role, Member CRUD</li>
+        <li>Reactions, pins, typing indicators</li>
+        <li>Bans, kicks, timeouts, member management</li>
+        <li>Guild emojis and stickers (read)</li>
+        <li>Webhooks (create, list, get, delete)</li>
+        <li>Audit log retrieval</li>
+        <li>DM channels (list, create)</li>
+        <li>Application commands (global + guild, CRUD + bulk overwrite)</li>
+        <li>Interaction callback</li>
+        <li>Voice regions</li>
+        <li>Gateway WebSocket (HELLO, IDENTIFY, HEARTBEAT, RESUME, DISPATCH)</li>
+        <li>Intent-based event filtering and guild-scoped dispatch routing</li>
+        <li>Redis-based cross-instance event fan-out for multi-server deployments</li>
+      </UL>
     </DocPage>
   );
 }

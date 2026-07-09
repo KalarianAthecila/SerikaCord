@@ -1,73 +1,70 @@
-import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2 } from "../DocPage";
+import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Table } from "../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Quick Start",
+  description:
+    "Copy-paste quick start guides for SerikaCord bots in Node.js, Python, Go, and raw HTTP. Get running in any language.",
+  path: "/developers/docs/quick-start",
+  keywords: ["SerikaCord quick start", "bot tutorial", "discord.js", "discord.py", "API examples"],
+});
 
 export default function QuickStartDoc() {
   return (
-    <DocPage title="Quick Start" description="Get your first SerikaCord bot running in under 5 minutes.">
-      <H2 id="prerequisites">Prerequisites</H2>
-      <UL>
-        <li>A SerikaCord account</li>
-        <li>Node.js 18+ or Python 3.9+ (or any language with HTTP/WebSocket support)</li>
-        <li>A bot token from the <Link2 href="/developers/applications">Developer Portal</Link2></li>
-      </UL>
+    <DocPage title="Quick Start" description="Copy-paste examples in every major language. Point any Discord library at SerikaCord with a one-line base-URL change.">
+      <Callout type="info" title="Prerequisites">
+        You need a bot token from the <Link2 href="/developers/applications">Developer Portal</Link2>.
+        See <Link2 href="/developers/docs/getting-started">Getting Started</Link2> if you don&apos;t have one yet.
+      </Callout>
 
-      <H2 id="create-application">Step 1: Create an Application</H2>
+      <H2 id="cheat-sheet">One-line cheat sheet</H2>
+      <Table headers={["Channel", "URL"]} rows={[
+        ["REST API", "https://api.serika.chat/api/v10"],
+        ["Gateway WebSocket", "wss://api.serika.chat/api/v10/gateway"],
+        ["OAuth2 Authorize", "https://api.serika.chat/api/oauth2/authorize"],
+        ["OAuth2 Token", "https://api.serika.chat/api/oauth2/token"],
+        ["Auth header", "Authorization: Bot YOUR_TOKEN"],
+      ]} />
+
+      <H2 id="nodejs">Node.js (discord.js)</H2>
       <P>
-        Go to the <Link2 href="/developers/applications">Applications page</Link2> and click{" "}
-        <Strong>"Create a New Application"</Strong>. Give it a name and click Create.
+        Since SerikaCord is API-compatible with Discord, you can use <InlineCode>discord.js</InlineCode> with
+        a custom gateway and REST endpoint. Install it first:
       </P>
-
-      <H2 id="configure-bot">Step 2: Configure Your Bot</H2>
-      <P>
-        Navigate to the <Strong>Bot</Strong> tab in your application settings. Here you can:
-      </P>
-      <UL>
-        <li>Copy your bot token (keep it secret!)</li>
-        <li>Toggle "Public Bot" to allow others to invite it</li>
-        <li>Enable privileged gateway intents if needed</li>
-      </UL>
-
-      <H2 id="invite-bot">Step 3: Invite Your Bot</H2>
-      <P>
-        Go to the <Strong>Installation</Strong> tab, select your scopes and permissions, and copy the
-        install link. Open it in your browser to add the bot to your server.
-      </P>
-      <P>A typical install URL looks like:</P>
-      <CodeBlock lang="bash">https://api.serika.chat/api/oauth2/authorize?client_id=YOUR_APP_ID&amp;scope=bot+applications.commands&amp;permissions=8</CodeBlock>
-
-      <H2 id="first-bot">Step 4: Write Your First Bot</H2>
-
-      <H3 id="nodejs">Node.js (serika.js)</H3>
-      <P>
-        Since SerikaCord is API-compatible with Discord, you can use Discord.js with a custom gateway
-        and REST endpoint:
-      </P>
+      <CodeBlock lang="bash">npm install discord.js</CodeBlock>
       <CodeBlock lang="javascript">{`import { Client, GatewayIntentBits } from "discord.js";
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent,
+  ],
 });
 
-// Point to SerikaCord's API
+// Point discord.js at SerikaCord
 client.rest.setBaseURL("https://api.serika.chat/api/v10");
 client.options.ws.url = "wss://api.serika.chat/api/v10/gateway";
 
-client.on("ready", () => {
-  console.log(\`Logged in as \${client.user.tag}\`);
-});
+client.once("ready", () => console.log(\`Logged in as \${client.user.tag}\`));
 
 client.on("messageCreate", (msg) => {
-  if (msg.content === "!ping") {
-    msg.reply("Pong!");
-  }
+  if (msg.author.bot) return;
+  if (msg.content === "!ping") msg.reply("Pong!");
 });
 
-client.login("YOUR_BOT_TOKEN");`}</CodeBlock>
+client.login(process.env.BOT_TOKEN);`}</CodeBlock>
 
-      <H3 id="python">Python (serika.py)</H3>
-      <P>Using discord.py with SerikaCord endpoints:</P>
-      <CodeBlock lang="python">{`import discord
+      <H2 id="python">Python (discord.py)</H2>
+      <CodeBlock lang="bash">pip install discord.py</CodeBlock>
+      <CodeBlock lang="python">{`import os, discord
 
-client = discord.Client()
+# Point discord.py at SerikaCord
+discord.http.Route.BASE = "https://api.serika.chat/api/v10"
+
+intents = discord.Intents.default()
+intents.message_content = True
+client = discord.Client(intents=intents)
 
 @client.event
 async def on_ready():
@@ -75,22 +72,142 @@ async def on_ready():
 
 @client.event
 async def on_message(message):
+    if message.author.bot:
+        return
     if message.content == "!ping":
         await message.reply("Pong!")
 
-# Set custom API base URL
-discord.http.Route.BASE = "https://api.serika.chat/api/v10"
-client.run("YOUR_BOT_TOKEN")`}</CodeBlock>
+client.run(os.environ["BOT_TOKEN"])`}</CodeBlock>
 
-      <H3 id="raw-http">Raw HTTP / cURL</H3>
-      <P>You can also make direct REST API calls:</P>
-      <CodeBlock lang="bash">{`curl -H "Authorization: Bot YOUR_TOKEN" \\
-  https://api.serika.chat/api/v10/users/@me`}</CodeBlock>
+      <H2 id="raw-http">Raw HTTP / cURL</H2>
+      <P>No library needed — the REST API speaks plain JSON:</P>
+      <CodeBlock lang="bash">{`# Get bot user info
+curl -H "Authorization: Bot YOUR_TOKEN" \\
+  https://api.serika.chat/api/v10/users/@me
+
+# Send a message
+curl -X POST \\
+  -H "Authorization: Bot YOUR_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '{"content":"Hello from cURL!"}' \\
+  https://api.serika.chat/api/v10/channels/CHANNEL_ID/messages
+
+# List channels in a guild
+curl -H "Authorization: Bot YOUR_TOKEN" \\
+  https://api.serika.chat/api/v10/guilds/GUILD_ID/channels
+
+# Create a slash command
+curl -X PUT \\
+  -H "Authorization: Bot YOUR_TOKEN" \\
+  -H "Content-Type: application/json" \\
+  -d '[{"name":"ping","description":"Pong!","type":1}]' \\
+  https://api.serika.chat/api/v10/applications/APP_ID/commands`}</CodeBlock>
+
+      <H2 id="raw-ws">Raw WebSocket (Node.js ws)</H2>
+      <P>
+        For the Gateway without a library, use any WebSocket client. This minimal example connects,
+        identifies, heartbeats, and logs <InlineCode>MESSAGE_CREATE</InlineCode> events:
+      </P>
+      <CodeBlock lang="javascript">{`import WebSocket from "ws";
+
+const ws = new WebSocket("wss://api.serika.chat/api/v10/gateway");
+let heartbeatTimer;
+
+ws.on("open", () => console.log("Connected to gateway"));
+
+ws.on("message", (raw) => {
+  const { op, d, t } = JSON.parse(raw.toString());
+
+  // op 10 = HELLO
+  if (op === 10) {
+    const interval = d.heartbeat_interval;
+    heartbeatTimer = setInterval(() => {
+      ws.send(JSON.stringify({ op: 1, d: null })); // HEARTBEAT
+    }, interval);
+
+    // IDENTIFY
+    ws.send(JSON.stringify({
+      op: 2,
+      d: {
+        token: "Bot YOUR_TOKEN",
+        intents: (1 << 0) | (1 << 9) | (1 << 15), // GUILDS | GUILD_MESSAGES | MESSAGE_CONTENT
+      },
+    }));
+  }
+
+  // op 0 = DISPATCH
+  if (op === 0 && t === "MESSAGE_CREATE") {
+    console.log(\`[\${d.author.username}]: \${d.content}\`);
+  }
+
+  // op 11 = HEARTBEAT_ACK
+  if (op === 11) {
+    // Heartbeat acknowledged — connection is healthy
+  }
+});
+
+ws.on("close", (code, reason) => {
+  clearInterval(heartbeatTimer);
+  console.log(\`Disconnected: \${code} \${reason}\`);
+});`}</CodeBlock>
+
+      <H2 id="go">Go (discordgo)</H2>
+      <P>
+        Using <InlineCode>discordgo</InlineCode> with SerikaCord:
+      </P>
+      <CodeBlock lang="go">{`package main
+
+import (
+  "fmt"
+  "log"
+  "os"
+
+  "github.com/bwmarrin/discordgo"
+)
+
+func main() {
+  // Point discordgo at SerikaCord
+  discordgo.Endpoint = "https://api.serika.chat/api/v10/"
+  discordgo.Gateway = "wss://api.serika.chat/api/v10/gateway"
+
+  dg, err := discordgo.New("Bot " + os.Getenv("BOT_TOKEN"))
+  if err != nil {
+    log.Fatal(err)
+  }
+
+  dg.AddHandler(func(s *discordgo.Session, m *discordgo.MessageCreate) {
+    if m.Author.Bot {
+      return
+    }
+    if m.Content == "!ping" {
+      s.ChannelMessageSend(m.ChannelID, "Pong!")
+    }
+  })
+
+  dg.Identify.Intents = discordgo.IntentsGuilds |
+    discordgo.IntentsGuildMessages | discordgo.IntentMessageContent
+
+  if err := dg.Open(); err != nil {
+    log.Fatal(err)
+  }
+  defer dg.Close()
+
+  fmt.Println("Bot is running. Press Ctrl+C to stop.")
+  select {}
+}`}</CodeBlock>
 
       <Callout type="warning" title="Token Security">
-        Never commit your bot token to version control. Use environment variables and add it to your{" "}
-        <InlineCode>.gitignore</InlineCode> and <InlineCode>.env</InlineCode> files.
+        Never commit your bot token to version control. Use environment variables and add{" "}
+        <InlineCode>.env</InlineCode> to your <InlineCode>.gitignore</InlineCode>.
       </Callout>
+
+      <H2 id="env-setup">Environment setup tips</H2>
+      <Table headers={["Language", "Env var approach"]} rows={[
+        ["Node.js", "Use dotenv: npm install dotenv, then require('dotenv').config()"],
+        ["Python", "Use python-dotenv or os.environ['BOT_TOKEN']"],
+        ["Go", "Use os.Getenv('BOT_TOKEN') or godotenv package"],
+        ["Shell", "export BOT_TOKEN='your_token' in your shell profile"],
+      ]} />
 
       <H2 id="next-steps">Next Steps</H2>
       <UL>
@@ -98,6 +215,7 @@ client.run("YOUR_BOT_TOKEN")`}</CodeBlock>
         <li>Learn about <Link2 href="/developers/docs/topics/oauth2">OAuth2</Link2> for user authentication</li>
         <li>Understand <Link2 href="/developers/docs/topics/permissions">Permissions</Link2></li>
         <li>Connect to the <Link2 href="/developers/docs/topics/gateway">Gateway</Link2> for real-time events</li>
+        <li>Add <Link2 href="/developers/docs/bots/slash-commands">slash commands</Link2> to your bot</li>
       </UL>
     </DocPage>
   );

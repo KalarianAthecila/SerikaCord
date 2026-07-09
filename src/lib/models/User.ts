@@ -64,10 +64,36 @@ export interface IUserSettings {
   notifications: {
     desktop: boolean;
     sounds: boolean;
+    /** Sound volume 0–100. Default 50. */
+    soundVolume?: number;
+    /** Sound preset. Default 'chime'. */
+    soundType?: 'chime' | 'ding' | 'pop' | 'coin' | 'none';
     mentions: boolean;
     directMessages: boolean;
     friendRequests: boolean;
     muteEveryone: boolean;
+    /** When true, notify on all messages instead of just mentions. */
+    notifyAllMessages?: boolean;
+    /** Do Not Disturb — suppresses all sounds, desktop notifications, and toasts. */
+    dnd?: boolean;
+    /** Scheduled DND (quiet hours). Active when current time is within range. */
+    dndSchedule?: {
+      enabled: boolean;
+      /** Start time HH:MM (24h). */
+      start: string;
+      /** End time HH:MM (24h). */
+      end: string;
+      /** Days of week 0=Sun…6=Sat. Empty = every day. */
+      days?: number[];
+    };
+    /** Focus mode — suppress everything except direct @mentions and DMs. */
+    focusMode?: boolean;
+    /** Show message content in desktop notifications. Default true. */
+    showPreview?: boolean;
+    /** Suppress in-app toast notifications. */
+    suppressToasts?: boolean;
+    /** Suppress notification sound when the tab is focused/visible. Default true. */
+    suppressSoundWhenFocused?: boolean;
   };
   privacy: {
     directMessages: 'everyone' | 'friends' | 'servers';

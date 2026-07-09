@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Audit Log",
+  description: "SerikaCord Audit Log resource: entry object, action types, query parameters, and retention policy.",
+  path: "/developers/docs/resources/audit-log",
+  keywords: ["SerikaCord audit log", "audit entry", "action types", "guild audit"],
+});
 
 export default function AuditLogDoc() {
   return (

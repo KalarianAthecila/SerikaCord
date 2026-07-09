@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import { normalizeId } from '../db/normalizeId';
 import { db, schema } from '../db/postgres';
+import { config } from '../config';
 
 export type IAllowedFileType = {
   type: string;
@@ -27,6 +28,13 @@ function generateEncryptionKey(): string {
   return key;
 }
 
+const DEFAULT_ALLOWED_FILE_TYPES: IAllowedFileType[] = [
+  ...config.ALLOWED_IMAGE_TYPES.map((type) => ({ type, safe: true })),
+  ...config.ALLOWED_FILE_TYPES
+    .filter((type) => !config.ALLOWED_IMAGE_TYPES.includes(type as typeof config.ALLOWED_IMAGE_TYPES[number]))
+    .map((type) => ({ type, safe: true })),
+];
+
 export async function getPlatformSettings(): Promise<IPlatformSettings> {
   let [settings] = await db.select().from(schema.platformSettings).where(eq(schema.platformSettings.id, 'settings')).limit(1);
 
@@ -36,6 +44,7 @@ export async function getPlatformSettings(): Promise<IPlatformSettings> {
       maintenanceMode: false,
       allowRegistration: true,
       encryptionKey: generateEncryptionKey(),
+      allowedFileTypes: DEFAULT_ALLOWED_FILE_TYPES,
     }).returning();
   }
 

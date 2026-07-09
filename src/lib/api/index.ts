@@ -736,7 +736,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
   }, {
     body: t.Object({
       displayName: t.Optional(t.String({ maxLength: 32 })),
-      bio: t.Optional(t.String({ maxLength: 190 })),
+      bio: t.Optional(t.String({ maxLength: 500 })),
       pronouns: t.Optional(t.String({ maxLength: 32 })),
       timezone: t.Optional(t.Union([t.String(), t.Null()])),
       showTimezone: t.Optional(t.Boolean()),

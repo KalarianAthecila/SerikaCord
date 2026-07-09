@@ -543,6 +543,10 @@ export function useChatSession<M extends ChatMessage>({
         if (pendingAttachments.length > 0) {
           uploadedAttachments = (await messageBarRef.current?.uploadAttachments()) ?? [];
           messageBarRef.current?.clearAttachments();
+          if (uploadedAttachments.length === 0 && !messageContent.trim()) {
+            toast.error("Failed to upload file(s). Your message was not sent.");
+            return;
+          }
         }
 
         tempId = `temp-${Date.now()}`;

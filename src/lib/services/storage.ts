@@ -45,19 +45,23 @@ interface UploadOptions {
 }
 
 // Validate file type based on category
+// Note: 'attachments' is intentionally excluded — the upload route (uploads.ts)
+// validates attachment types against the DB whitelist (platform_settings.allowedFileTypes)
+// before calling storage. Hardcoding here would reject newly-added DB types.
 function validateFileType(category: UploadCategory, contentType: string): boolean {
-  const categoryAllowedTypes: Record<UploadCategory, readonly string[]> = {
+  const categoryAllowedTypes: Partial<Record<UploadCategory, readonly string[]>> = {
     avatars: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     banners: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     'server-icons': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     'server-banners': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-    attachments: config.ALLOWED_FILE_TYPES,
     emojis: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     stickers: ['image/png', 'image/apng', 'application/json'], // JSON for Lottie
     audio: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/webm'],
   };
 
-  return categoryAllowedTypes[category]?.includes(contentType) ?? false;
+  const allowed = categoryAllowedTypes[category];
+  if (!allowed) return true; // Unknown or DB-managed categories (e.g. attachments) — skip
+  return allowed.includes(contentType);
 }
 
 // Get max file size for category

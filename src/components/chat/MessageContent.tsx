@@ -323,10 +323,7 @@ export const MessageContent = memo(function MessageContent({
               src={part.emoji.url || part.emoji.imageUrl}
               alt={`:${part.emoji.name}:`}
               title={`:${part.emoji.name}:`}
-              className={cn(
-                "custom-emoji",
-                part.emoji.animated && "animate-pulse"
-              )}
+              className="custom-emoji"
               loading="lazy"
             />
           );

@@ -158,11 +158,11 @@ interface BadgeProps {
   className?: string;
 }
 
-const badgeIconSizes = { xs: 12, sm: 14, md: 18, lg: 22 };
+const badgeIconSizes = { xs: 16, sm: 20, md: 24, lg: 32 };
 
 function BadgeIcon({ icon: Icon, color, size = 'md' }: { icon: LucideIcon; color: string; size?: 'xs' | 'sm' | 'md' | 'lg' }) {
   const outer = badgeIconSizes[size];
-  const inner = Math.round(outer * 0.55);
+  const inner = Math.round(outer * 0.5);
   return (
     <div className="relative inline-flex items-center justify-center" style={{ width: outer, height: outer }}>
       <BadgeOutline className="absolute inset-0" width={outer} height={outer} color={color} strokeWidth={2} />

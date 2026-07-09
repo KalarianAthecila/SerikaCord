@@ -1,4 +1,13 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Permissions",
+  description:
+    "SerikaCord permissions: bitwise flags, administrator permission, permission hierarchy, channel overwrites, OAuth2 bot permissions, and privileged intents.",
+  path: "/developers/docs/topics/permissions",
+  keywords: ["SerikaCord permissions", "bitwise flags", "permission hierarchy", "channel overwrites", "OAuth2"],
+});
 
 export default function PermissionsDoc() {
   return (

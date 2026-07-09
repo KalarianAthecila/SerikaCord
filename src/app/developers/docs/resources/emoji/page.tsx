@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Emoji",
+  description: "SerikaCord Emoji resource: object structure, CRUD endpoints, image requirements, boost-level limits, and usage in messages.",
+  path: "/developers/docs/resources/emoji",
+  keywords: ["SerikaCord emoji", "custom emoji", "guild emoji", "animated emoji"],
+});
 
 export default function EmojiDoc() {
   return (

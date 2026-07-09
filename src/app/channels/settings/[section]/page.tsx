@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import { ArrowLeft, Loader2, Trash2, Camera, Image, Lock, RotateCcw, Check, Pencil } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
+import { setUserNotificationSettings } from "@/lib/services/notificationUX";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
 import Link from "next/link";
@@ -267,6 +268,7 @@ export default function MobileSettingsSectionPage() {
 
       setSettings((prev) => ({ ...(prev || {}), ...patch }));
       applyUserSettingsPatch(patch);
+      if (patch.notifications) setUserNotificationSettings(patch.notifications);
       toast.success("Settings saved");
     } catch (error) {
       console.error("Failed to save settings:", error);
@@ -358,6 +360,10 @@ export default function MobileSettingsSectionPage() {
             <ToggleRow label="Sounds" checked={Boolean(settings.notifications?.sounds)} onChange={(checked) => saveSettings({ notifications: { ...(settings.notifications || {}), sounds: checked } })} />
             <ToggleRow label="Mentions" checked={Boolean(settings.notifications?.mentions)} onChange={(checked) => saveSettings({ notifications: { ...(settings.notifications || {}), mentions: checked } })} />
             <ToggleRow label="Direct messages" checked={Boolean(settings.notifications?.directMessages)} onChange={(checked) => saveSettings({ notifications: { ...(settings.notifications || {}), directMessages: checked } })} />
+            <ToggleRow label="Do Not Disturb" checked={Boolean(settings.notifications?.dnd)} onChange={(checked) => saveSettings({ notifications: { ...(settings.notifications || {}), dnd: checked } })} />
+            <ToggleRow label="Focus Mode" checked={Boolean(settings.notifications?.focusMode)} onChange={(checked) => saveSettings({ notifications: { ...(settings.notifications || {}), focusMode: checked } })} />
+            <ToggleRow label="Mute @everyone" checked={Boolean(settings.notifications?.muteEveryone)} onChange={(checked) => saveSettings({ notifications: { ...(settings.notifications || {}), muteEveryone: checked } })} />
+            <ToggleRow label="Show message preview" checked={settings.notifications?.showPreview !== false} onChange={(checked) => saveSettings({ notifications: { ...(settings.notifications || {}), showPreview: checked } })} />
           </div>
         )}
 
@@ -779,11 +785,11 @@ export default function MobileSettingsSectionPage() {
                 <textarea
                   value={bio}
                   onChange={(e) => setBio(e.target.value)}
-                  maxLength={190}
-                  className="w-full min-h-[100px] rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] p-3 text-sm focus:outline-none focus:border-[var(--app-accent)] resize-none"
+                  maxLength={user?.isPremium ? 500 : 190}
+                  className="w-full min-h-[100px] rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] p-3 text-sm focus:outline-none focus:border-[var(--app-accent)] resize-y"
                   placeholder="Tell us about yourself..."
                 />
-                <p className="text-xs text-[var(--text-muted)] text-right mt-1">{bio.length}/190</p>
+                <p className="text-xs text-[var(--text-muted)] text-right mt-1">{bio.length}/{user?.isPremium ? 500 : 190}</p>
               </div>
             </div>
 

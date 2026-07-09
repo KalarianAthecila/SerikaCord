@@ -525,7 +525,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
               {user.bio && (
                 <div className="mb-3">
                   <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1.5">About Me</h4>
-                  <div className="text-sm text-[#dbdee1] line-clamp-3"><MarkdownRenderer content={user.bio} /></div>
+                  <div className="text-sm text-[#dbdee1] whitespace-pre-wrap break-words line-clamp-3"><MarkdownRenderer content={user.bio} /></div>
                 </div>
               )}
 

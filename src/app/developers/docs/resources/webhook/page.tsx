@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Webhook",
+  description: "SerikaCord Webhook resource: object structure, CRUD endpoints, execute, edit/delete messages, and create parameters.",
+  path: "/developers/docs/resources/webhook",
+  keywords: ["SerikaCord webhook", "webhook object", "webhook endpoint", "webhook token"],
+});
 
 export default function WebhookResourceDoc() {
   return (

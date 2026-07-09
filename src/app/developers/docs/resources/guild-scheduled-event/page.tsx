@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Guild Scheduled Event",
+  description: "SerikaCord Guild Scheduled Event resource: event object, entity types, status values, CRUD endpoints, and subscriber listing.",
+  path: "/developers/docs/resources/guild-scheduled-event",
+  keywords: ["SerikaCord scheduled event", "guild event", "event status", "event subscribers"],
+});
 
 export default function GuildScheduledEventDoc() {
   return (

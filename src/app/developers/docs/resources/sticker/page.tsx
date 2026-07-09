@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Sticker",
+  description: "SerikaCord Sticker resource: sticker item object, CRUD endpoints, Nitro sticker packs, create parameters, and permissions.",
+  path: "/developers/docs/resources/sticker",
+  keywords: ["SerikaCord sticker", "guild sticker", "sticker pack", "custom sticker"],
+});
 
 export default function StickerResourceDoc() {
   return (

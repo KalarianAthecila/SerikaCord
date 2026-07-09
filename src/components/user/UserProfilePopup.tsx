@@ -31,6 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
+import { getProfileBannerStyle, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 
 interface UserProfilePopupProps {
   children: React.ReactNode;
@@ -38,10 +39,10 @@ interface UserProfilePopupProps {
 }
 
 const statusOptions = [
-  { value: "online", label: "Online", icon: Circle, color: "#8B5CF6" },
-  { value: "idle", label: "Idle", icon: Moon, color: "#A78BFA" },
-  { value: "dnd", label: "Do Not Disturb", icon: MinusCircle, color: "#EF4444" },
-  { value: "offline", label: "Invisible", icon: EyeOff, color: "#555555" },
+  { value: "online", label: "Online", icon: Circle, color: "#23A55A" },
+  { value: "idle", label: "Idle", icon: Moon, color: "#F0B232" },
+  { value: "dnd", label: "Do Not Disturb", icon: MinusCircle, color: "#F23F43" },
+  { value: "offline", label: "Invisible", icon: EyeOff, color: "#80848E" },
 ] as const;
 
 type StatusValue = typeof statusOptions[number]['value'];
@@ -130,16 +131,21 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
 
   if (!user) return <>{children}</>;
 
+  const cardBgStyle = getProfileBackgroundStyle(user.customization, { opaque: true });
+  const hasCardBg = Object.keys(cardBgStyle).length > 0;
+
   const renderProfileCard = () => (
     <>
       {/* Banner */}
       <div
         className={cn("relative", isMobile ? "h-28" : "h-[60px]")}
-        style={{
-          background: user.banner
-            ? `url(${user.banner}) center/cover`
-            : `linear-gradient(135deg, var(--accent-color) 0%, rgba(99,102,241,0.8) 100%)`,
-        }}
+        style={
+          user.banner
+            ? { background: `url(${user.banner}) center/cover` }
+            : (user.customization?.profileGradient && user.customization.profileGradient.length >= 2) || user.customization?.profileColor
+              ? getProfileBannerStyle(user.customization)
+              : { background: `linear-gradient(135deg, var(--accent-color) 0%, rgba(99,102,241,0.8) 100%)` }
+        }
       />
 
       {/* Avatar and Info */}
@@ -197,7 +203,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
 
             {/* Bio */}
             {user.bio && (
-              <div className={cn("text-[#dcddde] mb-2", isMobile ? "text-base line-clamp-6" : "text-sm line-clamp-3")}>
+              <div className={cn("text-[#dcddde] mb-2 whitespace-pre-wrap break-words", isMobile ? "text-base line-clamp-6" : "text-sm line-clamp-3")}>
                 <MarkdownRenderer content={user.bio} />
               </div>
             )}
@@ -408,7 +414,11 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>{children}</DialogTrigger>
           <DialogContent
-            className="!fixed !inset-x-0 !bottom-0 !top-auto !left-0 !translate-x-0 !translate-y-0 !max-w-full p-0 rounded-t-2xl bg-[#111111] border border-[#222222] shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+            className={cn(
+              "!fixed !inset-x-0 !bottom-0 !top-auto !left-0 !translate-x-0 !translate-y-0 !max-w-full p-0 rounded-t-2xl border border-[#222222] shadow-2xl overflow-hidden max-h-[85vh] flex flex-col",
+              !hasCardBg && "bg-[#111111]"
+            )}
+            style={hasCardBg ? cardBgStyle : undefined}
             showCloseButton={false}
           >
             <div className="w-12 h-1 bg-[#444444] rounded-full mt-3 mb-1 mx-auto shrink-0" />
@@ -422,7 +432,11 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
             side="top"
             align="start"
             sideOffset={8}
-            className="w-[300px] p-0 bg-[#111111] border border-[#222222] rounded-lg overflow-hidden shadow-xl"
+            className={cn(
+              "w-[300px] p-0 border border-[#222222] rounded-lg overflow-hidden shadow-xl",
+              !hasCardBg && "bg-[#111111]"
+            )}
+            style={hasCardBg ? cardBgStyle : undefined}
           >
             {renderProfileCard()}
           </PopoverContent>

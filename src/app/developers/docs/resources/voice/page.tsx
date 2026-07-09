@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Voice",
+  description: "SerikaCord Voice resource: voice state object, endpoints, voice regions, and connecting to voice via WebSocket.",
+  path: "/developers/docs/resources/voice",
+  keywords: ["SerikaCord voice", "voice state", "voice region", "voice connection"],
+});
 
 export default function VoiceDoc() {
   return (

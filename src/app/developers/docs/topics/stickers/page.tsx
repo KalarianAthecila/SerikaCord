@@ -1,4 +1,13 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Stickers",
+  description:
+    "SerikaCord stickers: create, manage, and send custom stickers in guilds. PNG, APNG, Lottie, and GIF formats with size limits.",
+  path: "/developers/docs/topics/stickers",
+  keywords: ["SerikaCord stickers", "custom sticker", "APNG", "Lottie", "guild sticker"],
+});
 
 export default function StickersDoc() {
   return (

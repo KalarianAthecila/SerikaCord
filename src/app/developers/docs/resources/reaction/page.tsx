@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Reaction",
+  description: "SerikaCord Reaction resource: reaction object, endpoints for add, remove, list, and delete reactions, with pagination and emoji parameter formats.",
+  path: "/developers/docs/resources/reaction",
+  keywords: ["SerikaCord reaction", "reaction object", "emoji reaction", "message reaction API"],
+});
 
 export default function ReactionDoc() {
   return (

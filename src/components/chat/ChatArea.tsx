@@ -41,6 +41,7 @@ import {
   isChannelMuted,
   toggleChannelMute,
   subscribeChannelMutes,
+  evaluateNotification,
 } from "@/lib/services/notificationUX";
 import { showNotification } from "@/lib/services/notificationService";
 import { useMentions, type MentionData } from "@/hooks/useMentions";
@@ -375,34 +376,42 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   // Notification UX for incoming messages from other users.
   const handleIncomingMessage = useCallback(
     (message: Message) => {
-      if (isChannelMuted(message.channelId)) return;
+      const isDirectMention =
+        user?.id && message.mentionedUserIds?.includes(user.id);
+      const isRoleMention =
+        currentUserRoleIds.length > 0 &&
+        message.mentionedRoleIds?.some((rid) => currentUserRoleIds.includes(rid));
+      const isMentioned = Boolean(isDirectMention || isRoleMention);
+      const isEveryoneMention = Boolean(message.mentionEveryone);
 
-      const isMentioned =
-        message.mentionEveryone ||
-        (user?.id && message.mentionedUserIds?.includes(user.id)) ||
-        (currentUserRoleIds.length > 0 &&
-          message.mentionedRoleIds?.some((rid) => currentUserRoleIds.includes(rid)));
-      if (isMentioned) {
+      if (isMentioned || isEveryoneMention) {
         refreshMentions();
       }
-      const isHidden = document.visibilityState !== "visible";
 
-      if (isHidden) {
+      const isTabVisible = document.visibilityState === "visible";
+
+      const decision = evaluateNotification({
+        isMentioned: isMentioned || isEveryoneMention,
+        isDM: false,
+        isEveryoneMention,
+        channelId: message.channelId,
+        isTabVisible,
+      });
+
+      if (decision.incrementBadge) {
         incrementUnread();
+      }
+
+      if (decision.playSound) {
         playNotificationSound();
       }
 
-      // Desktop / push notifications
-      const desktopEnabled = user?.settings?.notifications?.desktop !== false;
-      // By default only notify on mentions; "notifyAllMessages" opt-in enables all
-      const notifyAllMessages = user?.settings?.notifications?.notifyAllMessages === true;
-      const muteEveryone = user?.settings?.notifications?.muteEveryone === true;
-      const shouldNotify = desktopEnabled && (isHidden || isMentioned) &&
-        (isMentioned ? !(muteEveryone && message.mentionEveryone && !message.mentionedUserIds?.includes(user?.id || '')) : notifyAllMessages);
-
-      if (shouldNotify) {
+      if (decision.showDesktop) {
         const authorName = message.author?.displayName || message.author?.username || "Someone";
-        const preview = message.content?.slice(0, 80) || (message.attachments?.length ? "📎 Attachment" : "New message");
+        const showPreview = user?.settings?.notifications?.showPreview !== false;
+        const preview = showPreview
+          ? (message.content?.slice(0, 80) || (message.attachments?.length ? "📎 Attachment" : "New message"))
+          : "New message";
         void showNotification(
           isMentioned ? `${authorName} mentioned you` : authorName,
           preview,
@@ -432,10 +441,12 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         });
       }
 
-      if (isHidden || isMentioned) {
+      if (decision.showToast) {
         const authorName = message.author?.displayName || message.author?.username || "Someone";
-        const preview =
-          message.content?.slice(0, 80) || (message.attachments?.length ? "📎 Attachment" : "New message");
+        const showPreview = user?.settings?.notifications?.showPreview !== false;
+        const preview = showPreview
+          ? (message.content?.slice(0, 80) || (message.attachments?.length ? "📎 Attachment" : "New message"))
+          : "New message";
         toast(authorName, {
           description: preview,
           duration: 4000,
@@ -449,7 +460,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         });
       }
     },
-    [user?.id, user?.settings, currentUserRoleIds, refreshMentions]
+    [user?.id, user?.settings, currentUserRoleIds, refreshMentions, currentServer?.id]
   );
 
   // The whole chat engine (messages, SSE, sends, pins, actions) is shared
