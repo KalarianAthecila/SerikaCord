@@ -29,6 +29,9 @@ const nextConfig: NextConfig = {
 
   // Transpile serika-dev-player for proper CSS/ESM handling
   transpilePackages: ['serika-dev-player'],
+
+  // Keep native/CJS packages external so Turbopack doesn't try to bundle them
+  serverExternalPackages: ['pg', 'bcryptjs', 'ioredis'],
   
   // Image optimization requires a server, so disable it for mobile static export
   images: {

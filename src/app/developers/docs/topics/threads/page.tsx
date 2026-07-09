@@ -1,4 +1,13 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Threads",
+  description:
+    "SerikaCord threads: create, list, join, leave, and manage threads. Public, private, and announcement thread types with auto-archive.",
+  path: "/developers/docs/topics/threads",
+  keywords: ["SerikaCord threads", "public thread", "private thread", "auto-archive"],
+});
 
 export default function ThreadsDoc() {
   return (
@@ -59,8 +68,16 @@ export default function ThreadsDoc() {
         <li><InlineCode>THREAD_MEMBERS_UPDATE</InlineCode> — Thread members changed</li>
       </UL>
 
+      <H2 id="thread-object">Thread Object</H2>
+      <P>A thread is a channel with type 10, 11, or 12. It has the same fields as a regular channel plus:</P>
+      <Table headers={["Field", "Type", "Description"]} rows={[
+        ["thread_metadata", "object", "Contains archived, auto_archive_duration, archived_at, locked, invitable"],
+        ["member_count", "integer", "Approximate number of members in the thread"],
+        ["message_count", "integer", "Approximate number of messages in the thread"],
+      ]} />
+
       <Callout type="info" title="Forum Channels">
-        Forum channels contain threads as their primary content. Each post in a forum is a thread.
+        Forum channels (type 15) contain threads as their primary content. Each post in a forum is a thread.
       </Callout>
     </DocPage>
   );

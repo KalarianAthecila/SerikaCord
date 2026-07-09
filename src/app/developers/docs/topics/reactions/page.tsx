@@ -1,4 +1,13 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Reactions",
+  description:
+    "SerikaCord reactions: add, remove, list, and manage emoji reactions on messages. Reaction objects, burst reactions, and gateway events.",
+  path: "/developers/docs/topics/reactions",
+  keywords: ["SerikaCord reactions", "emoji reaction", "burst reaction", "message reaction"],
+});
 
 export default function ReactionsDoc() {
   return (
@@ -38,6 +47,13 @@ export default function ReactionsDoc() {
     "name": "👍"
   }
 }`}</CodeBlock>
+      <Table headers={["Field", "Type", "Description"]} rows={[
+        ["count", "integer", "Total number of reactions (including burst)"],
+        ["me", "boolean", "Whether the current user has reacted"],
+        ["emoji", "object", "The emoji object (id, name, animated)"],
+        ["burst_colors", "array", "Colors of burst reactions (hex integers)"],
+        ["count_details", "object", "Breakdown: { burst: int, normal: int }"],
+      ]} />
 
       <H2 id="burst-reactions">Burst Reactions</H2>
       <P>

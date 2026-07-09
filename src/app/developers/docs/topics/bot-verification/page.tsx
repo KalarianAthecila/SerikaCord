@@ -1,4 +1,13 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Bot Verification",
+  description:
+    "Get your SerikaCord bot verified to scale beyond 100 servers. Requirements, application process, privileged intents, and data deletion.",
+  path: "/developers/docs/topics/bot-verification",
+  keywords: ["SerikaCord bot verification", "verified bot", "100 servers", "privileged intents"],
+});
 
 export default function BotVerificationDoc() {
   return (

@@ -1,4 +1,4 @@
-import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, CardGrid, Card } from "../../DocPage";
+import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, CardGrid, Card, Table } from "../../DocPage";
 import { Zap, TerminalSquare, Cable, KeyRound } from "lucide-react";
 import { buildMetadata } from "@/lib/seo";
 
@@ -36,13 +36,13 @@ export default function BotsOverviewDoc() {
       </Callout>
 
       <H2 id="anatomy">Anatomy of a bot</H2>
-      <UL>
-        <li><Strong>Application</Strong> — the top-level identity (name, icon, OAuth2 config, commands).</li>
-        <li><Strong>Bot user</Strong> — the account that appears in servers and authors messages.</li>
-        <li><Strong>Bot token</Strong> — the secret used in the <InlineCode>Authorization: Bot …</InlineCode> header.</li>
-        <li><Strong>Public key</Strong> — lets you verify the signatures on interaction POSTs we send you.</li>
-        <li><Strong>Intents</Strong> — a bitmask declaring which gateway events you want to receive.</li>
-      </UL>
+      <Table headers={["Component", "Description", "Where to find it"]} rows={[
+        ["Application", "The top-level container. Holds name, icon, description, OAuth2 config, and slash commands.", "Developer Portal → your app"],
+        ["Bot User", "A real user account with bot: true. Appears in member lists and authors messages.", "Created when you enable the bot on the Bot tab"],
+        ["Bot Token", "Secret string for API authentication. Passed as Authorization: Bot <token>.", "Bot tab → Reset Token"],
+        ["Public Key", "Ed25519 key used to verify signed interaction webhooks.", "Bot tab → Public Key"],
+        ["Intents", "Bitwise flags that control which Gateway events the bot receives.", "Bot tab → Privileged Gateway Intents + code"],
+      ]} />
 
       <H2 id="two-ways">Two ways a bot receives events</H2>
       <CardGrid>
@@ -55,11 +55,28 @@ export default function BotsOverviewDoc() {
           No persistent connection required.
         </Card>
       </CardGrid>
+      <P>
+        You can use both simultaneously — many bots use the Gateway for message events and HTTP for
+        slash command interactions.
+      </P>
 
       <H2 id="authentication">Authentication</H2>
       <P>Every REST call includes your bot token:</P>
       <CodeBlock lang="bash">{`curl -H "Authorization: Bot YOUR_TOKEN" \\
   https://api.serika.chat/api/v10/users/@me`}</CodeBlock>
+      <P>
+        The token can be prefixed with <InlineCode>Bot </InlineCode> or sent bare — both are accepted.
+        Internally, SerikaCord looks up the <InlineCode>Application</InlineCode> by{" "}
+        <InlineCode>botToken</InlineCode>, then resolves the associated bot <InlineCode>User</InlineCode>.
+      </P>
+      <P>For the Gateway, the token goes in the <InlineCode>IDENTIFY</InlineCode> payload:</P>
+      <CodeBlock lang="json">{`{
+  "op": 2,
+  "d": {
+    "token": "Bot YOUR_TOKEN",
+    "intents": 513
+  }
+}`}</CodeBlock>
       <Callout type="danger" title="Treat your token like a password">
         Anyone with your token controls your bot. Never commit it. If it leaks, reset it from the{" "}
         <Strong>Bot</Strong> tab — the old token stops working immediately.
@@ -83,6 +100,11 @@ export default function BotsOverviewDoc() {
 
 // Guilds + guild messages + message content
 const intents = Intents.GUILDS | Intents.GUILD_MESSAGES | Intents.MESSAGE_CONTENT;`}</CodeBlock>
+      <Callout type="warning" title="Privileged intents require verification">
+        Bots in 100+ servers must be{" "}
+        <Link2 href="/developers/docs/topics/bot-verification">verified</Link2> to use privileged
+        intents. Enable them in the Developer Portal and justify why your bot needs them.
+      </Callout>
 
       <H2 id="permissions">Permissions</H2>
       <P>
@@ -90,6 +112,34 @@ const intents = Intents.GUILDS | Intents.GUILD_MESSAGES | Intents.MESSAGE_CONTEN
         You request a permission integer at install time; server admins can adjust roles afterward. See{" "}
         <Link2 href="/developers/docs/topics/permissions">Permissions</Link2>.
       </P>
+
+      <H2 id="rate-limits">Rate Limits</H2>
+      <P>
+        The API enforces per-route, per-bot rate limits. Responses include rate limit headers:
+      </P>
+      <Table headers={["Header", "Description"]} rows={[
+        ["X-RateLimit-Limit", "Maximum requests per bucket"],
+        ["X-RateLimit-Remaining", "Remaining requests in current window"],
+        ["X-RateLimit-Reset", "Unix timestamp when the bucket resets"],
+        ["X-RateLimit-Reset-After", "Seconds until reset"],
+        ["X-RateLimit-Bucket", "Bucket identifier"],
+      ]} />
+      <P>
+        When rate limited, the API returns <InlineCode>429 Too Many Requests</InlineCode> with a{" "}
+        <InlineCode>retry_after</InlineCode> field. See{" "}
+        <Link2 href="/developers/docs/topics/rate-limits">Rate Limits</Link2> for details.
+      </P>
+
+      <H2 id="bot-vs-user">Bot Users vs Regular Users</H2>
+      <Table headers={["Property", "Regular User", "Bot User"]} rows={[
+        ["bot field", "false", "true"],
+        ["discriminator", "varies", "0"],
+        ["verified", "varies", "true"],
+        ["Can join servers", "Yes (up to 100/200)", "Yes (via OAuth2 invite)"],
+        ["Can use OAuth2 user endpoints", "Yes", "Limited (users/@me, users/@me/channels)"],
+        ["Can be DM'd", "Yes", "Yes (if DM channel exists)"],
+        ["Rate limits", "Per-user", "Per-bot (typically higher)"],
+      ]} />
 
       <H2 id="next">Next steps</H2>
       <CardGrid>

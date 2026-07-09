@@ -1,4 +1,12 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Endpoint, Table } from "../../DocPage";
+import { buildMetadata } from "@/lib/seo";
+
+export const metadata = buildMetadata({
+  title: "Guild",
+  description: "SerikaCord Guild resource: object structure, CRUD endpoints, roles, members, bans, invites, webhooks, verification levels, and features.",
+  path: "/developers/docs/resources/guild",
+  keywords: ["SerikaCord guild", "server object", "guild members", "guild roles", "guild bans"],
+});
 
 export default function GuildDoc() {
   return (
