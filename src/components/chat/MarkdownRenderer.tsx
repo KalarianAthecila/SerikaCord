@@ -77,7 +77,7 @@ function parseTimestampOptions(optionsStr: string): { end?: string; color?: stri
   const options: { end?: string; color?: string } = {};
   if (!optionsStr) return options;
 
-  let str = optionsStr;
+  let str = optionsStr.replace(/\[|\]/g, " ");
   if (str.endsWith(":")) {
     str = str.slice(0, -1);
   }
@@ -244,6 +244,21 @@ const ChannelMention = memo(function ChannelMention({ channelId }: { channelId: 
   );
 });
 
+function Spoiler({ children }: { children: React.ReactNode }) {
+  const [revealed, setRevealed] = useState(false);
+  return (
+    <span
+      onClick={() => setRevealed(true)}
+      className={cn(
+        "rounded px-0.5 cursor-pointer transition-colors select-none",
+        revealed ? "bg-[var(--app-surface-alt)] text-[var(--text-primary)]" : "bg-[var(--text-muted)] text-transparent"
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
 function renderInlineNodes(nodes: MarkdownNode[], keyPrefix: string): React.ReactNode[] {
   return nodes.map((node, i) => {
     const key = `${keyPrefix}-${i}`;
@@ -256,6 +271,8 @@ function renderInlineNodes(nodes: MarkdownNode[], keyPrefix: string): React.Reac
         return <u key={key}>{node.children && renderInlineNodes(node.children, key)}</u>;
       case "strikethrough":
         return <s key={key}>{node.children && renderInlineNodes(node.children, key)}</s>;
+      case "spoiler":
+        return <Spoiler key={key}>{node.children && renderInlineNodes(node.children, key)}</Spoiler>;
       case "code":
         return (
           <code key={key} className="px-1 py-0.5 rounded bg-[var(--app-surface-alt)] text-[#e2b714] text-[0.85em] font-mono">
@@ -275,18 +292,7 @@ function renderInlineNodes(nodes: MarkdownNode[], keyPrefix: string): React.Reac
       case "channel_mention":
         return <ChannelMention key={key} channelId={node.content} />;
       default:
-        // Handle multi-line text by splitting on \n
-        const text = node.content;
-        if (text.includes("\n")) {
-          const parts = text.split("\n");
-          return parts.map((part, j) => (
-            <span key={`${key}-${j}`}>
-              {j > 0 && <br />}
-              {part}
-            </span>
-          ));
-        }
-        return <span key={key}>{text}</span>;
+        return <span key={key}>{node.content}</span>;
     }
   });
 }
@@ -295,7 +301,7 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, classN
   const blocks = useMemo(() => parseMarkdown(content), [content]);
 
   return (
-    <span className={cn("inline", className)}>
+    <span className={cn("whitespace-pre-wrap break-words", className)}>
       {blocks.map((block, i) => {
         const key = `md-block-${i}`;
         switch (block.type) {
@@ -315,6 +321,24 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, classN
                   block.level === 2 && "text-base",
                   block.level === 3 && "text-sm"
                 )}
+              >
+                {block.inline && renderInlineNodes(block.inline, key)}
+              </span>
+            );
+          case "blockquote":
+            return (
+              <blockquote
+                key={key}
+                className="border-l-4 border-[var(--app-accent)] pl-3 my-1 italic text-[var(--text-muted)] block"
+              >
+                {block.inline && renderInlineNodes(block.inline, key)}
+              </blockquote>
+            );
+          case "small":
+            return (
+              <span
+                key={key}
+                className="text-[0.7em] text-[var(--text-muted)] block"
               >
                 {block.inline && renderInlineNodes(block.inline, key)}
               </span>

@@ -1,5 +1,6 @@
 import { DocPage, P, H2, H3, UL, CodeBlock, Callout, Strong, InlineCode, Link2, Table } from "../../DocPage";
 import { buildMetadata } from "@/lib/seo";
+import { MarkdownLivePreview, TimestampLivePreview } from "./LivePreview";
 
 export const metadata = buildMetadata({
   title: "Message Formatting",
@@ -14,17 +15,7 @@ export default function MessageFormattingDoc() {
     <DocPage title="Message Formatting" description="Format messages with markdown, mentions, emojis, and rich embeds.">
       <H2 id="markdown">Markdown Support</H2>
       <P>SerikaCord supports standard markdown plus some extensions:</P>
-      <Table headers={["Syntax", "Result"]} rows={[
-        ["**bold**", "Bold text"],
-        ["*italic*", "Italic text"],
-        ["__underline__", "Underlined text"],
-        ["~~strikethrough~~", "Strikethrough text"],
-        ["`inline code`", "Inline code"],
-        ["```code block```", "Code block"],
-        ["> quote", "Block quote"],
-        [">> quote block", "Multi-line quote"],
-        ["||spoiler||", "Spoiler (hidden until clicked)"],
-      ]} />
+      <MarkdownLivePreview />
 
       <H2 id="mentions">Mentions</H2>
       <P>Mentions use special syntax in message content:</P>
@@ -40,16 +31,14 @@ export default function MessageFormattingDoc() {
       ]} />
 
       <H2 id="timestamps">Timestamp Formatting</H2>
-      <P>Use <InlineCode>&lt;t:timestamp:format&gt;</InlineCode> for localized timestamps:</P>
-      <Table headers={["Format", "Example"]} rows={[
-        ["t", "Short time (e.g., 4:30 PM)"],
-        ["T", "Long time (e.g., 4:30:00 PM)"],
-        ["d", "Short date (e.g., 07/05/2026)"],
-        ["D", "Long date (e.g., July 5, 2026)"],
-        ["f", "Short date-time (default)"],
-        ["F", "Long date-time"],
-        ["R", "Relative time (e.g., 2 hours ago)"],
+      <P>Use <InlineCode>&lt;t:timestamp:format&gt;</InlineCode> for localized timestamps. The timestamp is a Unix epoch in seconds:</P>
+      <TimestampLivePreview />
+      <P>The <InlineCode>C</InlineCode> format also supports optional parameters inside square brackets:</P>
+      <Table headers={["Option", "Syntax", "Description"]} rows={[
+        ["end text", "<t:timestamp:C[end:00:00:00 (Passed)]>", "Text to display when the countdown reaches zero"],
+        ["color", "<t:timestamp:C[color:#FF0000]>", "Custom hex color for the countdown text (default: accent color)"],
       ]} />
+      <P>Multiple options can be combined: <InlineCode>&lt;t:timestamp:C[end:Done!][color:#FF0000]&gt;</InlineCode></P>
 
       <H2 id="embeds">Embeds</H2>
       <P>Rich embeds can be attached to messages:</P>

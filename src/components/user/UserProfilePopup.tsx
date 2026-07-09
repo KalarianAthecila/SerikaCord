@@ -31,6 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
+import { getProfileBannerStyle } from "@/lib/userDisplayNameStyle";
 
 interface UserProfilePopupProps {
   children: React.ReactNode;
@@ -38,10 +39,10 @@ interface UserProfilePopupProps {
 }
 
 const statusOptions = [
-  { value: "online", label: "Online", icon: Circle, color: "#8B5CF6" },
-  { value: "idle", label: "Idle", icon: Moon, color: "#A78BFA" },
-  { value: "dnd", label: "Do Not Disturb", icon: MinusCircle, color: "#EF4444" },
-  { value: "offline", label: "Invisible", icon: EyeOff, color: "#555555" },
+  { value: "online", label: "Online", icon: Circle, color: "#23A55A" },
+  { value: "idle", label: "Idle", icon: Moon, color: "#F0B232" },
+  { value: "dnd", label: "Do Not Disturb", icon: MinusCircle, color: "#F23F43" },
+  { value: "offline", label: "Invisible", icon: EyeOff, color: "#80848E" },
 ] as const;
 
 type StatusValue = typeof statusOptions[number]['value'];
@@ -135,11 +136,13 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
       {/* Banner */}
       <div
         className={cn("relative", isMobile ? "h-28" : "h-[60px]")}
-        style={{
-          background: user.banner
-            ? `url(${user.banner}) center/cover`
-            : `linear-gradient(135deg, var(--accent-color) 0%, rgba(99,102,241,0.8) 100%)`,
-        }}
+        style={
+          user.banner
+            ? { background: `url(${user.banner}) center/cover` }
+            : (user.customization?.profileGradient && user.customization.profileGradient.length >= 2) || user.customization?.profileColor
+              ? getProfileBannerStyle(user.customization)
+              : { background: `linear-gradient(135deg, var(--accent-color) 0%, rgba(99,102,241,0.8) 100%)` }
+        }
       />
 
       {/* Avatar and Info */}
@@ -197,7 +200,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
 
             {/* Bio */}
             {user.bio && (
-              <div className={cn("text-[#dcddde] mb-2", isMobile ? "text-base line-clamp-6" : "text-sm line-clamp-3")}>
+              <div className={cn("text-[#dcddde] mb-2 whitespace-pre-wrap break-words", isMobile ? "text-base line-clamp-6" : "text-sm line-clamp-3")}>
                 <MarkdownRenderer content={user.bio} />
               </div>
             )}
