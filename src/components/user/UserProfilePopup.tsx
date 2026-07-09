@@ -31,7 +31,7 @@ import {
 import { cn } from "@/lib/utils";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
-import { getProfileBannerStyle } from "@/lib/userDisplayNameStyle";
+import { getProfileBannerStyle, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 
 interface UserProfilePopupProps {
   children: React.ReactNode;
@@ -130,6 +130,9 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
   };
 
   if (!user) return <>{children}</>;
+
+  const cardBgStyle = getProfileBackgroundStyle(user.customization, { opaque: true });
+  const hasCardBg = Object.keys(cardBgStyle).length > 0;
 
   const renderProfileCard = () => (
     <>
@@ -411,7 +414,11 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>{children}</DialogTrigger>
           <DialogContent
-            className="!fixed !inset-x-0 !bottom-0 !top-auto !left-0 !translate-x-0 !translate-y-0 !max-w-full p-0 rounded-t-2xl bg-[#111111] border border-[#222222] shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+            className={cn(
+              "!fixed !inset-x-0 !bottom-0 !top-auto !left-0 !translate-x-0 !translate-y-0 !max-w-full p-0 rounded-t-2xl border border-[#222222] shadow-2xl overflow-hidden max-h-[85vh] flex flex-col",
+              !hasCardBg && "bg-[#111111]"
+            )}
+            style={hasCardBg ? cardBgStyle : undefined}
             showCloseButton={false}
           >
             <div className="w-12 h-1 bg-[#444444] rounded-full mt-3 mb-1 mx-auto shrink-0" />
@@ -425,7 +432,11 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
             side="top"
             align="start"
             sideOffset={8}
-            className="w-[300px] p-0 bg-[#111111] border border-[#222222] rounded-lg overflow-hidden shadow-xl"
+            className={cn(
+              "w-[300px] p-0 border border-[#222222] rounded-lg overflow-hidden shadow-xl",
+              !hasCardBg && "bg-[#111111]"
+            )}
+            style={hasCardBg ? cardBgStyle : undefined}
           >
             {renderProfileCard()}
           </PopoverContent>

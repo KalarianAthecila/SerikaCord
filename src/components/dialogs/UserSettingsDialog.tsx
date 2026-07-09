@@ -48,11 +48,14 @@ import {
   Clock,
   BellRing,
   MonitorSmartphone,
+  Target,
+  MinusCircle,
   Award,
   Megaphone,
   Mic2,
 } from "lucide-react";
 import { requestNotificationPermission } from "@/lib/services/notificationService";
+import { setUserNotificationSettings } from "@/lib/services/notificationUX";
 import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
 import { NAMEPLATE_PRESETS, getNameplateBackground } from "@/lib/constants/nameplates";
@@ -696,6 +699,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       if (response.ok) {
         setUserSettings((prev) => ({ ...(prev || {}), ...patch }));
         applyUserSettingsPatch(patch);
+        if (patch.notifications) setUserNotificationSettings(patch.notifications);
         toast.success("Settings saved");
       } else {
         const data = await response.json();
@@ -2740,11 +2744,89 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                 <div className="space-y-6">
                   <h2 className="text-xl font-bold text-white">Notifications</h2>
 
+                  {/* DND / Do Not Disturb */}
+                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <MinusCircle className="w-4 h-4 text-[var(--text-secondary)]" />
+                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Do Not Disturb</h3>
+                    </div>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Enable Do Not Disturb</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Suppresses all sounds, desktop notifications, and toasts</p>
+                      </div>
+                      <ToggleSwitch
+                        size="sm"
+                        checked={Boolean(userSettings?.notifications?.dnd)}
+                        onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), dnd: checked } }, "notifications")}
+                      />
+                    </label>
+
+                    {userSettings?.notifications?.dnd && (
+                      <div className="ml-0 p-4 rounded-lg bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] space-y-3">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                          <p className="text-xs font-semibold text-[var(--text-secondary)]">Scheduled Quiet Hours</p>
+                        </div>
+                        <label className="flex items-center justify-between cursor-pointer">
+                          <span className="text-sm text-[var(--text-primary)]">Enable schedule</span>
+                          <ToggleSwitch
+                            size="sm"
+                            checked={Boolean(userSettings?.notifications?.dndSchedule?.enabled)}
+                            onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), dndSchedule: { ...(userSettings?.notifications?.dndSchedule || { start: "22:00", end: "08:00" }), enabled: checked } } }, "notifications")}
+                          />
+                        </label>
+                        {userSettings?.notifications?.dndSchedule?.enabled && (
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1">
+                              <label className="text-xs text-[var(--text-muted)]">Start</label>
+                              <Input
+                                type="time"
+                                value={userSettings?.notifications?.dndSchedule?.start || "22:00"}
+                                onChange={(e) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), dndSchedule: { ...(userSettings?.notifications?.dndSchedule || { enabled: true, end: "08:00" }), start: e.target.value } } }, "notifications")}
+                                className="h-9 bg-[var(--bg-app)] border-[var(--border-subtle)]"
+                              />
+                            </div>
+                            <div className="flex-1">
+                              <label className="text-xs text-[var(--text-muted)]">End</label>
+                              <Input
+                                type="time"
+                                value={userSettings?.notifications?.dndSchedule?.end || "08:00"}
+                                onChange={(e) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), dndSchedule: { ...(userSettings?.notifications?.dndSchedule || { enabled: true, start: "22:00" }), end: e.target.value } } }, "notifications")}
+                                className="h-9 bg-[var(--bg-app)] border-[var(--border-subtle)]"
+                              />
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Focus Mode */}
+                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Target className="w-4 h-4 text-[var(--text-secondary)]" />
+                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Focus Mode</h3>
+                    </div>
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Enable Focus Mode</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Suppress everything except direct @mentions and DMs</p>
+                      </div>
+                      <ToggleSwitch
+                        size="sm"
+                        checked={Boolean(userSettings?.notifications?.focusMode)}
+                        onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), focusMode: checked } }, "notifications")}
+                      />
+                    </label>
+                  </div>
+
                   {/* Push / Desktop permission */}
                   <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
                     <div className="flex items-center gap-2 mb-1">
                       <MonitorSmartphone className="w-4 h-4 text-[var(--text-secondary)]" />
-                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Platform Notifications</h3>
+                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Desktop Notifications</h3>
                     </div>
                     <div className="flex items-center justify-between">
                       <div>
@@ -2781,14 +2863,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         </button>
                       </div>
                     )}
-                  </div>
 
-                  {/* Notification behaviour */}
-                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-5">
-                    <div className="flex items-center gap-2 mb-1">
-                      <BellRing className="w-4 h-4 text-[var(--text-secondary)]" />
-                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Notification Behaviour</h3>
-                    </div>
+                    <div className="h-px bg-[var(--border-subtle)]" />
 
                     <label className="flex items-center justify-between cursor-pointer">
                       <div>
@@ -2806,20 +2882,121 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
                     <label className="flex items-center justify-between cursor-pointer">
                       <div>
-                        <p className="text-[var(--text-primary)] font-medium">Message Sounds</p>
-                        <p className="text-sm text-[var(--text-secondary)]">Play a sound when a new message arrives</p>
+                        <p className="text-[var(--text-primary)] font-medium">Mute @everyone and @here</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Suppress popup notifications for @everyone and @here pings</p>
                       </div>
-                      <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.sounds)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), sounds: checked } }, "notifications")} />
+                      <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.muteEveryone)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), muteEveryone: checked } }, "notifications")} />
                     </label>
 
                     <div className="h-px bg-[var(--border-subtle)]" />
 
                     <label className="flex items-center justify-between cursor-pointer">
                       <div>
-                        <p className="text-[var(--text-primary)] font-medium">Mute @everyone and @here</p>
-                        <p className="text-sm text-[var(--text-secondary)]">Suppress popup notifications for @everyone and @here pings</p>
+                        <p className="text-[var(--text-primary)] font-medium">Show message preview</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Display message content in desktop notifications</p>
                       </div>
-                      <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.muteEveryone)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), muteEveryone: checked } }, "notifications")} />
+                      <ToggleSwitch size="sm" checked={userSettings?.notifications?.showPreview !== false} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), showPreview: checked } }, "notifications")} />
+                    </label>
+                  </div>
+
+                  {/* Sound Settings */}
+                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-5">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Volume2 className="w-4 h-4 text-[var(--text-secondary)]" />
+                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">Sound</h3>
+                    </div>
+
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Message Sounds</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Play a sound when a new message arrives</p>
+                      </div>
+                      <ToggleSwitch size="sm" checked={Boolean(userSettings?.notifications?.sounds)} onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), sounds: checked } }, "notifications")} />
+                    </label>
+
+                    {userSettings?.notifications?.sounds && (
+                      <>
+                        <div className="h-px bg-[var(--border-subtle)]" />
+
+                        <div className="space-y-2">
+                          <label className="text-sm text-[var(--text-primary)] font-medium">Sound type</label>
+                          <div className="grid grid-cols-5 gap-2">
+                            {([
+                              { value: 'chime', label: 'Chime' },
+                              { value: 'ding', label: 'Ding' },
+                              { value: 'pop', label: 'Pop' },
+                              { value: 'coin', label: 'Coin' },
+                              { value: 'none', label: 'Silent' },
+                            ] as const).map((opt) => (
+                              <button
+                                key={opt.value}
+                                onClick={() => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), soundType: opt.value } }, "notifications")}
+                                className={cn(
+                                  "px-3 py-2 rounded-lg text-xs font-medium border transition-colors",
+                                  (userSettings?.notifications?.soundType || 'chime') === opt.value
+                                    ? "bg-[var(--app-accent)]/20 border-[var(--app-accent)] text-[var(--app-accent)]"
+                                    : "bg-[var(--bg-sidebar-elevated)] border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                                )}
+                              >
+                                {opt.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+
+                        <div className="h-px bg-[var(--border-subtle)]" />
+
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <label className="text-sm text-[var(--text-primary)] font-medium">Volume</label>
+                            <span className="text-xs text-[var(--text-muted)] tabular-nums">{userSettings?.notifications?.soundVolume ?? 50}%</span>
+                          </div>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            value={userSettings?.notifications?.soundVolume ?? 50}
+                            onChange={(e) => {
+                              const vol = Number(e.target.value);
+                              saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), soundVolume: vol } }, "notifications");
+                            }}
+                            className="w-full accent-[var(--app-accent)]"
+                          />
+                        </div>
+
+                        <div className="h-px bg-[var(--border-subtle)]" />
+
+                        <label className="flex items-center justify-between cursor-pointer">
+                          <div>
+                            <p className="text-[var(--text-primary)] font-medium">Suppress sound when tab is focused</p>
+                            <p className="text-sm text-[var(--text-secondary)]">Don't play notification sound when you're already viewing the app</p>
+                          </div>
+                          <ToggleSwitch
+                            size="sm"
+                            checked={userSettings?.notifications?.suppressSoundWhenFocused !== false}
+                            onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), suppressSoundWhenFocused: checked } }, "notifications")}
+                          />
+                        </label>
+                      </>
+                    )}
+                  </div>
+
+                  {/* In-App Toasts */}
+                  <div className="rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] p-5 space-y-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <BellRing className="w-4 h-4 text-[var(--text-secondary)]" />
+                      <h3 className="text-xs font-bold uppercase text-[var(--text-muted)] tracking-wider">In-App Toasts</h3>
+                    </div>
+                    <label className="flex items-center justify-between cursor-pointer">
+                      <div>
+                        <p className="text-[var(--text-primary)] font-medium">Suppress in-app toast notifications</p>
+                        <p className="text-sm text-[var(--text-secondary)]">Hide the toast popups that appear in-app for new messages</p>
+                      </div>
+                      <ToggleSwitch
+                        size="sm"
+                        checked={Boolean(userSettings?.notifications?.suppressToasts)}
+                        onCheckedChange={(checked) => saveSettingsPatch({ notifications: { ...(userSettings?.notifications || {}), suppressToasts: checked } }, "notifications")}
+                      />
                     </label>
                   </div>
                 </div>

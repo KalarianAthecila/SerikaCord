@@ -66,9 +66,16 @@ export function VideoMediaPlayer({
           width: 20px !important;
           height: 20px !important;
         }
-        /* Compact controls */
+        /* Auto-hide controls when not hovering or paused */
         .serika-chat-player .serika-video-player-controls {
           padding: 10px 8px 8px !important;
+          opacity: 0 !important;
+          transition: opacity 0.3s ease !important;
+          pointer-events: none !important;
+        }
+        .serika-chat-player:hover .serika-video-player-controls {
+          opacity: 1 !important;
+          pointer-events: auto !important;
         }
         .serika-chat-player .serika-video-player-controls-row {
           gap: 4px !important;
