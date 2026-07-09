@@ -210,12 +210,12 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
     const [acceptFileTypes, setAcceptFileTypes] = useState<string>("*/*");
 
     useEffect(() => {
-      fetch("/api/platform/file-types")
+      fetch("/api/platform/file-types-accept")
         .then((res) => (res.ok ? res.json() : null))
         .then((data) => {
-          const types = data?.fileTypes as string[] | undefined;
-          if (types && types.length > 0) {
-            setAcceptFileTypes(types.join(","));
+          const accept = data?.accept as string | undefined;
+          if (accept && accept.length > 0) {
+            setAcceptFileTypes(accept);
           }
         })
         .catch(() => {});
