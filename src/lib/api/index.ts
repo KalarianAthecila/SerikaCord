@@ -2207,8 +2207,90 @@ export const api = new Elysia({ prefix: '/api' })
     const settings = await getPlatformSettings();
     const fileTypes = (settings.allowedFileTypes as any[])?.length
       ? (settings.allowedFileTypes as any[]).map((f: any) => f.type)
-      : config.ALLOWED_FILE_TYPES;
+      : [...config.ALLOWED_FILE_TYPES];
     return { fileTypes };
+  })
+  .get('/platform/file-types-accept', async () => {
+    const { getPlatformSettings } = await import('@/lib/models/PlatformSettings');
+    const settings = await getPlatformSettings();
+    const mimeTypes: string[] = (settings.allowedFileTypes as any[])?.length
+      ? (settings.allowedFileTypes as any[]).map((f: any) => f.type)
+      : [...config.ALLOWED_FILE_TYPES];
+
+    // Convert MIME types to OS-file-picker-friendly accept tokens.
+    // OS pickers understand wildcards (image/*) and extensions (.mov) well,
+    // but often fail on specific MIME types like video/quicktime.
+    const MIME_TO_EXT: Record<string, string[]> = {
+      'image/jpeg': ['.jpg', '.jpeg'],
+      'image/png': ['.png'],
+      'image/gif': ['.gif'],
+      'image/webp': ['.webp'],
+      'image/avif': ['.avif'],
+      'image/bmp': ['.bmp'],
+      'image/svg+xml': ['.svg'],
+      'audio/mpeg': ['.mp3'],
+      'audio/ogg': ['.ogg', '.oga'],
+      'audio/wav': ['.wav'],
+      'audio/x-wav': ['.wav'],
+      'audio/flac': ['.flac'],
+      'audio/aac': ['.aac'],
+      'audio/mp4': ['.m4a', '.mp4'],
+      'audio/x-m4a': ['.m4a'],
+      'audio/webm': ['.weba'],
+      'video/mp4': ['.mp4', '.m4v'],
+      'video/webm': ['.webm'],
+      'video/ogg': ['.ogv'],
+      'video/quicktime': ['.mov'],
+      'video/x-matroska': ['.mkv'],
+      'application/pdf': ['.pdf'],
+      'text/plain': ['.txt'],
+      'text/csv': ['.csv'],
+      'text/markdown': ['.md', '.markdown'],
+      'application/json': ['.json'],
+      'application/rtf': ['.rtf'],
+      'application/msword': ['.doc'],
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document': ['.docx'],
+      'application/vnd.ms-excel': ['.xls'],
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'],
+      'application/vnd.ms-powerpoint': ['.ppt'],
+      'application/vnd.openxmlformats-officedocument.presentationml.presentation': ['.pptx'],
+      'application/vnd.oasis.opendocument.text': ['.odt'],
+      'application/vnd.oasis.opendocument.spreadsheet': ['.ods'],
+      'application/vnd.oasis.opendocument.presentation': ['.odp'],
+      'application/zip': ['.zip'],
+      'application/gzip': ['.gz', '.gzip', '.tgz'],
+      'application/x-tar': ['.tar'],
+      'font/woff': ['.woff'],
+      'font/woff2': ['.woff2'],
+      'font/ttf': ['.ttf'],
+      'font/otf': ['.otf'],
+    };
+
+    const tokens: string[] = [];
+    const seen = new Set<string>();
+    for (const mime of mimeTypes) {
+      const exts = MIME_TO_EXT[mime];
+      if (exts) {
+        for (const ext of exts) {
+          if (!seen.has(ext)) {
+            seen.add(ext);
+            tokens.push(ext);
+          }
+        }
+      } else if (mime.endsWith('/*')) {
+        if (!seen.has(mime)) {
+          seen.add(mime);
+          tokens.push(mime);
+        }
+      } else {
+        // Unknown MIME — pass it through, the browser may or may not understand it
+        if (!seen.has(mime)) {
+          seen.add(mime);
+          tokens.push(mime);
+        }
+      }
+    }
+    return { accept: tokens.join(',') };
   })
   // Public list of enabled TTS sound triggers (triggerWord + path). Every
   // client fetches this to know which words play sounds. No auth needed —
