@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Eye, EyeOff, Loader2 } from "lucide-react";
+import { T, useGT } from "gt-next";
 
 function LoginForm() {
+  const gt = useGT();
   const router = useRouter();
   const searchParams = useSearchParams();
   const redirectTo = searchParams.get("redirect") || "/channels/me";
@@ -68,10 +70,10 @@ function LoginForm() {
       {/* Header */}
       <div className="text-center mb-8">
         <h1 className="text-2xl font-semibold text-white mb-2">
-          Welcome back
+          <T>Welcome back</T>
         </h1>
         <p className="text-[#888888] text-sm">
-          Sign in to your account to continue
+          <T>Sign in to your account to continue</T>
         </p>
       </div>
 
@@ -86,7 +88,7 @@ function LoginForm() {
         {/* Email Field */}
         <div className="space-y-2">
           <Label className="text-sm font-medium text-[#888888]">
-            Email
+            {gt("Email")}
           </Label>
           <Input
             type="email"
@@ -102,13 +104,13 @@ function LoginForm() {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <Label className="text-sm font-medium text-[#888888]">
-              Password
+              {gt("Password")}
             </Label>
             <Link 
               href="/forgot-password" 
               className="text-xs text-[#8B5CF6] hover:text-[#A78BFA] transition-colors"
             >
-              Forgot password?
+              <T>Forgot password?</T>
             </Link>
           </div>
           <div className="relative">
@@ -118,7 +120,7 @@ function LoginForm() {
               value={formData.password}
               onChange={(e) => setFormData({ ...formData, password: e.target.value })}
               className="h-11 bg-[#111111] border-white/[0.08] text-white placeholder:text-[#555555] rounded-xl focus:border-[#8B5CF6]/60 focus:ring-1 focus:ring-[#8B5CF6]/40 focus-visible:ring-[#8B5CF6]/40 transition-colors pr-11"
-              placeholder="Enter your password"
+              placeholder={gt("Enter your password")}
             />
             <button
               type="button"
@@ -139,18 +141,18 @@ function LoginForm() {
           {isLoading ? (
             <Loader2 className="w-4 h-4 animate-spin" />
           ) : (
-            "Sign in"
+            gt("Sign in")
           )}
         </Button>
 
         {/* Register Link */}
         <p className="text-sm text-center text-[#888888] pt-4">
-          Don&apos;t have an account?{" "}
+          <T>Don&apos;t have an account?</T>{" "}
           <Link 
             href={`/register${redirectTo !== "/channels/me" ? `?redirect=${redirectTo}` : ""}`}
             className="text-[#8B5CF6] hover:text-[#A78BFA] transition-colors font-medium"
           >
-            Sign up
+            <T>Sign up</T>
           </Link>
         </p>
       </form>
