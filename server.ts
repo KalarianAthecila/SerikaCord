@@ -65,7 +65,19 @@ async function main() {
     await connectDB().catch(() => {});
   }
 
+  const frontendUrl = process.env.FRONTEND_URL;
+  const redirectHosts = new Set(['serika.cc', 'www.serika.cc']);
+
   const server = createServer((req, res) => {
+    // ─── Domain redirect ────────────────────────────────────
+    // Redirect serika.cc → FRONTEND_URL (preserves path + query).
+    if (frontendUrl && redirectHosts.has(req.headers.host?.split(':')[0] || '')) {
+      const target = new URL(req.url || '/', frontendUrl);
+      res.writeHead(301, { Location: target.href });
+      res.end();
+      return;
+    }
+
     // ─── SSE fast-path ───────────────────────────────────────
     // Intercept SSE stream endpoints BEFORE Next.js so events are written
     // directly to the raw socket. Next.js route handlers buffer ReadableStream
