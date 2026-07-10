@@ -13,7 +13,7 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { Loader2, ArrowDown } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { useGT, useLocale } from "gt-next";
 import { cn } from "@/lib/utils";
 import { MessageGroup } from "@/components/chat/MessageGroup";
@@ -22,6 +22,7 @@ import { formatMessageTimestamp } from "@/lib/chat/messages";
 import type { PickerEmoji } from "@/components/chat/MessageHoverActions";
 import type { ChatMessage, MessageGroupData } from "@/lib/chat/types";
 import type { useMessageActions } from "@/hooks/useMessageActions";
+import { Loader } from "@/components/ui/Loader";
 
 export interface MessageListHandle {
   scrollToBottom: (behavior?: ScrollBehavior) => void;
@@ -307,7 +308,7 @@ function MessageListInner<M extends ChatMessage>(
       {hasMoreOlder && !isLoading && isLoadingMore && (
         <div className="absolute top-0 left-0 right-0 z-10 flex justify-center py-2 pointer-events-none">
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] bg-[var(--bg-app)]/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
+            <Loader size={undefined} />
             {gt("Loading older messages")}
           </div>
         </div>

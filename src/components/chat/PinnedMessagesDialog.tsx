@@ -1,6 +1,6 @@
 "use client";
 
-import { Pin, Loader2 } from "lucide-react";
+import { Pin } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Dialog,
@@ -12,6 +12,7 @@ import {
 import { formatMessageTimestamp } from "@/lib/chat/messages";
 import { T, useGT, useLocale } from "gt-next";
 import type { ChatMessage } from "@/lib/chat/types";
+import { Loader } from "@/components/ui/Loader";
 
 interface PinnedMessagesDialogProps<M extends ChatMessage> {
   open: boolean;
@@ -55,7 +56,7 @@ export function PinnedMessagesDialog<M extends ChatMessage>({
         <div className="max-h-[60vh] overflow-y-auto space-y-2 pr-1 scrollbar-thin">
           {isLoading ? (
             <div className="text-sm text-[var(--text-secondary)] flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader size={16} />
               {gt("Loading pinned messages...")}
             </div>
           ) : messages.length === 0 ? (
