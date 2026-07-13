@@ -307,6 +307,27 @@ const internalRoutes = new Elysia({ prefix: '/internal' })
       set.status = 500;
       return { error: err.message, success: false };
     }
+  }, {
+    body: t.Object({
+      accountsUserId: t.String({ maxLength: 64 }),
+      username: t.Optional(t.String({ maxLength: 64 })),
+      email: t.Optional(t.String({ maxLength: 320 })),
+      password: t.Optional(t.Union([t.String({ maxLength: 512 }), t.Null()])),
+      avatar: t.Optional(t.Union([t.String({ maxLength: 2048 }), t.Null()])),
+      banner: t.Optional(t.Union([t.String({ maxLength: 2048 }), t.Null()])),
+      isVerified: t.Optional(t.Boolean()),
+      isPremium: t.Optional(t.Boolean()),
+      isBanned: t.Optional(t.Boolean()),
+      discordId: t.Optional(t.Union([t.String({ maxLength: 32 }), t.Null()])),
+      discordUsername: t.Optional(t.Union([t.String({ maxLength: 64 }), t.Null()])),
+      banInfo: t.Optional(t.Union([
+        t.Object({ reason: t.Optional(t.Union([t.String({ maxLength: 1024 }), t.Null()])) }, { additionalProperties: true }),
+        t.Null(),
+      ])),
+      joinDate: t.Optional(t.Union([t.String({ maxLength: 64 }), t.Null()])),
+      serikaMoeUsername: t.Optional(t.Union([t.String({ maxLength: 128 }), t.Null()])),
+      serikaMoeId: t.Optional(t.Union([t.String({ maxLength: 128 }), t.Null()])),
+    }, { additionalProperties: true }),
   })
   .post('/update-profile', async ({ headers, body, set }) => {
     const serviceKey = headers['x-service-key'];
@@ -381,6 +402,19 @@ const internalRoutes = new Elysia({ prefix: '/internal' })
       set.status = 500;
       return { error: err.message, success: false };
     }
+  }, {
+    body: t.Object({
+      email: t.String({ maxLength: 320 }),
+      updates: t.Object({
+        serikaMoeUsername: t.Optional(t.Union([t.String({ maxLength: 128 }), t.Null()])),
+        serikaMoeId: t.Optional(t.Union([t.String({ maxLength: 128 }), t.Null()])),
+        isPremium: t.Optional(t.Boolean()),
+        isVerified: t.Optional(t.Boolean()),
+        isBanned: t.Optional(t.Boolean()),
+        avatar: t.Optional(t.Union([t.String({ maxLength: 2048 }), t.Null()])),
+        banner: t.Optional(t.Union([t.String({ maxLength: 2048 }), t.Null()])),
+      }, { additionalProperties: true }),
+    }, { additionalProperties: true }),
   })
   .post('/update-password', async ({ headers, body, set }) => {
     const serviceKey = headers['x-service-key'];
@@ -412,6 +446,11 @@ const internalRoutes = new Elysia({ prefix: '/internal' })
       set.status = 500;
       return { error: err.message, success: false };
     }
+  }, {
+    body: t.Object({
+      email: t.String({ maxLength: 320 }),
+      password: t.Optional(t.Union([t.String({ maxLength: 512 }), t.Null()])),
+    }, { additionalProperties: true }),
   })
   .post('/delete-user', async ({ headers, body, set }) => {
     const serviceKey = headers['x-service-key'];
@@ -443,6 +482,10 @@ const internalRoutes = new Elysia({ prefix: '/internal' })
       set.status = 500;
       return { error: err.message, success: false };
     }
+  }, {
+    body: t.Object({
+      email: t.String({ maxLength: 320 }),
+    }, { additionalProperties: true }),
   });
 
 // User routes
