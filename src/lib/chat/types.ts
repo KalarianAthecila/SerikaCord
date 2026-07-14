@@ -99,6 +99,8 @@ export interface ChatMessage {
   mentionedChannelIds?: string[];
   /** True while the message is an optimistic send awaiting server confirmation. */
   pending?: boolean;
+  /** Ephemeral messages are only visible to the invoking user and are not persisted. */
+  ephemeral?: boolean;
 }
 
 export interface MessageGroupData<M extends ChatMessage = ChatMessage> {

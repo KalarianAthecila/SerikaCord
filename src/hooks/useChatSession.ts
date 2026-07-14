@@ -532,6 +532,18 @@ export function useChatSession<M extends ChatMessage>({
         return;
       }
 
+      if (data.type === "ephemeral") {
+        // Ephemeral messages are only visible to the invoking user.
+        if (data.userId !== user?.id) return;
+        const incoming = normalizeIncomingMessage<M>(data.message);
+        setMessages((prev) => {
+          if (prev.some((m) => m.id === incoming.id)) return prev;
+          return [...prev, incoming];
+        });
+        latestRef.current.onShouldScrollToBottom?.();
+        return;
+      }
+
       if (data.type === "edit") {
         setMessages((prev) =>
           prev.map((m) =>

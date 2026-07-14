@@ -121,6 +121,8 @@ export class GatewayHub {
         conn.data.lastHeartbeat = Date.now();
         this.send(conn, OP.HEARTBEAT_ACK, null);
         gwlog(conn.data.sessionId.slice(0, 8), 'heartbeat', conn.data.botId ?? '(unauth)');
+        // Keep the bot's presence fresh so it doesn't go stale/offline.
+        if (conn.data.botId) void this.setBotPresence(conn.data.botId, true);
         break;
       case OP.IDENTIFY:
         if (conn.data.authenticated) return;
@@ -155,6 +157,37 @@ export class GatewayHub {
 
   onClose(conn: Conn) {
     this.connections.delete(conn);
+    // Mark the bot offline when its last connection drops. If the same bot has
+    // another live connection, leave it online.
+    const botId = conn.data.botId;
+    if (botId && !this.botHasOtherConnection(conn, botId)) {
+      void this.setBotPresence(botId, false);
+    }
+  }
+
+  private botHasOtherConnection(except: Conn, botId: string): boolean {
+    for (const c of this.connections) {
+      if (c !== except && c.data.botId === botId) return true;
+    }
+    return false;
+  }
+
+  /**
+   * Reflect a bot's gateway connection state into its presence so it shows as
+   * online in member lists (a user is "online" only while status is online AND
+   * presenceLastHeartbeatAt is fresh). Refreshed on every heartbeat. Best-effort.
+   */
+  private async setBotPresence(botId: string, online: boolean) {
+    try {
+      await User.updateById(
+        botId,
+        online
+          ? { status: 'online', presenceLastHeartbeatAt: new Date(), presenceLastDisconnectAt: null }
+          : { status: 'offline', presenceLastDisconnectAt: new Date() },
+      );
+    } catch (err) {
+      gwlog('presence update failed for', botId, (err as Error)?.message);
+    }
   }
 
   private async identify(conn: Conn, d: Record<string, unknown>, opts?: { resumed?: boolean }) {
@@ -181,7 +214,7 @@ export class GatewayHub {
     const [botUser, memberships, dmChannels] = await Promise.all([
       User.findById(app.botId),
       ServerMember.find({ userId: app.botId }),
-      Channel.find({ type: { in: ['dm', 'group_dm'] }, recipientIds: app.botId }),
+      Channel.find({ type: { in: ['dm', 'group_dm'] }, recipientId: app.botId }),
     ]);
     if (!botUser) {
       this.send(conn, OP.INVALID_SESSION, false);
@@ -203,6 +236,9 @@ export class GatewayHub {
       conn.data.sessionId.slice(0, 8),
       `${opts?.resumed ? 'RESUMED' : 'READY'} bot=${app.botId} guilds=${guildIds.length} dms=${conn.data.dmChannelIds.size}`,
     );
+
+    // Reflect the connection into presence so the bot shows online.
+    void this.setBotPresence(app.botId, true);
 
     // On resume the caller emits RESUMED; skip the READY payload.
     if (opts?.resumed) return;
