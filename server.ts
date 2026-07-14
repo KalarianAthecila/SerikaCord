@@ -3,8 +3,12 @@
  *
  * Runs the Next.js app AND the Discord-compatible bot Gateway in a SINGLE
  * process on a SINGLE port. Bots connect to wss://<host>/api/v10/gateway; every
- * other request is handled by Next. This is what makes a one-app deploy work on
- * Coolify/Nixpacks (and anywhere else) — no second container, no second repo.
+ * other request is handled by Next.
+ *
+ * Architecture: Bun.serve handles WebSocket upgrades natively and proxies all
+ * HTTP traffic to an internal node:http server running Next.js on 127.0.0.1.
+ * This avoids the Bun + node:http + ws upgrade incompatibility that caused
+ * WebSocket connections to drop with code 1006 immediately after HELLO.
  *
  * Start:  bun server.ts   (package.json "start")
  */
@@ -163,9 +167,17 @@ async function main() {
       }
 
       // ─── Proxy everything else to internal Next.js server ───
-      const target = new URL(req.url, `http://127.0.0.1:${internalPort}`);
-      const proxyReq = new Request(target, req);
-      return fetch(proxyReq);
+      // req.url is absolute in Bun.serve; use only the path+query to route to
+      // the internal loopback server. Original headers (including Host) are
+      // preserved so Next.js sees the real public hostname.
+      const reqUrl = new URL(req.url);
+      const proxyUrl = new URL(`${reqUrl.pathname}${reqUrl.search}`, `http://127.0.0.1:${internalPort}`);
+      const proxyReq = new Request(proxyUrl, {
+        method: req.method,
+        headers: req.headers,
+        body: req.body,
+      });
+      return fetch(proxyReq, { redirect: 'manual' });
     },
     websocket: {
       sendPings: true,
