@@ -5,6 +5,7 @@ import { AppCommand } from '@/lib/models/AppCommand';
 import * as crypto from 'crypto';
 import { config } from '@/lib/config';
 import { isValidObjectId } from '@/lib/security';
+import { normalizeId } from '@/lib/db/normalizeId';
 
 // ─── Bot Auth Helper ───────────────────────────────────────
 
@@ -27,7 +28,7 @@ async function authenticateBot(headers: Record<string, string | undefined>) {
 }
 
 function compareIds(id1: string, id2: string): boolean {
-  return id1 === id2;
+  return normalizeId(id1) === normalizeId(id2);
 }
 
 // Permission bits (mirrors @/lib/permissions/bits).

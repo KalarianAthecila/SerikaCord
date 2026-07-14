@@ -65,12 +65,12 @@ async function getChannelBotIds(channel: {
     const members = await ServerMember.find({ serverId: channel.serverId });
     const memberIds = members.map((m: { userId: string }) => m.userId);
     if (memberIds.length === 0) return [];
-    const bots = await User.find({ id: memberIds, isBot: true });
+    const bots = await User.find({ id: { in: memberIds }, isBot: true });
     return bots.map((u: { id: string }) => u.id);
   }
   const recipientIds = channel.recipientIds ?? [];
   if (recipientIds.length === 0) return [];
-  const bots = await User.find({ id: recipientIds, isBot: true });
+  const bots = await User.find({ id: { in: recipientIds }, isBot: true });
   return bots.map((u: { id: string }) => u.id);
 }
 

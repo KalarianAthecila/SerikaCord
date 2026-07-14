@@ -60,6 +60,10 @@ import {
   UserCog,
   AlertTriangle,
   Zap,
+  BarChart3,
+  Calendar,
+  Bot,
+  RefreshCw,
 } from "lucide-react";
 import { requestNotificationPermission } from "@/lib/services/notificationService";
 import { setUserNotificationSettings } from "@/lib/services/notificationUX";
@@ -105,7 +109,8 @@ type SettingsTab =
   | "admin-experiments"
   | "admin-tts-sounds"
   | "admin-tts-voices"
-  | "admin-translations";
+  | "admin-translations"
+  | "admin-stats";
 
 const statusOptions = [
   { value: "online", label: "Online", color: "#8B5CF6" },
@@ -624,7 +629,13 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     servers: number;
     messages: number;
     banned: number;
+    bots: number;
     newUsersToday: number;
+    newUsersThisWeek: number;
+    messagesToday: number;
+    onlineUsers: number;
+    totalMemberships: number;
+    activeServers: number;
   } | null>(null);
   const [platformSettings, setPlatformSettings] = useState<{
     maintenanceMode: boolean;
@@ -1233,6 +1244,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   };
 
   const fetchAdminStats = async () => {
+    setIsLoadingAdmin(true);
     try {
       const response = await fetch("/api/admin/stats");
       if (response.ok) {
@@ -1241,6 +1253,8 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       }
     } catch (error) {
       console.error("Failed to fetch admin stats:", error);
+    } finally {
+      setIsLoadingAdmin(false);
     }
   };
 
@@ -1507,15 +1521,20 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
 
   // Load admin data when tabs are activated (only for admins/developers)
   useEffect(() => {
-    if (!isStaff) return;
-    if (activeTab === "admin-settings" && !platformSettings) {
-      fetchPlatformSettings();
-      fetchAdminStats();
-    } else if ((activeTab === "admin-experiments" || activeTab === "admin-announcements") && !platformSettings) {
-      fetchPlatformSettings();
-    } else if (activeTab === "admin-logs" && adminLogs.length === 0) {
-      fetchAdminLogs();
+    // Admin-only tab data fetches
+    if (isStaff) {
+      if (activeTab === "admin-settings" && !platformSettings) {
+        fetchPlatformSettings();
+        fetchAdminStats();
+      } else if ((activeTab === "admin-experiments" || activeTab === "admin-announcements") && !platformSettings) {
+        fetchPlatformSettings();
+      } else if (activeTab === "admin-logs" && adminLogs.length === 0) {
+        fetchAdminLogs();
+      } else if (activeTab === "admin-stats") {
+        fetchAdminStats();
+      }
     }
+    // Connections tab — public endpoint, available to all users
     if (activeTab === "connections") {
       fetch("/api/admin/settings/connections")
         .then((r) => r.json())
@@ -1600,6 +1619,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       sections.push({
         title: gt("Admin — Platform"),
         items: [
+          { id: "admin-stats" as SettingsTab, label: gt("Statistics"), icon: BarChart3 },
           { id: "admin-servers" as SettingsTab, label: gt("Server Management"), icon: Database },
           { id: "admin-announcements" as SettingsTab, label: gt("Announcements"), icon: Megaphone },
           { id: "admin-settings" as SettingsTab, label: gt("Platform Settings"), icon: Settings },
@@ -3770,6 +3790,109 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     <div className="bg-[var(--bg-app)] rounded-lg p-8 text-center">
                       <Database className="w-12 h-12 text-[var(--text-muted)] mx-auto mb-3 opacity-50" />
                       <p className="text-[var(--text-muted)]">{gt("Search for servers to view details, toggle partner/discovery status, or take moderation actions.")}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {/* Admin Panel - Statistics */}
+              {activeTab === "admin-stats" && isStaff && (
+                <div>
+                  <h2 className="text-xl font-bold text-white mb-5 flex items-center gap-2">
+                    <BarChart3 className="w-6 h-6 text-[#8B5CF6]" />
+                    {gt("Platform Statistics")}
+                  </h2>
+
+                  {isLoadingAdmin ? (
+                    <div className="flex items-center justify-center py-12">
+                      <Loader size={32} />
+                    </div>
+                  ) : adminStats ? (
+                    <div className="space-y-6">
+                      {/* Primary stats grid */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-[var(--bg-app)] rounded-xl p-5 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Users className="w-4 h-4 text-[#8B5CF6]" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("Total Users")}</span>
+                          </div>
+                          <p className="text-3xl font-bold text-white">{adminStats.users.toLocaleString()}</p>
+                          <p className="text-xs text-green-400 mt-1">+{adminStats.newUsersToday} {gt("today")}</p>
+                        </div>
+                        <div className="bg-[var(--bg-app)] rounded-xl p-5 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Server className="w-4 h-4 text-[#8B5CF6]" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("Total Servers")}</span>
+                          </div>
+                          <p className="text-3xl font-bold text-white">{adminStats.servers.toLocaleString()}</p>
+                          <p className="text-xs text-[var(--text-muted)] mt-1">{adminStats.activeServers} {gt("new (30d)")}</p>
+                        </div>
+                        <div className="bg-[var(--bg-app)] rounded-xl p-5 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-2">
+                            <MessageSquare className="w-4 h-4 text-[#8B5CF6]" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("Total Messages")}</span>
+                          </div>
+                          <p className="text-3xl font-bold text-white">{adminStats.messages.toLocaleString()}</p>
+                          <p className="text-xs text-green-400 mt-1">{adminStats.messagesToday.toLocaleString()} {gt("today")}</p>
+                        </div>
+                        <div className="bg-[var(--bg-app)] rounded-xl p-5 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-2">
+                            <Activity className="w-4 h-4 text-green-400" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("Online Now")}</span>
+                          </div>
+                          <p className="text-3xl font-bold text-green-400">{adminStats.onlineUsers.toLocaleString()}</p>
+                          <p className="text-xs text-[var(--text-muted)] mt-1">{((adminStats.onlineUsers / Math.max(adminStats.users, 1)) * 100).toFixed(1)}% {gt("of users")}</p>
+                        </div>
+                      </div>
+
+                      {/* Secondary stats */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                        <div className="bg-[var(--bg-app)] rounded-lg p-4 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Calendar className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("New This Week")}</span>
+                          </div>
+                          <p className="text-2xl font-bold text-white">{adminStats.newUsersThisWeek.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-[var(--bg-app)] rounded-lg p-4 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Ban className="w-3.5 h-3.5 text-red-400" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("Banned Users")}</span>
+                          </div>
+                          <p className="text-2xl font-bold text-red-400">{adminStats.banned.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-[var(--bg-app)] rounded-lg p-4 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Bot className="w-3.5 h-3.5 text-[#3B82F6]" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("Bot Accounts")}</span>
+                          </div>
+                          <p className="text-2xl font-bold text-[#3B82F6]">{adminStats.bots.toLocaleString()}</p>
+                        </div>
+                        <div className="bg-[var(--bg-app)] rounded-lg p-4 border border-[var(--border-subtle)]">
+                          <div className="flex items-center gap-2 mb-1">
+                            <Users className="w-3.5 h-3.5 text-[var(--text-muted)]" />
+                            <span className="text-xs uppercase font-semibold text-[var(--text-muted)]">{gt("Server Memberships")}</span>
+                          </div>
+                          <p className="text-2xl font-bold text-white">{adminStats.totalMemberships.toLocaleString()}</p>
+                          <p className="text-xs text-[var(--text-muted)] mt-0.5">{gt("across all servers")}</p>
+                        </div>
+                      </div>
+
+                      {/* Refresh button */}
+                      <div className="flex justify-end">
+                        <button
+                          onClick={() => fetchAdminStats()}
+                          className="px-4 py-2 bg-[var(--bg-card)] text-white rounded-lg text-sm hover:bg-[var(--bg-hover)] transition-colors flex items-center gap-2"
+                        >
+                          <RefreshCw className="w-4 h-4" />
+                          {gt("Refresh")}
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="text-center py-12 text-[var(--text-muted)]">
+                      <BarChart3 className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                      <p>{gt("Failed to load statistics")}</p>
                     </div>
                   )}
                 </div>

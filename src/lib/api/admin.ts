@@ -119,10 +119,10 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const skip = (pageNum - 1) * limitNum;
 
     const allUsers = await User.find({});
-    let filtered = allUsers;
+    let filtered = allUsers.filter(u => !u.username?.startsWith('discord-'));
     if (q) {
       const lowerQ = q.toLowerCase();
-      filtered = allUsers.filter(u => 
+      filtered = filtered.filter(u => 
         u.username?.toLowerCase().includes(lowerQ) ||
         u.email?.toLowerCase().includes(lowerQ) ||
         u.displayName?.toLowerCase().includes(lowerQ)
@@ -1328,20 +1328,56 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const allUsers = await User.find({});
     const allServers = await Server.find({});
     const allMessages = await Message.find({});
-    const bannedUsers = allUsers.filter(u => u.isBanned);
+    // Filter out legacy discord- prefixed users (now stored in DiscordUser table)
+    const realUsers = allUsers.filter(u => !u.username?.startsWith('discord-'));
+    const bannedUsers = realUsers.filter(u => u.isBanned);
+    const botUsers = realUsers.filter(u => u.isBot);
 
     // Get today's new users
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayMs = today.getTime();
-    const newUsersToday = allUsers.filter(u => new Date(u.createdAt ?? 0).getTime() >= todayMs).length;
+    const newUsersToday = realUsers.filter(u => new Date(u.createdAt ?? 0).getTime() >= todayMs).length;
+
+    // New users this week
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekMs = weekAgo.getTime();
+    const newUsersThisWeek = realUsers.filter(u => new Date(u.createdAt ?? 0).getTime() >= weekMs).length;
+
+    // Messages today
+    const messagesToday = allMessages.filter(m => new Date(m.createdAt ?? 0).getTime() >= todayMs).length;
+
+    // Online users (presence heartbeat within 5 min)
+    const now = Date.now();
+    const onlineUsers = realUsers.filter(u => {
+      if (u.status === 'offline' || u.status === 'invisible') return false;
+      const hb = u.presenceLastHeartbeatAt;
+      if (!hb) return false;
+      return new Date(hb).getTime() >= now - 5 * 60 * 1000;
+    }).length;
+
+    // Total server members across all servers
+    const allServerMembers = await ServerMember.find({});
+    const totalMemberships = allServerMembers.length;
+
+    // Active servers (created in last 30 days)
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const activeServers = allServers.filter(s => new Date(s.createdAt ?? 0).getTime() >= thirtyDaysAgo.getTime()).length;
 
     return {
-      users: allUsers.length,
+      users: realUsers.length,
       servers: allServers.length,
       messages: allMessages.length,
       banned: bannedUsers.length,
+      bots: botUsers.length,
       newUsersToday,
+      newUsersThisWeek,
+      messagesToday,
+      onlineUsers,
+      totalMemberships,
+      activeServers,
     };
   })
 

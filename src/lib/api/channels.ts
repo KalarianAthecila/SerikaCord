@@ -7,10 +7,11 @@ import { decodeHtmlEntities } from '@/lib/chat/messages';
 import { cache, getPublisher } from '@/lib/db';
 import { config } from '@/lib/config';
 import { randomUUID } from 'crypto';
+import { normalizeId } from '@/lib/db/normalizeId';
 
-// Helper to safely compare IDs
+// Helper to safely compare IDs (normalizes MongoDB ObjectId format to UUID)
 function compareIds(id1: string, id2: string): boolean {
-  return id1 === id2;
+  return normalizeId(id1) === normalizeId(id2);
 }
 
 // Permission bits
@@ -1209,6 +1210,25 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
     const authorMap = new Map(authors.map((a: any) => [a.id, a]));
 
+    // Fetch Discord users for author IDs not found in the User table
+    const missingAuthorIds = authorIds.filter((id) => !authorMap.has(id));
+    if (missingAuthorIds.length > 0) {
+      const { DiscordUser } = await import('@/lib/models/DiscordUser');
+      const discordAuthors = await DiscordUser.findMany(missingAuthorIds);
+      for (const da of discordAuthors) {
+        authorMap.set(da.id, {
+          id: da.id,
+          username: da.username || `discord-${da.discordId}`,
+          displayName: da.displayName,
+          avatar: da.avatar,
+          status: 'offline',
+          isBot: da.isBot,
+          isSystem: false,
+          isDiscord: true,
+        });
+      }
+    }
+
     // Batch fetch referenced messages
     const refIds = Array.from(new Set(messages.map((m: any) => m.referencedMessageId).filter(Boolean))) as string[];
     const refMessages = refIds.length > 0 ? await Message.find({ id: { in: refIds } }) : [];
@@ -1217,6 +1237,24 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const refAuthorIds = Array.from(new Set(refMessages.map((r: any) => r.authorId).filter(Boolean))) as string[];
     const refAuthors = refAuthorIds.length > 0 ? await User.find({ id: { in: refAuthorIds } }) : [];
     const refAuthorMap = new Map(refAuthors.map((a: any) => [a.id, a]));
+    // Fetch Discord users for ref authors not found in User table
+    const missingRefAuthorIds = refAuthorIds.filter((id) => !refAuthorMap.has(id));
+    if (missingRefAuthorIds.length > 0) {
+      const { DiscordUser } = await import('@/lib/models/DiscordUser');
+      const refDiscordAuthors = await DiscordUser.findMany(missingRefAuthorIds);
+      for (const da of refDiscordAuthors) {
+        refAuthorMap.set(da.id, {
+          id: da.id,
+          username: da.username || `discord-${da.discordId}`,
+          displayName: da.displayName,
+          avatar: da.avatar,
+          status: 'offline',
+          isBot: da.isBot,
+          isSystem: false,
+          isDiscord: true,
+        });
+      }
+    }
 
     // Transform for frontend - return array directly and map id
     // Phase 1: Decrypt all message contents in parallel
@@ -1259,7 +1297,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         isSystem: authorData.isSystem,
         isBot: Boolean(authorData.isBot),
         isVerified: Boolean(authorData.isVerified),
-        isDiscord: authorData.username?.startsWith('discord-') || false,
+        isDiscord: (authorData as any).isDiscord || authorData.username?.startsWith('discord-') || false,
       } : null;
 
       const customEmojis = emojiResults[idx].emojis.map(e => ({
@@ -1393,7 +1431,20 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const authorIds = Array.from(new Set(sortedCandidates.map((m: any) => m.authorId).filter(Boolean))) as string[];
     const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
     const authorMap = new Map(authors.map((a: any) => [a.id, a]));
-
+    // Fetch Discord users for authors not found in User table
+    const missingAuthorIds = authorIds.filter((id) => !authorMap.has(id));
+    if (missingAuthorIds.length > 0) {
+      const { DiscordUser } = await import('@/lib/models/DiscordUser');
+      const discordAuthors = await DiscordUser.findMany(missingAuthorIds);
+      for (const da of discordAuthors) {
+        authorMap.set(da.id, {
+          id: da.id,
+          username: da.username || `discord-${da.discordId}`,
+          displayName: da.displayName,
+          avatar: da.avatar,
+        });
+      }
+    }
     const lowered = rawQuery.toLowerCase();
     const results: Array<Record<string, unknown>> = [];
 
@@ -1645,10 +1696,23 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     if (message.referencedMessageId) {
       const reference = await Message.findById(message.referencedMessageId);
       if (reference) {
-        const [refAuthor, refDecrypted] = await Promise.all([
-          reference.authorId ? User.findById(reference.authorId) : Promise.resolve(null),
-          reference.content ? decryptFromStorage(reference.content) : Promise.resolve(''),
-        ]);
+        let refAuthor = reference.authorId ? await User.findById(reference.authorId) : null;
+        // Fall back to DiscordUser if not found in User table
+        if (!refAuthor && reference.authorId) {
+          const { DiscordUser } = await import('@/lib/models/DiscordUser');
+          const da = await DiscordUser.findById(reference.authorId);
+          if (da) {
+            refAuthor = {
+              id: da.id,
+              username: da.username || `discord-${da.discordId}`,
+              displayName: da.displayName,
+              avatar: da.avatar,
+              isBot: da.isBot,
+              isVerified: false,
+            } as any;
+          }
+        }
+        const refDecrypted = reference.content ? await decryptFromStorage(reference.content) : '';
         referencedMessage = {
           id: reference.id,
           content: refDecrypted,
@@ -1808,6 +1872,24 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     const authorIds = Array.from(new Set(pinnedMessages.map((m: any) => m.authorId).filter(Boolean))) as string[];
     const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
     const authorMap = new Map(authors.map((a: any) => [a.id, a]));
+    // Fetch Discord users for authors not found in User table
+    const missingAuthorIds = authorIds.filter((id) => !authorMap.has(id));
+    if (missingAuthorIds.length > 0) {
+      const { DiscordUser } = await import('@/lib/models/DiscordUser');
+      const discordAuthors = await DiscordUser.findMany(missingAuthorIds);
+      for (const da of discordAuthors) {
+        authorMap.set(da.id, {
+          id: da.id,
+          username: da.username || `discord-${da.discordId}`,
+          displayName: da.displayName,
+          avatar: da.avatar,
+          status: 'offline',
+          isBot: da.isBot,
+          isSystem: false,
+          isDiscord: true,
+        });
+      }
+    }
 
     // Batch decrypt + batch parse emojis for pinned messages
     const pinnedContents = await Promise.all(
