@@ -8,7 +8,7 @@ export interface ApplicationData {
   id: string;
   name: string;
   description?: string;
-  icon?: string;
+  icon?: string | null;
   coverImage?: string;
   botId?: string;
   botPublic?: boolean;
@@ -33,6 +33,8 @@ export interface ApplicationData {
   gatewayIntents?: number;
   interactionsEndpointUrl?: string | null;
   publicKey?: string | null;
+  botAvatar?: string | null;
+  botUsername?: string | null;
 }
 
 export function useApplication(appId: string) {
