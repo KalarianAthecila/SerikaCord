@@ -604,7 +604,7 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
 
   if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
   const msg = await Message.findById(params.messageId);
-  if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  if (!msg || msg.channelId !== params.channelId) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   const channel = await Channel.findById(params.channelId);
   const perms = await getBotServerPermissions(channel?.serverId, auth.botUser.id);
@@ -626,7 +626,7 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
 
   if (!isValidObjectId(params.messageId)) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
   const msg = await Message.findById(params.messageId);
-  if (!msg) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
+  if (!msg || msg.channelId !== params.channelId) { set.status = 404; return { code: 10008, message: 'Unknown Message' }; }
 
   const channel = await Channel.findById(params.channelId);
   const perms = await getBotServerPermissions(channel?.serverId, auth.botUser.id);
