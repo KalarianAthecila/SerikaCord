@@ -22,7 +22,16 @@ interface InteractionMeta {
   channelId: string;
   serverId: string | null;
   invokerId: string;
+  /** Command name + invoker, so the client can show "X used /name". */
+  commandName: string;
+  invokerName: string;
   expiresAt: number;
+}
+
+/** Interaction reference attached to a bot response for the "used /cmd" header. */
+interface InteractionRef {
+  name: string;
+  user: { id: string; username: string };
 }
 const interactionStore = new Map<string, InteractionMeta>();
 const INTERACTION_TTL_MS = 15 * 60 * 1000;
@@ -305,20 +314,24 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
         data: { id: cmd.id, name: cmd.name, type: cmd.type ?? 1, options: optionValues },
       };
 
+      const invokerName = message.author?.username ?? '';
       storeInteraction(interactionToken, {
         botId: app.botId,
         channelId: message.channelId,
         serverId: message.serverId ?? null,
         invokerId,
+        commandName: cmd.name,
+        invokerName,
       });
 
       dispatchedAny = true;
+      const interactionRef: InteractionRef = { name: cmd.name, user: { id: invokerId, username: invokerName } };
 
       if (app.interactionsEndpointUrl) {
         // HTTP interactions endpoint (Discord-style signed webhook).
         const result = await postSignedInteraction(app, interaction);
         if (result && result.ok && result.body?.type === CB_CHANNEL_MESSAGE && result.body.data) {
-          await sendBotResponse(app.botId, message.channelId, message.serverId ?? null, result.body.data, invokerId);
+          await sendBotResponse(app.botId, message.channelId, message.serverId ?? null, result.body.data, invokerId, interactionRef);
         }
         void CB_DEFERRED_CHANNEL_MESSAGE; // deferred: bot follows up via the callback endpoint
       } else {
@@ -360,6 +373,7 @@ async function sendBotResponse(
   serverId: string | null,
   data: { content?: string; embeds?: unknown[]; flags?: number },
   invokerId?: string,
+  interactionRef?: InteractionRef,
 ) {
   if (!data.content && !(data.embeds && data.embeds.length)) return;
 
@@ -390,6 +404,7 @@ async function sendBotResponse(
       embeds: data.embeds ?? [],
       type: 'default',
       ephemeral: true,
+      interaction: interactionRef,
     };
 
     try {
@@ -424,6 +439,7 @@ async function sendBotResponse(
     attachments: [],
     embeds: data.embeds ?? [],
     type: 'default',
+    interaction: interactionRef,
   };
 
   try {
@@ -453,6 +469,10 @@ export async function handleInteractionCallback(
     return { ok: true };
   }
 
-  await sendBotResponse(meta.botId, meta.channelId, meta.serverId, data, meta.invokerId);
+  const interactionRef: InteractionRef = {
+    name: meta.commandName,
+    user: { id: meta.invokerId, username: meta.invokerName },
+  };
+  await sendBotResponse(meta.botId, meta.channelId, meta.serverId, data, meta.invokerId, interactionRef);
   return { ok: true };
 }

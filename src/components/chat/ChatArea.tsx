@@ -556,27 +556,31 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           });
           await chat.sendMessage({ contentOverride: `/tts ${result.ttsText}` });
         } else if (result.sendAsMessage) {
-          // Built-in commands like /me, /shrug, /8ball, /roll respond
-          // ephemerally — only the invoking user sees the output.
           composer?.clear();
-          chat.resetTyping();
-          chat.addEphemeralMessage({
-            id: `eph-local-${Date.now()}`,
-            content: result.sendAsMessage,
-            authorId: user?.id,
-            author: user
-              ? {
-                  id: user.id,
-                  username: user.username,
-                  displayName: user.displayName || user.username,
-                  avatar: user.avatar,
-                }
-              : null,
-            channelId: currentChannel?.id,
-            createdAt: new Date().toISOString(),
-            ephemeral: true,
-            type: "default",
-          });
+          if (result.ephemeral) {
+            // Ephemeral built-ins (/roll, /8ball) — only the invoker sees them.
+            chat.resetTyping();
+            chat.addEphemeralMessage({
+              id: `eph-local-${Date.now()}`,
+              content: result.sendAsMessage,
+              authorId: user?.id,
+              author: user
+                ? {
+                    id: user.id,
+                    username: user.username,
+                    displayName: user.displayName || user.username,
+                    avatar: user.avatar,
+                  }
+                : null,
+              channelId: currentChannel?.id,
+              createdAt: new Date().toISOString(),
+              ephemeral: true,
+              type: "default",
+            });
+          } else {
+            // Public built-ins (/me, /shrug) — sent as a normal message.
+            await chat.sendMessage({ contentOverride: result.sendAsMessage });
+          }
         } else {
           composer?.clear();
           chat.resetTyping();
