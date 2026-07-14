@@ -294,6 +294,12 @@ function MessageGroupInner<M extends ChatMessage>({
                       </div>
                     )}
 
+                    {message.ephemeral && (
+                      <div className="mt-1 text-[11px] text-[var(--app-muted)] inline-flex items-center gap-1">
+                        {gt("Only you can see this")}
+                      </div>
+                    )}
+
                     <LinkEmbed
                       content={message.content}
                       onMediaClick={(src, alt) => onMediaClick(src, alt, message.id)}

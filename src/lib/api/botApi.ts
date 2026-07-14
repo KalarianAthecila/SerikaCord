@@ -518,9 +518,35 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   const formattedMsg = populated ? formatMessage({ ...populated, authorId: author || populated.authorId }) : null;
 
   // Deliver to the web client SSE streams and the bot gateway.
+  // The SSE client expects internal format (createdAt, authorId, channelId)
+  // — NOT Discord format (timestamp, channel_id) — so build it from the raw row.
   try {
     const { publishToChannel } = await import('@/lib/api/channels');
-    publishToChannel(params.channelId, { type: 'message', message: formattedMsg });
+    publishToChannel(params.channelId, {
+      type: 'message',
+      message: {
+        id: msg.id,
+        content: msg.content ?? '',
+        authorId: auth.botUser.id,
+        author: author ? {
+          id: author.id,
+          username: author.username,
+          displayName: author.displayName ?? undefined,
+          avatar: author.avatar,
+          isBot: author.isBot ?? undefined,
+          isSystem: author.isSystem ?? undefined,
+        } : null,
+        channelId: params.channelId,
+        serverId: channel.serverId ?? null,
+        createdAt: (populated as any)?.createdAt ?? msg.createdAt ?? new Date(),
+        attachments: (msg.attachments ?? []) as any,
+        embeds: msg.embeds ?? [],
+        edited: false,
+        pinned: false,
+        reactions: [],
+        type: 'default',
+      },
+    });
   } catch {}
   try {
     const { emitMessageCreate } = await import('@/lib/services/gatewayEvents');
@@ -821,7 +847,12 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   }));
 })
 .post('/interactions/:interactionId/:interactionToken/callback', async ({ params, body, set }) => {
-  // Interaction callback — no auth needed, token in URL
+  const { handleInteractionCallback } = await import('@/lib/services/interactions');
+  const result = await handleInteractionCallback(params.interactionToken, body as any);
+  if (!result.ok) {
+    set.status = 404;
+    return { code: 10062, message: 'Interaction token not found or expired' };
+  }
   set.status = 204;
   return '';
 })
@@ -1260,6 +1291,18 @@ export const botApiRoutes = new Elysia({ prefix: '/v10' })
   if (!auth) { set.status = 401; return { code: 0, message: '401: Unauthorized' }; }
 
   await ChannelWebhook.deleteById(params.webhookId);
+  set.status = 204;
+  return '';
+})
+// Interaction followup: Discord-style POST /webhooks/:appId/:interactionToken
+// Used by bots that deferred their response (type 5) to send a followup message.
+.post('/webhooks/:applicationId/:interactionToken', async ({ params, body, set }) => {
+  const { handleInteractionCallback } = await import('@/lib/services/interactions');
+  const result = await handleInteractionCallback(params.interactionToken, { data: body as any });
+  if (!result.ok) {
+    set.status = 404;
+    return { code: 10062, message: 'Interaction token not found or expired' };
+  }
   set.status = 204;
   return '';
 })

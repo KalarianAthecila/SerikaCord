@@ -12,6 +12,35 @@ const CB_PONG = 1;
 const CB_CHANNEL_MESSAGE = 4;
 const CB_DEFERRED_CHANNEL_MESSAGE = 5;
 
+// Message flags
+const FLAG_EPHEMERAL = 64;
+
+// In-memory store of interaction metadata for followup callbacks.
+// Keyed by interaction token. Entry expires after 15 minutes.
+interface InteractionMeta {
+  botId: string;
+  channelId: string;
+  serverId: string | null;
+  invokerId: string;
+  expiresAt: number;
+}
+const interactionStore = new Map<string, InteractionMeta>();
+const INTERACTION_TTL_MS = 15 * 60 * 1000;
+
+function storeInteraction(token: string, meta: Omit<InteractionMeta, 'expiresAt'>) {
+  interactionStore.set(token, { ...meta, expiresAt: Date.now() + INTERACTION_TTL_MS });
+}
+
+function getInteraction(token: string): InteractionMeta | null {
+  const meta = interactionStore.get(token);
+  if (!meta) return null;
+  if (Date.now() > meta.expiresAt) {
+    interactionStore.delete(token);
+    return null;
+  }
+  return meta;
+}
+
 /** Split a command string into tokens, keeping `"quoted values"` together. */
 function tokenize(input: string): string[] {
   const tokens: string[] = [];
@@ -234,11 +263,14 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
     ? { user: { id: message.author.id, username: message.author.username ?? '' }, roles: [] }
     : undefined;
 
+  const interactionToken = `${message.id}.${Math.random().toString(36).slice(2)}`;
+  const invokerId = message.author?.id ?? '';
+
   const interaction = {
     id: crypto.randomUUID(),
     application_id: app.clientId,
     type: INTERACTION_APPLICATION_COMMAND,
-    token: `${message.id}.${Math.random().toString(36).slice(2)}`,
+    token: interactionToken,
     version: 1,
     channel_id: message.channelId,
     guild_id: guildId ?? undefined,
@@ -252,12 +284,20 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
     },
   };
 
+  // Store metadata so the bot can send followup messages via the callback endpoint.
+  storeInteraction(interactionToken, {
+    botId: app.botId,
+    channelId: message.channelId,
+    serverId: message.serverId ?? null,
+    invokerId,
+  });
+
   const result = await postSignedInteraction(app, interaction);
   if (!result || !result.ok || !result.body) return;
 
   const cb = result.body;
   if (cb.type === CB_CHANNEL_MESSAGE && cb.data) {
-    await sendBotResponse(app.botId, message.channelId, message.serverId ?? null, cb.data);
+    await sendBotResponse(app.botId, message.channelId, message.serverId ?? null, cb.data, invokerId);
   }
   // CB_DEFERRED_CHANNEL_MESSAGE: bot will follow up via REST; nothing to do here.
   void CB_DEFERRED_CHANNEL_MESSAGE;
@@ -269,9 +309,51 @@ async function sendBotResponse(
   channelId: string,
   serverId: string | null,
   data: { content?: string; embeds?: unknown[]; flags?: number },
+  invokerId?: string,
 ) {
   if (!data.content && !(data.embeds && data.embeds.length)) return;
 
+  const isEphemeral = (data.flags ?? 0) & FLAG_EPHEMERAL;
+
+  const botUser = await User.findById(botId);
+  const authorObj = botUser ? {
+    id: botId,
+    username: (botUser as any).username,
+    displayName: (botUser as any).displayName || (botUser as any).username,
+    avatar: (botUser as any).avatar,
+    isBot: true,
+  } : null;
+
+  if (isEphemeral && invokerId) {
+    // Ephemeral messages are NOT persisted — they exist only in the SSE stream
+    // for the invoking user. Use a synthetic ID so the client can track it.
+    const ephemeralId = `eph_${crypto.randomUUID()}`;
+    const messageResponse = {
+      id: ephemeralId,
+      content: data.content ?? '',
+      authorId: botId,
+      author: authorObj,
+      channelId,
+      serverId: serverId ?? undefined,
+      createdAt: new Date().toISOString(),
+      attachments: [],
+      embeds: data.embeds ?? [],
+      type: 'default',
+      ephemeral: true,
+    };
+
+    try {
+      const { publishToChannel } = await import('@/lib/api/channels');
+      publishToChannel(channelId, {
+        type: 'ephemeral',
+        userId: invokerId,
+        message: messageResponse,
+      });
+    } catch {}
+    return;
+  }
+
+  // Normal (non-ephemeral) response: persist to DB and broadcast.
   const msg = await Message.create({
     channelId,
     serverId: serverId || null,
@@ -281,24 +363,17 @@ async function sendBotResponse(
     type: 'default',
   });
 
-  const botUser = await User.findById(botId);
   const messageResponse = {
     id: msg.id,
     content: msg.content,
     authorId: botId,
-    author: botUser ? {
-      id: botId,
-      username: (botUser as any).username,
-      displayName: (botUser as any).displayName || (botUser as any).username,
-      avatar: (botUser as any).avatar,
-      isBot: true,
-    } : null,
+    author: authorObj,
     channelId,
     serverId: serverId ?? undefined,
     createdAt: msg.createdAt,
     attachments: [],
     embeds: data.embeds ?? [],
-    type: 0,
+    type: 'default',
   };
 
   try {
@@ -309,4 +384,25 @@ async function sendBotResponse(
     const { emitMessageCreate } = await import('@/lib/services/gatewayEvents');
     await emitMessageCreate(messageResponse as never);
   } catch {}
+}
+
+/**
+ * Handle a followup callback from the bot's interaction callback endpoint.
+ * Looks up stored interaction metadata by token and creates a message.
+ * Returns the created message ID, or null if the token is unknown / no content.
+ */
+export async function handleInteractionCallback(
+  interactionToken: string,
+  body: { type?: number; data?: { content?: string; embeds?: unknown[]; flags?: number } },
+): Promise<{ ok: boolean; messageId?: string }> {
+  const meta = getInteraction(interactionToken);
+  if (!meta) return { ok: false };
+
+  const data = body.data;
+  if (!data || (!data.content && !(data.embeds && data.embeds.length))) {
+    return { ok: true };
+  }
+
+  await sendBotResponse(meta.botId, meta.channelId, meta.serverId, data, meta.invokerId);
+  return { ok: true };
 }

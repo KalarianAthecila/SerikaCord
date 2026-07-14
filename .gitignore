@@ -69,3 +69,6 @@ docker-compose.override.yml
 
 # Example bot (local testing only)
 /example-bot/
+
+# Code Libaries for the SerikaCord API
+/packages-api
