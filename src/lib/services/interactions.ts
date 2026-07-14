@@ -256,9 +256,11 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
   if (!cmd) return false;
 
   const app = await Application.findById(cmd.applicationId);
-  // Recognized command but the bot can't be reached — still consume it so the
-  // raw "/command" text is never posted publicly.
-  if (!app || !app.interactionsEndpointUrl || !app.botId) return true;
+  // No HTTP interactions endpoint → we can't do a clean interaction round-trip.
+  // Return false so the caller still persists the message: that fires a
+  // MESSAGE_CREATE gateway event, letting bots that handle commands over the
+  // gateway see and respond to it. (Better a visible "/command" than silence.)
+  if (!app || !app.interactionsEndpointUrl || !app.botId) return false;
 
   // Resolve trailing tokens against the declared option tree: subcommands,
   // subcommand groups, and named/positional typed leaf options.

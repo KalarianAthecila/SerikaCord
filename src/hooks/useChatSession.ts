@@ -703,12 +703,19 @@ export function useChatSession<M extends ChatMessage>({
 
         if (response.ok) {
           const payload = await response.json().catch(() => null);
-          const raw = payload?.message || payload;
-          if (raw && (raw.id || raw._id)) {
-            const confirmed = normalizeIncomingMessage<M>(raw);
-            setMessages((prev) =>
-              prev.map((m) => (m.id === tempId ? { ...m, ...confirmed, pending: false } : m))
-            );
+          if (payload?.interaction) {
+            // The content was a bot slash command dispatched as an interaction —
+            // nothing to render here; the bot's reply arrives over SSE. Drop the
+            // optimistic "/command" bubble.
+            setMessages((prev) => prev.filter((m) => m.id !== tempId));
+          } else {
+            const raw = payload?.message || payload;
+            if (raw && (raw.id || raw._id)) {
+              const confirmed = normalizeIncomingMessage<M>(raw);
+              setMessages((prev) =>
+                prev.map((m) => (m.id === tempId ? { ...m, ...confirmed, pending: false } : m))
+              );
+            }
           }
         } else {
           const data = await response.json().catch(() => null);
