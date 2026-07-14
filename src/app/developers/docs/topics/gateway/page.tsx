@@ -25,6 +25,12 @@ export default async function GatewayDoc() {
       <P>{gt("You can also retrieve it dynamically via REST:")}</P>
       <CodeBlock lang="bash">{`GET https://api.serika.chat/api/v10/gateway
 # Response: { "url": "wss://api.serika.chat/api/v10/gateway" }`}</CodeBlock>
+      <Callout type="info" title={gt("Canary environment")}>
+        {gt("The canary/staging deployment is served from")} <InlineCode>capi.serika.dev</InlineCode>{gt(". Use")}{" "}
+        <InlineCode>wss://capi.serika.dev/api/v10/gateway</InlineCode> {gt("for the gateway and")}{" "}
+        <InlineCode>https://capi.serika.dev/api/v10</InlineCode> {gt("for REST when targeting canary. Always prefer the")}{" "}
+        <InlineCode>url</InlineCode> {gt("returned by")} <InlineCode>GET /gateway</InlineCode> {gt("on the environment you connected to, rather than hardcoding a host.")}
+      </Callout>
 
       <H2 id="connection-flow">{gt("Connection Flow")}</H2>
       <P>{gt("After opening the WebSocket, follow this sequence:")}</P>
@@ -227,7 +233,7 @@ export default async function GatewayDoc() {
         <InlineCode>1006</InlineCode> {gt("means an intermediary (reverse proxy, CDN, or firewall) severed the TCP connection.")}
       </P>
       <UL>
-        <li><Strong>{gt("Cloudflare / CDN:")}</Strong> {gt("ensure WebSockets are enabled, and that bot-mitigation features (Bot Fight Mode / Super Bot Fight Mode, \"Under Attack\" mode, or a WAF managed rule) are not terminating the non-browser WebSocket. Add a WAF skip/allow rule for the Gateway path.")}</li>
+        <li><Strong>{gt("Cloudflare / CDN:")}</Strong> {gt("ensure WebSockets are enabled, and that bot-mitigation features (Bot Fight Mode / Super Bot Fight Mode, \"Under Attack\" mode, or a WAF managed rule) are not terminating the non-browser WebSocket. Add a WAF skip/allow rule for the Gateway path on every environment host, e.g.")} <InlineCode>{`starts_with(http.request.uri.path, "/api/v10/gateway")`}</InlineCode> {gt("(covers both")} <InlineCode>api.serika.chat</InlineCode> {gt("and the canary host")} <InlineCode>capi.serika.dev</InlineCode>{gt(").")}</li>
         <li><Strong>{gt("Reverse proxy (nginx/Traefik):")}</Strong> {gt("forward the")} <InlineCode>Upgrade</InlineCode> {gt("and")} <InlineCode>Connection: upgrade</InlineCode> {gt("headers, use HTTP/1.1 to the origin, and set a long read/idle timeout. Do not apply request/connection rate limiting to the Gateway route.")}</li>
         <li><Strong>{gt("Isolate the layer:")}</Strong> {gt("connect directly to the origin (bypassing the CDN) — if it stays up, the CDN/edge is the cause.")}</li>
       </UL>
