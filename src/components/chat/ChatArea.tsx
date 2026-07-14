@@ -556,20 +556,64 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           });
           await chat.sendMessage({ contentOverride: `/tts ${result.ttsText}` });
         } else if (result.sendAsMessage) {
-          // Commands like /me, /shrug, /8ball, /roll produce a message
+          // Built-in commands like /me, /shrug, /8ball, /roll respond
+          // ephemerally — only the invoking user sees the output.
           composer?.clear();
-          await chat.sendMessage({ contentOverride: result.sendAsMessage });
+          chat.resetTyping();
+          chat.addEphemeralMessage({
+            id: `eph-local-${Date.now()}`,
+            content: result.sendAsMessage,
+            authorId: user?.id,
+            author: user
+              ? {
+                  id: user.id,
+                  username: user.username,
+                  displayName: user.displayName || user.username,
+                  avatar: user.avatar,
+                }
+              : null,
+            channelId: currentChannel?.id,
+            createdAt: new Date().toISOString(),
+            ephemeral: true,
+            type: "default",
+          });
         } else {
           composer?.clear();
           chat.resetTyping();
         }
         return;
       }
+
+      // Custom (bot) application commands: invoke the interaction instead of
+      // posting the raw "/command" text as a message. The bot's reply (or an
+      // ephemeral response) arrives over the channel SSE stream.
+      if (appLeaves.length > 0 && currentChannel) {
+        const invocation = trimmed.slice(1).toLowerCase();
+        const isAppCommand = appLeaves.some(
+          (l) =>
+            invocation === l.fullName.toLowerCase() ||
+            invocation.startsWith(l.fullName.toLowerCase() + " "),
+        );
+        if (isAppCommand) {
+          composer?.clear();
+          chat.resetTyping();
+          try {
+            await fetch(`/api/channels/${currentChannel.id}/interactions`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content: trimmed }),
+            });
+          } catch {
+            /* interaction dispatch is best-effort */
+          }
+          return;
+        }
+      }
     }
 
     // Normal send
     void chat.sendMessage();
-  }, [executeCommand, chat, user?.settings?.accessibility?.ttsRate, user?.settings?.accessibility?.ttsVoice]);
+  }, [executeCommand, chat, appLeaves, currentChannel, user?.settings?.accessibility?.ttsRate, user?.settings?.accessibility?.ttsVoice]);
 
   const lightbox = useMediaLightbox(chat.mediaGallery);
 

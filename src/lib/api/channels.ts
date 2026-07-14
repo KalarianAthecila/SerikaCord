@@ -722,6 +722,46 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       channelId: t.String(),
     }),
   })
+  // Invoke a bot slash (application) command. The composer routes app-command
+  // sends here instead of posting them as messages, so the raw "/command" text
+  // never appears in the channel. The bot's response (or ephemeral reply)
+  // arrives over the normal channel SSE stream.
+  .post('/:channelId/interactions', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+    const { hasAccess, channel, error } = await checkChannelAccess(user.id, params.channelId);
+    if (!hasAccess || !channel) {
+      set.status = 403;
+      return { error: error || 'Access denied' };
+    }
+    const content = String((body as { content?: string }).content ?? '').trim();
+    if (!content.startsWith('/')) {
+      set.status = 400;
+      return { error: 'Not a command invocation' };
+    }
+    const { dispatchSlashCommand } = await import('@/lib/services/interactions');
+    const consumed = await dispatchSlashCommand({
+      content,
+      channelId: params.channelId,
+      serverId: channel.serverId ?? null,
+      author: { id: user.id, username: user.username ?? undefined, displayName: user.displayName ?? undefined },
+    });
+    if (!consumed) {
+      set.status = 404;
+      return { error: 'Unknown command' };
+    }
+    return { ok: true };
+  }, {
+    params: t.Object({
+      channelId: t.String(),
+    }),
+    body: t.Object({
+      content: t.String({ maxLength: 4000 }),
+    }),
+  })
   // Update channel
   .patch('/:channelId', async ({ headers, cookie, params, body, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);

@@ -127,8 +127,25 @@ export default function DMConversationPage() {
           });
           await chat.sendMessage({ contentOverride: `/tts ${result.ttsText}` });
         } else if (result.sendAsMessage) {
+          // Built-in commands respond ephemerally — only the sender sees them.
           composer?.clear();
-          await chat.sendMessage({ contentOverride: result.sendAsMessage });
+          chat.resetTyping();
+          chat.addEphemeralMessage({
+            id: `eph-local-${Date.now()}`,
+            content: result.sendAsMessage,
+            authorId: user?.id,
+            author: user
+              ? {
+                  id: user.id,
+                  username: user.username,
+                  displayName: user.displayName || user.username,
+                  avatar: user.avatar,
+                }
+              : null,
+            createdAt: new Date().toISOString(),
+            ephemeral: true,
+            type: "default",
+          });
         } else {
           composer?.clear();
           chat.resetTyping();

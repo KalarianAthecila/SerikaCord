@@ -228,31 +228,37 @@ export async function verifyInteractionEndpoint(app: {
 
 /**
  * If a user message is a slash-command invocation (`/name ...`) that maps to a
- * registered application command with an HTTP interactions endpoint, build and
- * dispatch an APPLICATION_COMMAND interaction, then apply the bot's response.
+ * registered application command, build and dispatch an APPLICATION_COMMAND
+ * interaction, then apply the bot's response.
+ *
+ * Returns `true` when the content was a *recognized* application command (so the
+ * caller should treat it as consumed and NOT post it as a plain message), and
+ * `false` when it isn't a command at all.
  */
-export async function maybeDispatchSlashInteraction(message: InternalMessageLike) {
+export async function maybeDispatchSlashInteraction(message: InternalMessageLike): Promise<boolean> {
   const content = (message.content ?? '').trim();
-  if (!content.startsWith('/')) return;
+  if (!content.startsWith('/')) return false;
 
   const tokens = tokenize(content.slice(1));
   const rawName = tokens.shift();
   const name = rawName?.toLowerCase();
-  if (!name) return;
+  if (!name) return false;
 
   // Prefer a guild-scoped command, then a global one.
   const query: Record<string, unknown> = { name };
   const cmds = await AppCommand.find(query);
-  if (!cmds.length) return;
+  if (!cmds.length) return false;
 
   const guildId = message.serverId ?? null;
   const cmd =
     cmds.find((c: any) => c.guildId && guildId && c.guildId === guildId) ??
     cmds.find((c: any) => !c.guildId);
-  if (!cmd) return;
+  if (!cmd) return false;
 
   const app = await Application.findById(cmd.applicationId);
-  if (!app || !app.interactionsEndpointUrl || !app.botId) return;
+  // Recognized command but the bot can't be reached — still consume it so the
+  // raw "/command" text is never posted publicly.
+  if (!app || !app.interactionsEndpointUrl || !app.botId) return true;
 
   // Resolve trailing tokens against the declared option tree: subcommands,
   // subcommand groups, and named/positional typed leaf options.
@@ -293,7 +299,7 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
   });
 
   const result = await postSignedInteraction(app, interaction);
-  if (!result || !result.ok || !result.body) return;
+  if (!result || !result.ok || !result.body) return true;
 
   const cb = result.body;
   if (cb.type === CB_CHANNEL_MESSAGE && cb.data) {
@@ -301,6 +307,27 @@ export async function maybeDispatchSlashInteraction(message: InternalMessageLike
   }
   // CB_DEFERRED_CHANNEL_MESSAGE: bot will follow up via REST; nothing to do here.
   void CB_DEFERRED_CHANNEL_MESSAGE;
+  return true;
+}
+
+/**
+ * Dispatch a slash-command invocation that has NOT been persisted as a message
+ * (the composer routes app-command sends here so the raw `/command` text is
+ * never posted). Returns true when the content was a recognized command.
+ */
+export async function dispatchSlashCommand(input: {
+  content: string;
+  channelId: string;
+  serverId: string | null;
+  author: { id: string; username?: string; displayName?: string } | null;
+}): Promise<boolean> {
+  return maybeDispatchSlashInteraction({
+    id: crypto.randomUUID(),
+    content: input.content,
+    channelId: input.channelId,
+    serverId: input.serverId,
+    author: input.author,
+  });
 }
 
 /** Create a message authored by the bot in response to an interaction. */
