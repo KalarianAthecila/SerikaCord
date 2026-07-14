@@ -426,6 +426,7 @@ async function sendBotResponse(
     content: data.content ?? '',
     embeds: data.embeds ?? [],
     type: 'default',
+    interaction: interactionRef ?? null,
   });
 
   const messageResponse = {

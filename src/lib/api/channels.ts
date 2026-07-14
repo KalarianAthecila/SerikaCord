@@ -1419,6 +1419,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         mentionedChannelIds: msg.mentionedChannelIds || [],
         customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
         sticker: msg.sticker || undefined,
+        interaction: (msg as any).interaction ?? undefined,
       };
     });
 
