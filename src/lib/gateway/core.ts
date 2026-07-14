@@ -181,7 +181,7 @@ export class GatewayHub {
     const [botUser, memberships, dmChannels] = await Promise.all([
       User.findById(app.botId),
       ServerMember.find({ userId: app.botId }),
-      Channel.find({ type: { in: ['dm', 'group_dm'] }, recipientIds: app.botId }),
+      Channel.find({ type: { in: ['dm', 'group_dm'] }, recipientId: app.botId }),
     ]);
     if (!botUser) {
       this.send(conn, OP.INVALID_SESSION, false);
