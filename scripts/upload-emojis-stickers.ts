@@ -32,9 +32,9 @@ async function uploadStickerGif(data: Buffer, contentType: string, filename: str
   return `${config.CDN_URL}/${key}`;
 }
 
-const SERVER_ID = '1f3c10d9-bf64-44ae-83a6-1583dc11003a';
-const EMOJI_DIR = '/home/pikachubolk/Documents/servers-jsons/1101377723932360734_emojis';
-const STICKER_DIR = '/home/pikachubolk/Documents/servers-jsons/1101377723932360734_stickers';
+const SERVER_ID = '0676a314-045d-43c6-8800-b4dd4bfd3fc3';
+const EMOJI_DIR = '/home/pikachubolk/Documents/servers-jsons/865372252433940500_emojis';
+const STICKER_DIR = '/home/pikachubolk/Documents/servers-jsons/865372252433940500_stickers';
 
 const MIME_MAP: Record<string, string> = {
   '.png': 'image/png',
