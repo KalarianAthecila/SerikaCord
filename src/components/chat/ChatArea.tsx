@@ -24,7 +24,7 @@ import {
   ChevronLeft, 
   Megaphone,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, getTimeoutRemaining } from "@/lib/utils";
 import { toast } from "sonner";
 import { MessageBar, type MessageBarHandle } from "@/components/chat/MessageBar";
 import { MessageList, type MessageListHandle } from "@/components/chat/MessageList";
@@ -363,6 +363,13 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     return (self?.roles || []).map((r) => r.id);
   }, [members, user?.id]);
 
+  // Server-only: if the signed-in user is timed out, block the composer.
+  const selfTimeout = useMemo(() => {
+    if (!currentServer) return { active: false, label: "" };
+    const self = (members as Array<{ id: string; communicationDisabledUntil?: string | null }>).find((m) => m.id === user?.id);
+    return getTimeoutRemaining(self?.communicationDisabledUntil);
+  }, [members, user?.id, currentServer]);
+
   const emojiLookup = useMemo(
     () => [...serverEmojis, ...allServerEmojis],
     [serverEmojis, allServerEmojis]
@@ -536,6 +543,12 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   });
 
   const handleSend = useCallback(async () => {
+    // Block sending while the current user is timed out in this server.
+    if (currentServer) {
+      const self = (members as Array<{ id: string; communicationDisabledUntil?: string | null }>).find((m) => m.id === user?.id);
+      if (getTimeoutRemaining(self?.communicationDisabledUntil).active) return;
+    }
+
     const composer = messageBarRef.current?.getComposer();
     const rawContent = composer?.getText() ?? "";
     const trimmed = rawContent.trim();
@@ -593,7 +606,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     // the message endpoint dispatches the interaction and returns without
     // persisting the raw "/command" text (see sendMessage reconciliation).
     void chat.sendMessage();
-  }, [executeCommand, chat, user?.settings?.accessibility?.ttsRate, user?.settings?.accessibility?.ttsVoice]);
+  }, [executeCommand, chat, user?.settings?.accessibility?.ttsRate, user?.settings?.accessibility?.ttsVoice, currentServer, members, user?.id]);
 
   const lightbox = useMediaLightbox(chat.mediaGallery);
 
@@ -1496,8 +1509,17 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
 
       <MessageBar
         ref={messageBarRef}
-        placeholder={`${gt("Message")} #${currentChannel?.name ?? ""}`}
-        ariaLabel={`${gt("Message")} #${currentChannel?.name ?? ""}`}
+        disabled={selfTimeout.active}
+        placeholder={
+          selfTimeout.active
+            ? gt("You're timed out — {time} remaining", { time: selfTimeout.label })
+            : `${gt("Message")} #${currentChannel?.name ?? ""}`
+        }
+        ariaLabel={
+          selfTimeout.active
+            ? gt("You're timed out — {time} remaining", { time: selfTimeout.label })
+            : `${gt("Message")} #${currentChannel?.name ?? ""}`
+        }
         onSend={() => void handleSend()}
         onChange={handleComposerChange}
         onKeyDown={handleKeyDown}
