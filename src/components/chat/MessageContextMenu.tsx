@@ -1,5 +1,6 @@
 "use client";
 
+import { useLayoutEffect, useRef, useState } from "react";
 import { Copy, Pencil, Pin, Reply, Smile, Trash2 } from "lucide-react";
 import { useGT } from "gt-next";
 import type { ChatMessage } from "@/lib/chat/types";
@@ -39,6 +40,46 @@ export function MessageContextMenu<M extends ChatMessage>({
   onDelete,
 }: MessageContextMenuProps<M>) {
   const gt = useGT();
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [pos, setPos] = useState<{ left: number; top: number } | null>(null);
+
+  useLayoutEffect(() => {
+    if (!menu || !menuRef.current) return;
+
+    const el = menuRef.current;
+    const rect = el.getBoundingClientRect();
+    const menuWidth = rect.width;
+    const menuHeight = rect.height;
+    const padding = 8;
+    const messageBarHeight = 70;
+
+    let left = menu.x;
+    let top = menu.y;
+
+    // Flip horizontally if too close to right edge — open leftward instead
+    if (left + menuWidth > window.innerWidth - padding) {
+      left = menu.x - menuWidth;
+    }
+    // Clamp to viewport
+    if (left < padding) left = padding;
+    if (left + menuWidth > window.innerWidth - padding) {
+      left = window.innerWidth - menuWidth - padding;
+    }
+
+    // Flip vertically if too close to bottom edge — open upward instead
+    const bottomLimit = window.innerHeight - messageBarHeight - padding;
+    if (top + menuHeight > bottomLimit) {
+      top = menu.y - menuHeight;
+    }
+    // Clamp to viewport
+    if (top < padding) top = padding;
+    if (top + menuHeight > bottomLimit) {
+      top = bottomLimit - menuHeight;
+    }
+
+    setPos({ left, top });
+  }, [menu]);
+
   if (!menu) return null;
 
   const { message } = menu;
@@ -49,37 +90,11 @@ export function MessageContextMenu<M extends ChatMessage>({
     onClose();
   };
 
-  // Calculate position to avoid being cut off by message bar
-  const menuHeight = 300;
-  const menuWidth = 200;
-  const padding = 10;
-  const messageBarHeight = 80; // Approximate height of message bar area
-  
-  let left = menu.x;
-  let top = menu.y;
-
-  if (typeof window !== "undefined") {
-    // Flip horizontally if too close to right edge
-    if (left + menuWidth > window.innerWidth - padding) {
-      left = window.innerWidth - menuWidth - padding;
-    }
-    
-    // Flip vertically if too close to bottom edge (account for message bar)
-    const bottomLimit = window.innerHeight - messageBarHeight - padding;
-    if (top + menuHeight > bottomLimit) {
-      top = bottomLimit - menuHeight;
-    }
-    
-    // Ensure menu doesn't go off top
-    if (top < padding) {
-      top = padding;
-    }
-  }
-
   return (
     <div
+      ref={menuRef}
       className="fixed z-[9999] min-w-[180px] py-1 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-md shadow-xl"
-      style={{ left, top }}
+      style={{ left: pos?.left ?? menu.x, top: pos?.top ?? menu.y, visibility: pos ? "visible" : "hidden" }}
       onClick={(e) => e.stopPropagation()}
     >
       <button onClick={run(() => onReply(message))} className={itemClass}>
