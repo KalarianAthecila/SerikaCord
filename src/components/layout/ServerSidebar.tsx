@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus, Compass, MessageSquare, Check, BellOff, Bell, Copy, LogOut,
-  FolderPlus, FolderMinus, Folder as FolderIcon, Pencil, Users,
+  FolderPlus, FolderMinus, Folder as FolderIcon, Pencil, Users, UserPlus,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -31,6 +31,7 @@ import { ServerBadge } from "@/components/ui/badges";
 
 interface ServerSidebarProps {
   onCreateServer: () => void;
+  onInvitePeople?: () => void;
 }
 
 type Server = ReturnType<typeof useServer>["servers"][number];
@@ -70,7 +71,7 @@ function saveDmSeen(map: Record<string, string>) {
   }
 }
 
-export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
+export function ServerSidebar({ onCreateServer, onInvitePeople }: ServerSidebarProps) {
   const gt = useGT();
   const router = useRouter();
   const { servers, currentServer, setCurrentServer, leaveServer, prefetchServer } = useServer();
@@ -463,6 +464,12 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                   </DropdownMenuSub>
                 )}
               </>
+            )}
+            {onInvitePeople && (
+              <DropdownMenuItem onClick={() => { setCurrentServer(server); onInvitePeople(); }}>
+                <UserPlus className="w-4 h-4" />
+                {gt("Invite People")}
+              </DropdownMenuItem>
             )}
             <DropdownMenuItem onClick={() => handleCopyServerId(server.id)}>
               <Copy className="w-4 h-4" />

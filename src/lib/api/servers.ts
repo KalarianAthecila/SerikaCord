@@ -1678,6 +1678,13 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       return { error: 'You are not a member of this server' };
     }
 
+    // If server is locked to vanity URL, only the vanity URL can be used
+    const server = await Server.findById(params.serverId);
+    if (server && (server.settings as any)?.invites?.lockToVanity && server.vanityUrlCode) {
+      set.status = 403;
+      return { error: 'This server only allows invites through its custom invite link' };
+    }
+
     // Rate limit
     const ip = getClientIP(request);
     const rateLimit = await checkRateLimit('invite', `${user.id}:${ip}`);
@@ -2938,6 +2945,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       code: server.vanityUrlCode ?? null,
       uses: server.vanityUrlUses ?? 0,
       isPartnered: Boolean(server.isPartnered),
+      lockToVanity: Boolean((server.settings as any)?.invites?.lockToVanity),
     };
   }, {
     params: t.Object({
@@ -2978,7 +2986,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     // null / empty clears the vanity URL
     if (rawCode === null || rawCode === undefined || rawCode.trim() === '') {
       await Server.updateById(server.id, { vanityUrlCode: null as any });
-      return { code: null, uses: server.vanityUrlUses ?? 0 };
+      return { code: null, uses: server.vanityUrlUses ?? 0, lockToVanity: false };
     }
 
     const code = rawCode.trim().toLowerCase();
@@ -3007,13 +3015,61 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
 
     await Server.updateById(server.id, { vanityUrlCode: code, vanityUrlUses: 0 });
 
-    return { code, uses: 0 };
+    return { code, uses: 0, lockToVanity: Boolean((server.settings as any)?.invites?.lockToVanity) };
   }, {
     params: t.Object({
       serverId: t.String(),
     }),
     body: t.Object({
       code: t.Nullable(t.String()),
+      lockToVanity: t.Optional(t.Boolean()),
+    }),
+  })
+  // Set lockToVanity flag (partnered servers with vanity URL only)
+  .patch('/:serverId/vanity-url/lock', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!isValidObjectId(params.serverId)) {
+      set.status = 400;
+      return { error: 'Invalid server ID' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (server.ownerId !== user.id && !(await canManageRoles(server, user.id))) {
+      set.status = 403;
+      return { error: 'You do not have permission to manage this server' };
+    }
+
+    if (!server.isPartnered || !server.vanityUrlCode) {
+      set.status = 400;
+      return { error: 'A custom invite link is required before locking' };
+    }
+
+    const currentSettings = (server.settings as any) || {};
+    const currentInvites = currentSettings.invites || {};
+    await Server.updateById(server.id, {
+      settings: {
+        ...currentSettings,
+        invites: { ...currentInvites, lockToVanity: Boolean(body.locked) },
+      } as any,
+    });
+
+    return { lockToVanity: Boolean(body.locked) };
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      locked: t.Boolean(),
     }),
   })
   // Get server invites
@@ -3899,13 +3955,19 @@ export const partnerRoutes = new Elysia({ prefix: '/servers' })
       if (sort === 'new') {
         servers.sort((a: any, b: any) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
       } else if (sort === 'trending') {
-        // Trending: combination of recent activity and member count
+        // Trending: member count boosted by how recently the server became
+        // discoverable / was created, so fresh-but-growing communities rank
+        // above stale giants (distinct from raw "popular").
         const now = Date.now();
-        servers.sort((a: any, b: any) => {
-          const aScore = (a.memberCount ?? 0) + (a.onlineCount ?? 0) * 2;
-          const bScore = (b.memberCount ?? 0) + (b.onlineCount ?? 0) * 2;
-          return bScore - aScore;
-        });
+        const HALF_LIFE = 14 * 24 * 60 * 60 * 1000; // 14 days
+        const trendScore = (s: any) => {
+          const members = s.memberCount ?? 0;
+          const ref = s.discoverableAt ?? s.createdAt ?? 0;
+          const ageMs = Math.max(0, now - new Date(ref).getTime());
+          const recency = Math.pow(0.5, ageMs / HALF_LIFE); // 1 → 0 as it ages
+          return Math.log10(members + 1) * (1 + recency * 2);
+        };
+        servers.sort((a: any, b: any) => trendScore(b) - trendScore(a));
       } else {
         servers.sort((a: any, b: any) => (b.memberCount ?? 0) - (a.memberCount ?? 0));
       }

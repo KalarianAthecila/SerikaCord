@@ -140,7 +140,7 @@ export const MessageContent = memo(function MessageContent({
     }
 
     const tokenRegex = /<@!?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|<@&([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|:([a-zA-Z_][a-zA-Z0-9_]*):/gi;
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const urlRegex = /(?<!\]\()https?:\/\/[^\s]+/g;
     const parts: Array<{
       type: "text" | "custom-emoji" | "image" | "link" | "mention-user" | "mention-role" | "mention-special";
       content: string;
@@ -173,6 +173,8 @@ export const MessageContent = memo(function MessageContent({
       if (segment.type === "url") {
         if (isImageLikeUrl(segment.content)) {
           parts.push({ type: "image", content: segment.content, url: segment.content });
+        } else if (/serika\.cc/i.test(segment.content)) {
+          parts.push({ type: "text", content: segment.content });
         } else {
           parts.push({ type: "link", content: segment.content, url: segment.content });
         }

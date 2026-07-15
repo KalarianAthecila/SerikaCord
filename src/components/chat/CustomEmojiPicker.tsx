@@ -246,7 +246,7 @@ export function CustomEmojiPicker({
   const [isLoadingStickers, setIsLoadingStickers] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
-  const [activeSection, setActiveSection] = useState("smileys");
+  const [activeSection, setActiveSection] = useState("recent");
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -356,35 +356,62 @@ export function CustomEmojiPicker({
     onEmojiSelect(emoji, isCustom, emojiData);
   }, [onEmojiSelect]);
 
+  // Track programmatic scroll so the scroll handler doesn't fight clicks
+  const isScrollingToSection = useRef(false);
+  const scrollTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
   // Scroll to section when clicking category icon
   const scrollToSection = useCallback((sectionId: string) => {
     const section = sectionRefs.current.get(sectionId);
-    if (section) {
-      section.scrollIntoView({ behavior: "smooth", block: "start" });
-    }
+    const container = scrollRef.current;
+    if (!section || !container) return;
+
+    // Suppress scroll-handler updates during the smooth-scroll animation
+    isScrollingToSection.current = true;
+    if (scrollTimeoutRef.current) clearTimeout(scrollTimeoutRef.current);
+
+    // Compute target scroll position relative to the container, not offsetParent
+    const containerRect = container.getBoundingClientRect();
+    const sectionRect = section.getBoundingClientRect();
+    const offset = sectionRect.top - containerRect.top;
+    container.scrollTo({ top: container.scrollTop + offset, behavior: "smooth" });
+
     setActiveSection(sectionId);
+
+    // Re-enable scroll handler after the animation settles
+    scrollTimeoutRef.current = setTimeout(() => {
+      isScrollingToSection.current = false;
+    }, 500);
   }, []);
 
-  // Update active section based on scroll position - throttled
+  // Update active section based on scroll position — uses viewport-relative
+  // rects so it works regardless of nested offset parents.
   const handleScroll = useCallback(() => {
+    if (isScrollingToSection.current) return;
+
     const container = scrollRef.current;
     if (!container) return;
 
-    const scrollTop = container.scrollTop;
-    let currentSection = "smileys";
+    const containerTop = container.getBoundingClientRect().top;
+    let currentSection = "";
 
     for (const [id, element] of sectionRefs.current) {
-      if (element.offsetTop <= scrollTop + 60) {
+      const elementTop = element.getBoundingClientRect().top;
+      if (elementTop <= containerTop + 50) {
         currentSection = id;
       }
     }
 
-    setActiveSection(currentSection);
+    if (currentSection) {
+      setActiveSection(currentSection);
+    }
   }, []);
 
   useEffect(() => {
     const container = scrollRef.current;
     if (container) {
+      // Set the correct active section on mount before the user scrolls.
+      handleScroll();
       let ticking = false;
       const throttledHandler = () => {
         if (!ticking) {

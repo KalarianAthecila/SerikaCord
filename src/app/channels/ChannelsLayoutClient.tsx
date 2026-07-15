@@ -341,7 +341,10 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
     <div className="flex h-dvh bg-[var(--bg-app)] overflow-hidden">
       {/* Combined Sidebars */}
       <div className="flex flex-shrink-0 h-full min-h-0">
-        <ServerSidebar onCreateServer={() => setShowCreateServer(true)} />
+        <ServerSidebar
+          onCreateServer={() => setShowCreateServer(true)}
+          onInvitePeople={() => setShowInvite(true)}
+        />
         {pathname !== "/channels/explore" && (
           <ChannelSidebar
             onCreateChannel={(defaultType, defaultParentId) =>
