@@ -155,6 +155,8 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const unsubs = [
       onHotkey("create-server", () => setShowCreateServer(true)),
+      onHotkey("create-group-dm", () => setShowCreateServer(true)),
+      onHotkey("open-user-settings", () => setShowUserSettings(true)),
     ];
     return () => unsubs.forEach((u) => u());
   }, []);

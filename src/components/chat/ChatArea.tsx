@@ -165,6 +165,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const isMobile = useIsMobile();
   const messageBarRef = useRef<MessageBarHandle>(null);
   const messageListRef = useRef<MessageListHandle>(null);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Server emojis and stickers
   const [serverEmojis, setServerEmojis] = useState<Array<{
@@ -1282,7 +1283,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       // Tab / Enter accept the highlighted suggestion (autocomplete).
       // Enter only autocompletes here when there's a real selectable item;
       // it otherwise falls through to send below.
-      if (e.key === "Tab") {
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
         const selected = mentionSuggestions[activeMentionIndex];
         if (selected) {
           if (selected.kind === "param-hint" || selected.id === "__app-option-hint__") {
@@ -1294,16 +1295,6 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           e.preventDefault();
           insertMentionFromSuggestion(selected);
         }
-        return;
-      }
-      // Enter always sends — don't let suggestions intercept it
-      if (e.key === "Enter" && !e.shiftKey) {
-        // Dismiss any visible suggestions first
-        mentionRangeRef.current = null;
-        setMentionSuggestions([]);
-        setActiveMentionIndex(0);
-        e.preventDefault();
-        void handleSend();
         return;
       }
     }
@@ -1352,9 +1343,18 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       onHotkey("scroll-up", () => messageListRef.current?.scrollByViewport(-1)),
       onHotkey("scroll-down", () => messageListRef.current?.scrollByViewport(1)),
       onHotkey("jump-oldest-unread", () => messageListRef.current?.scrollToTop()),
+      onHotkey("search-channel", () => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }),
+      onHotkey("search-all", () => {
+        searchInputRef.current?.focus();
+        searchInputRef.current?.select();
+      }),
+      onHotkey("edit-last-message", () => editLastOwnMessage()),
     ];
     return () => unsubs.forEach((u) => u());
-  }, [onToggleMembers]);
+  }, [onToggleMembers, editLastOwnMessage]);
 
   const formatTimestamp = (ts: string) => formatMessageTimestamp(ts, gt, locale);
 
@@ -1449,6 +1449,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
           <div className="h-6 w-px bg-[var(--app-border)] hidden md:block" />
           <div className="relative hidden md:block">
             <input
+              ref={searchInputRef}
               type="text"
               placeholder={gt("Search")}
               value={searchQuery}

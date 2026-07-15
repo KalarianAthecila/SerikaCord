@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useMemo, memo } from "react";
+import { useEffect, useRef, useMemo, memo, useState, useCallback } from "react";
 import twemoji from "@twemoji/api";
 import { twemojiOnError } from "@/lib/twemoji-helpers";
 import { useChatGt } from "./ChatGtContext";
@@ -10,6 +10,9 @@ import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 import { GifFavoriteButton } from "@/components/chat/GifFavoriteButton";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { decodeHtmlEntities } from "@/lib/chat/messages";
+import { Copy, Star, StarOff } from "lucide-react";
+import { toast } from "sonner";
+import { useEmojiFavorites } from "@/hooks/useEmojiFavorites";
 
 interface CustomEmoji {
   id: string;
@@ -96,6 +99,57 @@ export const MessageContent = memo(function MessageContent({
 }: MessageContentProps) {
   const gt = useChatGt();
   const textRef = useRef<HTMLSpanElement>(null);
+  const { isFavorite, toggleFavorite } = useEmojiFavorites();
+  const [emojiCtxMenu, setEmojiCtxMenu] = useState<{
+    x: number;
+    y: number;
+    emoji: CustomEmoji;
+  } | null>(null);
+
+  // Close emoji context menu on click elsewhere or Escape
+  useEffect(() => {
+    if (!emojiCtxMenu) return;
+    const close = () => setEmojiCtxMenu(null);
+    const closeOnEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setEmojiCtxMenu(null);
+      }
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEsc, { capture: true });
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEsc, { capture: true } as EventListenerOptions);
+    };
+  }, [emojiCtxMenu]);
+
+  const handleEmojiContextMenu = useCallback((e: React.MouseEvent, emoji: CustomEmoji) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEmojiCtxMenu({ x: e.clientX, y: e.clientY, emoji });
+  }, []);
+
+  const handleCopyEmojiId = useCallback(() => {
+    if (!emojiCtxMenu) return;
+    navigator.clipboard?.writeText(emojiCtxMenu.emoji.id);
+    toast.success(gt("Copied {id}", { id: emojiCtxMenu.emoji.id }));
+    setEmojiCtxMenu(null);
+  }, [emojiCtxMenu, gt]);
+
+  const handleToggleEmojiFav = useCallback(() => {
+    if (!emojiCtxMenu) return;
+    toggleFavorite({
+      emoji: emojiCtxMenu.emoji.id,
+      name: emojiCtxMenu.emoji.name,
+      customEmojiId: emojiCtxMenu.emoji.id,
+      url: emojiCtxMenu.emoji.url || emojiCtxMenu.emoji.imageUrl,
+    });
+    setEmojiCtxMenu(null);
+  }, [emojiCtxMenu, toggleFavorite]);
   const mentionUserMap = useMemo(() => {
     const map = new Map<string, MentionUser>();
     for (const mentionUser of mentionUsers) {
@@ -331,6 +385,7 @@ export const MessageContent = memo(function MessageContent({
               title={`:${part.emoji.name}:`}
               className="custom-emoji"
               loading="lazy"
+              onContextMenu={(e) => handleEmojiContextMenu(e, part.emoji!)}
             />
           );
         }
@@ -454,6 +509,51 @@ export const MessageContent = memo(function MessageContent({
           </span>
         );
       })}
+      {emojiCtxMenu && (
+        <div
+          className="fixed z-[9999] min-w-[180px] bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1"
+          style={{ left: emojiCtxMenu.x, top: emojiCtxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Emoji preview header */}
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)]">
+            <img
+              src={emojiCtxMenu.emoji.url || emojiCtxMenu.emoji.imageUrl}
+              alt={`:${emojiCtxMenu.emoji.name}:`}
+              className="w-6 h-6 object-contain"
+            />
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-[var(--text-primary)] truncate">:{emojiCtxMenu.emoji.name}:</div>
+              {emojiCtxMenu.emoji.serverId && (
+                <div className="text-[10px] text-[var(--text-muted)] truncate">{emojiCtxMenu.emoji.serverId}</div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={handleToggleEmojiFav}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+          >
+            {isFavorite(emojiCtxMenu.emoji.id, emojiCtxMenu.emoji.id) ? (
+              <>
+                <StarOff className="w-4 h-4" />
+                {gt("Unfavorite")}
+              </>
+            ) : (
+              <>
+                <Star className="w-4 h-4" />
+                {gt("Favorite")}
+              </>
+            )}
+          </button>
+          <button
+            onClick={handleCopyEmojiId}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+          >
+            <Copy className="w-4 h-4" />
+            {gt("Copy Emoji ID")}
+          </button>
+        </div>
+      )}
       {isTtsMessage && (
         <span className="inline-flex items-center gap-1 ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-400 align-middle select-none">
           🔊 {gt("TTS")}

@@ -4,13 +4,15 @@ import { useState, useRef, useCallback, useEffect, useMemo, useDeferredValue, me
 import { useRouter } from "next/navigation";
 import { 
   Search, Clock, Star, Smile, Users, Dog, Apple, Gamepad2, 
-  Plane, Lightbulb, Heart, Flag, ImageIcon, Sticker, X, Plus
+  Plane, Lightbulb, Heart, Flag, ImageIcon, Sticker, X, Plus, Copy, StarOff
 } from "lucide-react";
 import { Input } from "@/components/ui/input";
 import { cn } from "@/lib/utils";
 import { EMOJI_CATEGORIES, EMOJI_TO_NAME, type EmojiCategory } from "@/lib/constants/emojis";
 import { GifPicker } from "@/components/chat/GifPicker";
 import { useGT } from "gt-next";
+import { useEmojiFavorites } from "@/hooks/useEmojiFavorites";
+import { toast } from "sonner";
 
 interface CustomEmoji {
   id: string;
@@ -102,13 +104,16 @@ function getEmojiUrl(emoji: string): string {
 const EmojiButton = memo(function EmojiButton({
   emoji,
   onClick,
+  onContextMenu,
 }: {
   emoji: string;
   onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   return (
     <button
       onClick={onClick}
+      onContextMenu={onContextMenu}
       className="w-10 h-10 flex items-center justify-center hover:bg-[#2a2a40] rounded-lg transition-colors"
     >
       <img
@@ -175,14 +180,17 @@ const LazyEmojiSection = memo(function LazyEmojiSection({
 // Memoized custom emoji button
 const CustomEmojiButton = memo(function CustomEmojiButton({
   emoji, 
-  onClick 
+  onClick,
+  onContextMenu,
 }: { 
   emoji: CustomEmoji; 
   onClick: () => void;
+  onContextMenu?: (e: React.MouseEvent) => void;
 }) {
   return (
     <button
       onClick={onClick}
+      onContextMenu={onContextMenu}
       className="w-10 h-10 flex items-center justify-center hover:bg-[#2a2a40] rounded-lg transition-colors"
       title={`:${emoji.name}:${emoji.serverName ? ` from ${emoji.serverName}` : ''}`}
     >
@@ -228,12 +236,80 @@ export function CustomEmojiPicker({
 }: EmojiPickerProps) {
   const gt = useGT();
   const router = useRouter();
+  const { favorites: emojiFavs, isFavorite: isEmojiFavorite, toggleFavorite: toggleEmojiFavorite, isReady: favReady } = useEmojiFavorites();
   const [search, setSearch] = useState("");
   // Keep typing responsive: filtering runs against the deferred value so
   // keystrokes never block on re-filtering thousands of emojis.
   const deferredSearch = useDeferredValue(search);
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [recentEntries, setRecentEntries] = useState<RecentEmojiEntry[]>([]);
+
+  // Context menu state for right-click on emojis
+  const [ctxMenu, setCtxMenu] = useState<{
+    x: number;
+    y: number;
+    emoji: string;
+    name?: string;
+    customEmojiId?: string;
+    url?: string;
+  } | null>(null);
+
+  // Close context menu on any click elsewhere or Escape
+  useEffect(() => {
+    if (!ctxMenu) return;
+    const close = () => setCtxMenu(null);
+    const closeOnEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setCtxMenu(null);
+      }
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEsc, { capture: true });
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEsc, { capture: true } as EventListenerOptions);
+    };
+  }, [ctxMenu]);
+
+  const handleEmojiContextMenu = useCallback(
+    (e: React.MouseEvent, emoji: string, emojiData?: CustomEmoji) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const name = emojiData ? emojiData.name : EMOJI_TO_NAME[emoji];
+      setCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        emoji,
+        name,
+        customEmojiId: emojiData?.id,
+        url: emojiData?.url,
+      });
+    },
+    []
+  );
+
+  const handleCopyEmojiId = useCallback(() => {
+    if (!ctxMenu) return;
+    const id = ctxMenu.customEmojiId || ctxMenu.emoji;
+    navigator.clipboard?.writeText(id);
+    toast.success(gt("Copied {id}", { id }));
+    setCtxMenu(null);
+  }, [ctxMenu, gt]);
+
+  const handleToggleFav = useCallback(() => {
+    if (!ctxMenu) return;
+    toggleEmojiFavorite({
+      emoji: ctxMenu.emoji,
+      name: ctxMenu.name,
+      customEmojiId: ctxMenu.customEmojiId,
+      url: ctxMenu.url,
+    });
+    setCtxMenu(null);
+  }, [ctxMenu, toggleEmojiFavorite]);
 
   // Load persisted recently-used emojis once
   useEffect(() => {
@@ -245,8 +321,14 @@ export function CustomEmojiPicker({
   const [stickers, setStickers] = useState<StickerItem[]>([]);
   const [isLoadingStickers, setIsLoadingStickers] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const sidebarRef = useRef<HTMLDivElement>(null);
   const sectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
   const [activeSection, setActiveSection] = useState("recent");
+  // Sticker sidebar state
+  const stickerScrollRef = useRef<HTMLDivElement>(null);
+  const stickerSidebarRef = useRef<HTMLDivElement>(null);
+  const stickerSectionRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const [activeStickerSection, setActiveStickerSection] = useState("");
 
   useEffect(() => {
     setActiveTab(initialTab);
@@ -334,11 +416,96 @@ export function CustomEmojiPicker({
     );
   }, [deferredSearch, recentEmojis, recentEntries]);
 
+  // Build favorites list from DB-backed hook, merging with any prop-provided ones
   const filteredFavorites = useMemo(() => {
-    if (!deferredSearch.trim()) return favoriteEmojis;
+    // DB favorites take priority; merge prop favorites as fallback
+    const dbEmojiFavs = favReady ? emojiFavs.map(f => f.emoji) : favoriteEmojis;
+    if (!deferredSearch.trim()) return dbEmojiFavs;
     const query = deferredSearch.toLowerCase();
-    return favoriteEmojis.filter(emoji => (EMOJI_TO_NAME[emoji]?.includes(query) ?? false));
-  }, [deferredSearch, favoriteEmojis]);
+    return dbEmojiFavs.filter(emoji => (EMOJI_TO_NAME[emoji]?.includes(query) ?? false));
+  }, [deferredSearch, favoriteEmojis, emojiFavs, favReady]);
+
+  // Group stickers by server for sidebar sections
+  const groupedStickers = useMemo(() => {
+    const groups: Array<{ server: string; serverId?: string; serverIcon?: string; stickers: StickerItem[] }> = [];
+    const indexByServer = new Map<string, number>();
+    // Build a serverId → icon lookup from available server emojis
+    const iconByServerId = new Map<string, string>();
+    for (const e of availableServerEmojis) {
+      if (e.serverId && e.serverIcon) iconByServerId.set(e.serverId, e.serverIcon);
+    }
+    for (const sticker of stickers) {
+      const server = sticker.serverName || (sticker.serverId ? "Server" : "Stickers");
+      let index = indexByServer.get(server);
+      if (index === undefined) {
+        index = groups.length;
+        indexByServer.set(server, index);
+        groups.push({
+          server,
+          serverId: sticker.serverId,
+          serverIcon: sticker.serverId ? iconByServerId.get(sticker.serverId) : undefined,
+          stickers: [],
+        });
+      }
+      groups[index].stickers.push(sticker);
+    }
+    return groups;
+  }, [stickers, availableServerEmojis]);
+
+  // Sticker sidebar scroll handling
+  const setStickerSectionRef = useCallback((id: string) => (el: HTMLDivElement | null) => {
+    if (el) {
+      stickerSectionRefs.current.set(id, el);
+    } else {
+      stickerSectionRefs.current.delete(id);
+    }
+  }, []);
+
+  const scrollStickerToSection = useCallback((sectionId: string) => {
+    const section = stickerSectionRefs.current.get(sectionId);
+    const container = stickerScrollRef.current;
+    if (!section || !container) return;
+    const containerRect = container.getBoundingClientRect();
+    const sectionRect = section.getBoundingClientRect();
+    const offset = sectionRect.top - containerRect.top;
+    container.scrollTo({ top: container.scrollTop + offset, behavior: "smooth" });
+    setActiveStickerSection(sectionId);
+  }, []);
+
+  const handleStickerScroll = useCallback(() => {
+    const container = stickerScrollRef.current;
+    if (!container) return;
+    const containerTop = container.getBoundingClientRect().top;
+    let current = "";
+    for (const [id, element] of stickerSectionRefs.current) {
+      if (element.getBoundingClientRect().top <= containerTop + 50) {
+        current = id;
+      }
+    }
+    if (current) setActiveStickerSection(current);
+  }, []);
+
+  useEffect(() => {
+    const container = stickerScrollRef.current;
+    if (!container) return;
+    let ticking = false;
+    const throttled = () => {
+      if (!ticking) {
+        requestAnimationFrame(() => { handleStickerScroll(); ticking = false; });
+        ticking = true;
+      }
+    };
+    container.addEventListener("scroll", throttled, { passive: true });
+    return () => container.removeEventListener("scroll", throttled);
+  }, [handleStickerScroll]);
+
+  // Auto-scroll sticker sidebar to keep active icon visible
+  useEffect(() => {
+    const sidebar = stickerSidebarRef.current;
+    if (!sidebar || !activeStickerSection) return;
+    const btn = sidebar.querySelector(`[data-section="${activeStickerSection}"]`) as HTMLElement | null;
+    if (btn) btn.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [activeStickerSection]);
 
   const handleEmojiClick = useCallback((emoji: string, isCustom = false, emojiData?: CustomEmoji) => {
     // Record in recently used (persisted locally)
@@ -406,6 +573,16 @@ export function CustomEmojiPicker({
       setActiveSection(currentSection);
     }
   }, []);
+
+  // Auto-scroll the sidebar to keep the active icon visible
+  useEffect(() => {
+    const sidebar = sidebarRef.current;
+    if (!sidebar) return;
+    const activeBtn = sidebar.querySelector(`[data-section="${activeSection}"]`) as HTMLElement | null;
+    if (activeBtn) {
+      activeBtn.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [activeSection]);
 
   useEffect(() => {
     const container = scrollRef.current;
@@ -541,13 +718,38 @@ export function CustomEmojiPicker({
           />
         </div>
       ) : activeTab === "stickers" ? (
-        <div className="flex-none h-[440px] max-h-[60dvh] min-h-0 flex flex-col">
-          <div className="p-3 border-b border-[#2a2a40]">
-            <p className="text-xs uppercase tracking-wider text-[#8888aa]">
-              {serverId || availableServerStickers.length > 0 ? gt("Server Stickers") : gt("Stickers")}
-            </p>
-          </div>
-          <div className="flex-1 overflow-y-auto">
+        <div className="flex-none h-[440px] max-h-[60dvh] min-h-0 flex">
+          {/* Sticker Category Sidebar */}
+          {groupedStickers.length > 0 && (
+            <div ref={stickerSidebarRef} className="w-12 bg-[#0f0f1a] flex flex-col items-center py-2 gap-1 border-r border-[#2a2a40] overflow-y-auto scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent">
+              {groupedStickers.map((group) => {
+                const sectionId = `sticker-${group.serverId || group.server}`;
+                const isActive = activeStickerSection === sectionId;
+                return (
+                  <button
+                    key={sectionId}
+                    data-section={sectionId}
+                    onClick={() => scrollStickerToSection(sectionId)}
+                    className={cn(
+                      "w-9 h-9 flex items-center justify-center rounded-lg transition-all overflow-hidden shrink-0",
+                      isActive
+                        ? "bg-[#8B5CF6] text-white"
+                        : "text-[#8888aa] hover:bg-[#2a2a40] hover:text-white"
+                    )}
+                    title={group.server}
+                  >
+                    {group.serverIcon ? (
+                      <img src={group.serverIcon} alt={group.server} className="w-5 h-5 rounded-full object-cover" />
+                    ) : (
+                      <span className="text-[10px] font-bold">{group.server.charAt(0).toUpperCase()}</span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          {/* Sticker Grid */}
+          <div ref={stickerScrollRef} className="flex-1 overflow-y-auto scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent">
             {isLoadingStickers ? (
               <div className="p-3">
                 <div className="grid grid-cols-5 gap-2">
@@ -556,39 +758,35 @@ export function CustomEmojiPicker({
                   ))}
                 </div>
               </div>
-            ) : stickers.length > 0 ? (
+            ) : groupedStickers.length > 0 ? (
               <div className="p-3 space-y-4">
-                {Object.entries(
-                  stickers.reduce((acc, sticker) => {
-                    const group = sticker.serverName || (sticker.serverId ? "Server" : "Stickers");
-                    if (!acc[group]) acc[group] = [];
-                    acc[group].push(sticker);
-                    return acc;
-                  }, {} as Record<string, StickerItem[]>)
-                ).map(([serverName, serverStickers]) => (
-                  <div key={serverName}>
-                    <p className="text-xs uppercase tracking-wider text-[#8888aa] mb-2 sticky top-0 bg-[#1a1a2e] py-1 z-10 -mx-3 px-3">
-                      {serverName}
-                    </p>
-                    <div className="grid grid-cols-5 gap-2">
-                      {serverStickers.map((sticker) => (
-                        <button
-                          key={sticker.id}
-                          onClick={() => onStickerSelect?.(sticker)}
-                          className="group rounded-md border border-[#2a2a40] hover:border-[#8B5CF6] transition-colors p-1"
-                          title={sticker.name}
-                        >
-                          <img
-                            src={sticker.imageUrl}
-                            alt={sticker.name}
-                            className="w-full h-14 object-contain group-hover:scale-105 transition-transform"
-                            loading="lazy"
-                          />
-                        </button>
-                      ))}
+                {groupedStickers.map((group) => {
+                  const sectionId = `sticker-${group.serverId || group.server}`;
+                  return (
+                    <div key={sectionId} ref={setStickerSectionRef(sectionId)}>
+                      <p className="text-xs uppercase tracking-wider text-[#8888aa] mb-2 sticky top-0 bg-[#1a1a2e] py-1 z-10 -mx-3 px-3">
+                        {group.server}
+                      </p>
+                      <div className="grid grid-cols-5 gap-2">
+                        {group.stickers.map((sticker) => (
+                          <button
+                            key={sticker.id}
+                            onClick={() => onStickerSelect?.(sticker)}
+                            className="group rounded-md border border-[#2a2a40] hover:border-[#8B5CF6] transition-colors p-1"
+                            title={sticker.name}
+                          >
+                            <img
+                              src={sticker.imageUrl}
+                              alt={sticker.name}
+                              className="w-full h-14 object-contain group-hover:scale-105 transition-transform"
+                              loading="lazy"
+                            />
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             ) : (
               <div className="h-full flex flex-col items-center justify-center text-center p-3">
@@ -626,7 +824,7 @@ export function CustomEmojiPicker({
           {/* Main Content - Sidebar + Emoji Grid */}
           <div className="flex flex-1 min-h-0">
             {/* Category Sidebar */}
-            <div className="w-12 h-[440px] max-h-[60dvh] bg-[#0f0f1a] flex flex-col items-center py-2 gap-1 border-r border-[#2a2a40] overflow-y-auto scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent">
+            <div ref={sidebarRef} className="w-12 h-[440px] max-h-[60dvh] bg-[#0f0f1a] flex flex-col items-center py-2 gap-1 border-r border-[#2a2a40] overflow-y-auto scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent">
               {/* Recent + Favorites first */}
               {CATEGORY_ICONS.filter((cat) => cat.id === "recent" || cat.id === "favorites").map((cat) => {
                 const IconComponent = cat.icon;
@@ -634,6 +832,7 @@ export function CustomEmojiPicker({
                 return (
                   <button
                     key={cat.id}
+                    data-section={cat.id}
                     onClick={() => scrollToSection(cat.id)}
                     className={cn(
                       "w-9 h-9 flex items-center justify-center rounded-lg transition-all shrink-0",
@@ -654,6 +853,7 @@ export function CustomEmojiPicker({
                 return (
                   <button
                     key={sectionId}
+                    data-section={sectionId}
                     onClick={() => scrollToSection(sectionId)}
                     className={cn(
                       "w-9 h-9 flex items-center justify-center rounded-lg transition-all overflow-hidden shrink-0",
@@ -684,6 +884,7 @@ export function CustomEmojiPicker({
                 return (
                   <button
                     key={cat.id}
+                    data-section={cat.id}
                     onClick={() => scrollToSection(cat.id)}
                     className={cn(
                       "w-9 h-9 flex items-center justify-center rounded-lg transition-all shrink-0",
@@ -726,12 +927,14 @@ export function CustomEmojiPicker({
                                 animated: entry.animated,
                               })
                             }
+                            onContextMenu={(e) => handleEmojiContextMenu(e, `:${entry.name}:`, { id: entry.id, name: entry.name, url: entry.url, animated: entry.animated })}
                           />
                         ) : (
                           <EmojiButton
                             key={`recent-u-${idx}`}
                             emoji={entry.emoji}
                             onClick={() => handleEmojiClick(entry.emoji)}
+                            onContextMenu={(e) => handleEmojiContextMenu(e, entry.emoji)}
                           />
                         )
                       )}
@@ -752,6 +955,7 @@ export function CustomEmojiPicker({
                           key={`fav-${idx}`}
                           emoji={emoji}
                           onClick={() => handleEmojiClick(emoji)}
+                          onContextMenu={(e) => handleEmojiContextMenu(e, emoji)}
                         />
                       ))}
                     </div>
@@ -787,6 +991,7 @@ export function CustomEmojiPicker({
                           key={emoji.id}
                           emoji={emoji}
                           onClick={() => handleEmojiClick(`:${emoji.name}:`, true, emoji)}
+                          onContextMenu={(e) => handleEmojiContextMenu(e, `:${emoji.name}:`, emoji)}
                         />
                       ))}
                     </div>
@@ -813,6 +1018,7 @@ export function CustomEmojiPicker({
                           key={`${category.id}-${idx}`}
                           emoji={emoji}
                           onClick={() => handleEmojiClick(emoji)}
+                          onContextMenu={(e) => handleEmojiContextMenu(e, emoji)}
                         />
                       ))}
                     </div>
@@ -837,6 +1043,39 @@ export function CustomEmojiPicker({
             </div>
           </div>
         </>
+      )}
+
+      {/* Right-click context menu for emojis */}
+      {ctxMenu && (
+        <div
+          className="fixed z-[9999] min-w-[160px] bg-[#1a1a2e] border border-[#2a2a40] rounded-lg shadow-xl py-1"
+          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          <button
+            onClick={handleToggleFav}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[#ccccee] hover:bg-[#2a2a40] transition-colors"
+          >
+            {isEmojiFavorite(ctxMenu.emoji, ctxMenu.customEmojiId) ? (
+              <>
+                <StarOff className="w-4 h-4" />
+                {gt("Unfavorite")}
+              </>
+            ) : (
+              <>
+                <Star className="w-4 h-4" />
+                {gt("Favorite")}
+              </>
+            )}
+          </button>
+          <button
+            onClick={handleCopyEmojiId}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[#ccccee] hover:bg-[#2a2a40] transition-colors"
+          >
+            <Copy className="w-4 h-4" />
+            {gt("Copy ID")}
+          </button>
+        </div>
       )}
     </div>
   );

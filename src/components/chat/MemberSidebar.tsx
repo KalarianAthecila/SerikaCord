@@ -98,7 +98,7 @@ export function MemberSidebar() {
       if (!groups.has(key)) {
         groups.set(key, {
           key,
-          label: hoistedRole?.name || gt("No Role"),
+          label: hoistedRole?.name || gt("Online"),
           color: hoistedRole?.color,
           position: hoistedRole?.position ?? -1,
           members: [],

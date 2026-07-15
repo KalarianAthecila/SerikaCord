@@ -20,7 +20,14 @@ function DMContent({ children }: { children: React.ReactNode }) {
   const [isMobile, setIsMobile] = useState(false);
 
   useAppHotkeys();
-  useEffect(() => onHotkey("create-server", () => setShowCreateServer(true)), []);
+  useEffect(() => {
+    const unsubs = [
+      onHotkey("create-server", () => setShowCreateServer(true)),
+      onHotkey("create-group-dm", () => setShowCreateServer(true)),
+      onHotkey("open-user-settings", () => setShowUserSettings(true)),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, []);
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 767px)');

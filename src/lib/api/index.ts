@@ -521,6 +521,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       settings: user.settings,
       customization: user.customization || {},
       gifFavorites: user.gifFavorites || [],
+      emojiFavorites: user.emojiFavorites || [],
       createdAt: user.createdAt,
     };
   })
@@ -556,6 +557,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       settings: user.settings,
       customization: user.customization || {},
       gifFavorites: user.gifFavorites || [],
+      emojiFavorites: user.emojiFavorites || [],
       createdAt: user.createdAt,
     };
   })
@@ -1920,6 +1922,10 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
         const showActivity = (friend.settings as any)?.privacy?.showActivity ?? true;
         if (!showActivity) return null;
 
+        // Don't show offline users in Active Now
+        const effectiveStatus = getPublicPresenceStatus(friend);
+        if (effectiveStatus === 'offline') return null;
+
         const friendId = friend.id;
         const [watchActivity, richPresenceDocs, lastfmConnection] = await Promise.all([
           getMoeActivity(friendId).catch(() => null),
@@ -1955,7 +1961,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
             username: friend.username,
             displayName: friend.displayName,
             avatar: friend.avatar,
-            status: getPublicPresenceStatus(friend),
+            status: effectiveStatus,
             customStatus: friend.customStatus,
             isPremium: friend.isPremium,
             badges: friend.badges || [],

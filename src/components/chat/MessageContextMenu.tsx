@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { useLayoutEffect, useRef, useState, useEffect } from "react";
 import { Copy, Pencil, Pin, Reply, Smile, Trash2 } from "lucide-react";
 import { useGT } from "gt-next";
 import type { ChatMessage } from "@/lib/chat/types";
@@ -79,6 +79,20 @@ export function MessageContextMenu<M extends ChatMessage>({
 
     setPos({ left, top });
   }, [menu]);
+
+  // Close on Escape
+  useEffect(() => {
+    if (!menu) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onClose();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true } as EventListenerOptions);
+  }, [menu, onClose]);
 
   if (!menu) return null;
 

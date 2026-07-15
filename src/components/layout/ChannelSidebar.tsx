@@ -181,13 +181,23 @@ export function ChannelSidebar({
 
   const closeContextMenu = () => setContextMenu(null);
 
-  // Close context menu when clicking outside
+  // Close context menu when clicking outside or pressing Escape
   useEffect(() => {
+    if (!contextMenu) return;
     const handleClick = () => closeContextMenu();
-    if (contextMenu) {
-      window.addEventListener('click', handleClick);
-      return () => window.removeEventListener('click', handleClick);
-    }
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeContextMenu();
+      }
+    };
+    window.addEventListener('click', handleClick);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener('click', handleClick);
+      window.removeEventListener("keydown", handleKeyDown, { capture: true } as EventListenerOptions);
+    };
   }, [contextMenu]);
 
   const handleEditChannel = () => {

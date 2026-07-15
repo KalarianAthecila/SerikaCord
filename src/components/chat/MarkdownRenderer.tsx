@@ -310,12 +310,38 @@ export const MarkdownRenderer = memo(function MarkdownRenderer({ content, classN
       {blocks.map((block, i) => {
         const key = `md-block-${i}`;
         switch (block.type) {
-          case "codeblock":
+          case "codeblock": {
+            const code = block.code || "";
+            const isSingleLine = !code.includes("\n");
+            if (isSingleLine) {
+              return (
+                <pre key={key} className="my-1 px-3 py-2 rounded-md bg-[var(--app-surface-alt)] border border-[var(--app-border)] overflow-x-auto inline-block w-fit max-w-full">
+                  <code className="text-[0.9em] font-mono text-[var(--text-primary)]">{code}</code>
+                </pre>
+              );
+            }
             return (
-              <pre key={key} className="my-1 p-3 rounded-md bg-[var(--app-surface-alt)] border border-[var(--app-border)] overflow-x-auto">
-                <code className="text-[0.85em] font-mono text-[var(--text-primary)]">{block.code}</code>
-              </pre>
+              <div key={key} className="my-1 rounded-md bg-[var(--app-surface-alt)] border border-[var(--app-border)] overflow-hidden">
+                {block.lang && (
+                  <div className="flex items-center justify-between px-3 py-1.5 bg-[var(--app-surface)] border-b border-[var(--app-border)]">
+                    <span className="text-[11px] font-mono text-[var(--text-muted)] uppercase tracking-wide">{block.lang}</span>
+                    <button
+                      onClick={(e) => {
+                        const codeEl = (e.currentTarget.closest("div")?.querySelector("code")?.textContent) || "";
+                        navigator.clipboard?.writeText(codeEl);
+                      }}
+                      className="text-[11px] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-colors"
+                    >
+                      Copy
+                    </button>
+                  </div>
+                )}
+                <pre className="p-3 overflow-x-auto">
+                  <code className="text-[0.85em] font-mono text-[var(--text-primary)]">{code}</code>
+                </pre>
+              </div>
             );
+          }
           case "heading":
             return (
               <span

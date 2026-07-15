@@ -83,6 +83,15 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
     const unsubs = [
       onHotkey("toggle-mute", () => { if (voiceService.connected) handleMute(); }),
       onHotkey("toggle-deafen", () => { if (voiceService.connected) handleDeafen(); }),
+      onHotkey("return-to-voice", () => {
+        if (voiceService.connected && currentChannel) {
+          // currentChannel is a roomId string like "serverId:channelId"
+          const parts = currentChannel.split(":");
+          if (parts.length >= 2) {
+            window.location.href = `/channels/${parts[0]}/${parts[1]}`;
+          }
+        }
+      }),
     ];
     return () => unsubs.forEach((u) => u());
   }, [handleMute, handleDeafen]);

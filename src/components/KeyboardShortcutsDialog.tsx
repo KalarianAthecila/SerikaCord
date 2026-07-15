@@ -8,7 +8,7 @@ import {
   DialogTitle,
   DialogDescription,
 } from "@/components/ui/dialog";
-import { HOTKEYS, formatHotkey, onHotkey, type Hotkey } from "@/lib/keybinds";
+import { HOTKEYS, formatHotkey, getEffectiveBinding, onHotkey, type Hotkey } from "@/lib/keybinds";
 import { useGT } from "gt-next";
 
 const CATEGORY_ORDER: Hotkey["category"][] = ["Navigation", "Chat", "Voice", "Application"];
@@ -28,7 +28,7 @@ export function KeyboardShortcutsDialog() {
           <DialogDescription>
             {gt("Press")}{" "}
             <kbd className="px-1.5 py-0.5 rounded bg-[var(--app-surface-alt)] border border-[var(--app-border)] text-xs font-mono">
-              {formatHotkey(HOTKEYS.find((h) => h.action === "toggle-help")!)}
+              {formatHotkey(getEffectiveBinding("toggle-help"))}
             </kbd>{" "}
             {gt("any time to open this list.")}
           </DialogDescription>
@@ -36,7 +36,7 @@ export function KeyboardShortcutsDialog() {
 
         <div className="space-y-5 mt-2">
           {CATEGORY_ORDER.map((category) => {
-            const rows = HOTKEYS.filter((h) => h.category === category);
+            const rows = HOTKEYS.filter((h) => h.category === category).map((h) => getEffectiveBinding(h.action));
             if (rows.length === 0) return null;
             return (
               <div key={category}>

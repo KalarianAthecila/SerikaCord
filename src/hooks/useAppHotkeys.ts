@@ -104,6 +104,8 @@ export function useAppHotkeys() {
         if (prev) router.push(prev);
         return;
       }
+      case "nav-back": return void router.back();
+      case "nav-forward": return void router.forward();
       case "toggle-mentions": return void router.push("/channels/notifications");
       case "mark-channel-read": {
         if (currentChannel) markChannelRead(currentChannel.id);
@@ -114,6 +116,7 @@ export function useAppHotkeys() {
         return;
       }
       case "open-help-center": return void router.push("/developers/docs");
+      case "open-user-settings": return emitHotkey(action);
       // Everything else is owned by a component — broadcast it.
       default:
         emitHotkey(action);
@@ -130,9 +133,11 @@ export function useAppHotkeys() {
       // grab it when nothing is focused yet (activeElement is <body>).
       if (hk.action === "focus-composer" && document.activeElement !== document.body) return;
       // While a dialog/menu is open, let it own the keyboard (Escape closes it,
-      // etc.) — only the help toggle stays global so it can be dismissed.
+      // etc.) — only the help toggle and picker tab shortcuts stay global so
+      // they can be used while the emoji picker popover is open.
       const modalOpen = document.querySelector('[role="dialog"],[role="alertdialog"],[role="menu"]');
-      if (modalOpen && hk.action !== "toggle-help") return;
+      const allowedInModal = hk.action === "toggle-help" || hk.action === "toggle-gifs" || hk.action === "toggle-stickers" || hk.action === "toggle-emoji" || hk.action === "open-user-settings";
+      if (modalOpen && !allowedInModal) return;
       e.preventDefault();
       e.stopPropagation();
       runAction(hk.action);

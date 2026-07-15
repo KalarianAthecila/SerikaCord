@@ -71,6 +71,7 @@ import { cn } from "@/lib/utils";
 import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
 import { NAMEPLATE_PRESETS, getNameplateBackground } from "@/lib/constants/nameplates";
 import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
+import { KeybindSettingsPanel } from "@/components/settings/KeybindSettingsPanel";
 import { AdminTtsSoundsPanel, AdminTtsVoicesPanel } from "@/components/settings/AdminTtsPanel";
 import { AdminTranslationsPanel } from "@/components/settings/AdminTranslationsPanel";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
@@ -3325,18 +3326,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                       )}
 
                       {activeTab === "keybinds" && (
-                        <>
-                          <label className="block text-sm text-[var(--text-secondary)]">{gt("Preset")}</label>
-                          <select
-                            value={userSettings.keybinds?.preset || "default"}
-                            onChange={(e) => saveSettingsPatch({ keybinds: { ...(userSettings.keybinds || {}), preset: e.target.value } }, "keybinds")}
-                            className="w-full bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-md px-3 py-2 text-white"
-                          >
-                            <option value="default">{gt("Default")}</option>
-                            <option value="gaming">{gt("Gaming")}</option>
-                            <option value="vim">{gt("Vim-style")}</option>
-                          </select>
-                        </>
+                        <KeybindSettingsPanel />
                       )}
 
                       {activeTab === "language" && (

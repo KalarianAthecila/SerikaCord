@@ -240,6 +240,14 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
           setPickerTab("emoji");
           setShowEmojiPicker((v) => !v);
         }),
+        onHotkey("toggle-gifs", () => {
+          setPickerTab("gifs");
+          setShowEmojiPicker(true);
+        }),
+        onHotkey("toggle-stickers", () => {
+          setPickerTab("stickers");
+          setShowEmojiPicker(true);
+        }),
         onHotkey("upload-file", () => fileInputRef.current?.click()),
       ];
       return () => unsubs.forEach((u) => u());

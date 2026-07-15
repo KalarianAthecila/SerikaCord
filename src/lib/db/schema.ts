@@ -75,6 +75,7 @@ export const users = pgTable('users', {
   badges: text('badges').array().default([]),
   customization: jsonb('customization').default({}),
   gifFavorites: jsonb('gif_favorites').default([]),
+  emojiFavorites: jsonb('emoji_favorites').default([]),
   isBot: boolean('is_bot').default(false),
   isSystem: boolean('is_system').default(false),
   isPremium: boolean('is_premium').default(false),
