@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useMemo, useDeferredValue, memo } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import { 
   Search, Clock, Star, Smile, Users, Dog, Apple, Gamepad2, 
@@ -1045,11 +1046,13 @@ export function CustomEmojiPicker({
         </>
       )}
 
-      {/* Right-click context menu for emojis */}
-      {ctxMenu && (
+      {typeof document !== "undefined" && ctxMenu && createPortal(
         <div
           className="fixed z-[9999] min-w-[160px] bg-[#1a1a2e] border border-[#2a2a40] rounded-lg shadow-xl py-1"
-          style={{ left: ctxMenu.x, top: ctxMenu.y }}
+          style={{ 
+            left: Math.min(ctxMenu.x, window.innerWidth - 168), 
+            top: Math.min(ctxMenu.y, window.innerHeight - 88) 
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           <button
@@ -1075,7 +1078,8 @@ export function CustomEmojiPicker({
             <Copy className="w-4 h-4" />
             {gt("Copy ID")}
           </button>
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

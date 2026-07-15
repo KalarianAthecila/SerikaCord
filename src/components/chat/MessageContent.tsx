@@ -13,6 +13,8 @@ import { decodeHtmlEntities } from "@/lib/chat/messages";
 import { Copy, Star, StarOff } from "lucide-react";
 import { toast } from "sonner";
 import { useEmojiFavorites } from "@/hooks/useEmojiFavorites";
+import { createPortal } from "react-dom";
+import { EMOJI_TO_NAME } from "@/lib/constants/emojis";
 
 interface CustomEmoji {
   id: string;
@@ -108,6 +110,7 @@ export const MessageContent = memo(function MessageContent({
     x: number;
     y: number;
     emoji: CustomEmoji;
+    isCustom?: boolean;
   } | null>(null);
 
   // Close emoji context menu on click elsewhere or Escape
@@ -134,29 +137,47 @@ export const MessageContent = memo(function MessageContent({
   const handleEmojiContextMenu = useCallback((e: React.MouseEvent, emoji: CustomEmoji) => {
     e.preventDefault();
     e.stopPropagation();
-    setEmojiCtxMenu({ x: e.clientX, y: e.clientY, emoji });
+    setEmojiCtxMenu({ x: e.clientX, y: e.clientY, emoji, isCustom: true });
   }, []);
 
   // Delegated right-click handler on the whole message span so a right-click on
-  // any custom emoji reliably opens the emoji menu (and never falls through to
+  // any emoji (custom or standard) reliably opens the emoji menu (and never falls through to
   // the message context menu), regardless of how the emoji <img> was produced.
   const handleSpanContextMenu = useCallback((e: React.MouseEvent) => {
-    const img = (e.target as HTMLElement)?.closest?.("img.custom-emoji") as HTMLElement | null;
+    const img = (e.target as HTMLElement)?.closest?.("img.custom-emoji, img.emoji") as HTMLElement | null;
     if (!img) return; // not an emoji — let the message context menu handle it
-    const id = img.getAttribute("data-emoji-id");
-    if (!id) return;
     e.preventDefault();
     e.stopPropagation();
-    setEmojiCtxMenu({
-      x: e.clientX,
-      y: e.clientY,
-      emoji: {
-        id,
-        name: img.getAttribute("data-emoji-name") || "emoji",
-        url: img.getAttribute("data-emoji-url") || "",
-        serverId: img.getAttribute("data-emoji-server") || undefined,
-      },
-    });
+
+    const isCustom = img.classList.contains("custom-emoji");
+    if (isCustom) {
+      const id = img.getAttribute("data-emoji-id");
+      if (!id) return;
+      setEmojiCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        emoji: {
+          id,
+          name: img.getAttribute("data-emoji-name") || "emoji",
+          url: img.getAttribute("data-emoji-url") || "",
+          serverId: img.getAttribute("data-emoji-server") || undefined,
+        },
+        isCustom: true,
+      });
+    } else {
+      // Standard unicode emoji
+      const emojiChar = img.getAttribute("alt") || "";
+      setEmojiCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        emoji: {
+          id: emojiChar,
+          name: EMOJI_TO_NAME[emojiChar] || "emoji",
+          url: img.getAttribute("src") || "",
+        },
+        isCustom: false,
+      });
+    }
   }, []);
 
   const handleCopyEmojiId = useCallback(() => {
@@ -168,11 +189,12 @@ export const MessageContent = memo(function MessageContent({
 
   const handleToggleEmojiFav = useCallback(() => {
     if (!emojiCtxMenu) return;
+    const isCustom = emojiCtxMenu.isCustom;
     toggleFavorite({
-      emoji: emojiCtxMenu.emoji.id,
+      emoji: isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.id,
       name: emojiCtxMenu.emoji.name,
-      customEmojiId: emojiCtxMenu.emoji.id,
-      url: emojiCtxMenu.emoji.url || emojiCtxMenu.emoji.imageUrl,
+      customEmojiId: isCustom ? emojiCtxMenu.emoji.id : undefined,
+      url: isCustom ? (emojiCtxMenu.emoji.url || emojiCtxMenu.emoji.imageUrl) : undefined,
     });
     setEmojiCtxMenu(null);
   }, [emojiCtxMenu, toggleFavorite]);
@@ -555,22 +577,27 @@ export const MessageContent = memo(function MessageContent({
           </span>
         );
       })}
-      {emojiCtxMenu && (
+      {typeof document !== "undefined" && emojiCtxMenu && createPortal(
         <div
           className="fixed z-[9999] min-w-[180px] bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1"
-          style={{ left: emojiCtxMenu.x, top: emojiCtxMenu.y }}
+          style={{ 
+            left: Math.min(emojiCtxMenu.x, window.innerWidth - 188), 
+            top: Math.min(emojiCtxMenu.y, window.innerHeight - 148) 
+          }}
           onClick={(e) => e.stopPropagation()}
         >
           {/* Emoji preview header */}
           <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)]">
             <img
               src={emojiCtxMenu.emoji.url || emojiCtxMenu.emoji.imageUrl}
-              alt={`:${emojiCtxMenu.emoji.name}:`}
+              alt={emojiCtxMenu.isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.id}
               className="w-6 h-6 object-contain"
             />
             <div className="min-w-0">
-              <div className="text-sm font-medium text-[var(--text-primary)] truncate">:{emojiCtxMenu.emoji.name}:</div>
-              {emojiCtxMenu.emoji.serverId && (
+              <div className="text-sm font-medium text-[var(--text-primary)] truncate">
+                {emojiCtxMenu.isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.name}
+              </div>
+              {emojiCtxMenu.isCustom && emojiCtxMenu.emoji.serverId && (
                 <div className="text-[10px] text-[var(--text-muted)] truncate">{emojiCtxMenu.emoji.serverId}</div>
               )}
             </div>
@@ -579,7 +606,10 @@ export const MessageContent = memo(function MessageContent({
             onClick={handleToggleEmojiFav}
             className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
           >
-            {isFavorite(emojiCtxMenu.emoji.id, emojiCtxMenu.emoji.id) ? (
+            {isFavorite(
+              emojiCtxMenu.isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.id,
+              emojiCtxMenu.isCustom ? emojiCtxMenu.emoji.id : undefined
+            ) ? (
               <>
                 <StarOff className="w-4 h-4" />
                 {gt("Unfavorite")}
@@ -596,9 +626,10 @@ export const MessageContent = memo(function MessageContent({
             className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
           >
             <Copy className="w-4 h-4" />
-            {gt("Copy Emoji ID")}
+            {emojiCtxMenu.isCustom ? gt("Copy Emoji ID") : gt("Copy Emoji")}
           </button>
-        </div>
+        </div>,
+        document.body
       )}
       {isTtsMessage && (
         <span className="inline-flex items-center gap-1 ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-400 align-middle select-none">
