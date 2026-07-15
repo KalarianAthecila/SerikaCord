@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useServer } from "@/contexts/ServerContext";
 import { useAuth } from "@/contexts/AuthContext";
@@ -73,6 +73,29 @@ function getAudioDuration(file: File): Promise<number> {
     audio.src = URL.createObjectURL(file);
   });
 }
+
+const ColorInput = memo(function ColorInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const [localColor, setLocalColor] = useState(value);
+  useEffect(() => { setLocalColor(value); }, [value]);
+  return (
+    <input
+      type="color"
+      value={localColor}
+      onChange={(e) => setLocalColor(e.target.value)}
+      onBlur={() => onChange(localColor)}
+      disabled={disabled}
+      className="w-10 h-10 p-1 rounded bg-[#0a0a0a] border border-[#222222] disabled:opacity-60 cursor-pointer"
+    />
+  );
+});
 
 interface ServerSettingsDialogProps {
   open: boolean;
@@ -1914,14 +1937,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     <div>
                       <label className="block text-xs text-[#888888] mb-1.5"><T>Colour</T></label>
                       <div className="flex items-center gap-2">
-                        <input
-                          type="color"
+                        <ColorInput
                           value={roleDraft.color}
-                          onChange={(event) =>
-                            setRoleDraft((prev) => (prev ? { ...prev, color: event.target.value } : prev))
+                          onChange={(color) =>
+                            setRoleDraft((prev) => (prev ? { ...prev, color } : prev))
                           }
                           disabled={selectedRole.managed}
-                          className="w-10 h-10 p-1 rounded bg-[#0a0a0a] border border-[#222222] disabled:opacity-60 cursor-pointer"
                         />
                         <span className="text-sm text-[#888888] font-mono">{roleDraft.color}</span>
                       </div>

@@ -353,7 +353,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     const colorMap: Record<string, string> = {};
     for (const m of members as Array<{ id: string; highestRole?: { color?: string } | null }>) {
       const color = m.highestRole?.color;
-      if (color && color !== "#000000") colorMap[m.id] = color;
+      if (color && color !== "#99AAB5") colorMap[m.id] = color;
     }
     return colorMap;
   }, [members]);

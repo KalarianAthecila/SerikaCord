@@ -1,9 +1,8 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
 import { useServer } from "@/contexts/ServerContext";
-import { useUnread } from "@/contexts/UnreadContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
@@ -46,9 +45,29 @@ interface DMChannel {
   type: string;
   recipients: DMRecipient[];
   updatedAt?: string;
+  lastMessageId?: string | null;
 }
 
 const DM_POLL_INTERVAL = 30_000;
+const DM_SEEN_KEY = "sc:dm-seen";
+const DM_SEEN_INIT_KEY = "sc:dm-seen-init";
+
+function loadDmSeen(): Record<string, string> {
+  if (typeof localStorage === "undefined") return {};
+  try {
+    return JSON.parse(localStorage.getItem(DM_SEEN_KEY) || "{}") as Record<string, string>;
+  } catch {
+    return {};
+  }
+}
+function saveDmSeen(map: Record<string, string>) {
+  if (typeof localStorage === "undefined") return;
+  try {
+    localStorage.setItem(DM_SEEN_KEY, JSON.stringify(map));
+  } catch {
+    /* quota — ignore */
+  }
+}
 
 export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
   const gt = useGT();
@@ -56,7 +75,7 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
   const { servers, currentServer, setCurrentServer, leaveServer, prefetchServer } = useServer();
   const { serverMentionCounts, markServerRead } = useMentions();
   const { isMuted, toggleMute } = useServerMutes();
-  const { isChannelUnread, getMentionCount, registerChannels } = useUnread();
+  const pathname = usePathname();
 
   // Defensive: drop entries without an id and de-duplicate by id.
   const uniqueServers = useMemo(() => {
@@ -89,7 +108,22 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
   const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
 
   // ── DM unread rail ────────────────────────────────────────────────────────
+  // A DM is "unread" only when it has a real message that is newer than the last
+  // time we saw it (persisted per-device). On first ever load we baseline every
+  // existing conversation as read, so nothing shows until a genuinely new message
+  // arrives — this stops empty/old DMs from lingering in the rail.
   const [dmChannels, setDmChannels] = useState<DMChannel[]>([]);
+  const [dmSeen, setDmSeen] = useState<Record<string, string>>(loadDmSeen);
+
+  const markDmSeen = useCallback((channel: DMChannel) => {
+    const stamp = channel.updatedAt || new Date().toISOString();
+    setDmSeen((prev) => {
+      if (prev[channel.id] === stamp) return prev;
+      const next = { ...prev, [channel.id]: stamp };
+      saveDmSeen(next);
+      return next;
+    });
+  }, []);
 
   const fetchDMs = useCallback(async () => {
     try {
@@ -98,14 +132,33 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
       const data = await res.json();
       const channels = (data.channels || []) as DMChannel[];
       setDmChannels(channels);
-      // Feed the unread engine so DM unread state is available app-wide.
-      registerChannels(
-        channels.map((c) => ({ id: c.id, type: "dm", lastMessageAt: c.updatedAt ?? null }))
-      );
+      setDmSeen((prev) => {
+        const next = { ...prev };
+        let changed = false;
+        // First-run baseline: treat all current conversations as already read.
+        if (typeof localStorage !== "undefined" && !localStorage.getItem(DM_SEEN_INIT_KEY)) {
+          for (const c of channels) {
+            next[c.id] = c.updatedAt || new Date().toISOString();
+          }
+          localStorage.setItem(DM_SEEN_INIT_KEY, "1");
+          changed = true;
+        }
+        // Keep the currently-open DM marked read as new messages land in it.
+        const openId = pathname?.startsWith("/dm/") ? pathname.slice(4) : null;
+        if (openId) {
+          const open = channels.find((c) => c.recipients?.[0]?.id === openId);
+          if (open && next[open.id] !== (open.updatedAt || "")) {
+            next[open.id] = open.updatedAt || new Date().toISOString();
+            changed = true;
+          }
+        }
+        if (changed) saveDmSeen(next);
+        return changed ? next : prev;
+      });
     } catch {
       /* ignore — rail just won't populate */
     }
-  }, [registerChannels]);
+  }, [pathname]);
 
   // usePolling fires immediately on mount (and on tab refocus), so no separate
   // initial-fetch effect is needed.
@@ -113,15 +166,18 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
 
   const unreadDMs = useMemo(() => {
     return dmChannels
-      .filter((c) => c.recipients?.[0] && isChannelUnread(c.id))
-      .map((c) => ({ channel: c, recipient: c.recipients[0], count: getMentionCount(c.id) }));
-  }, [dmChannels, isChannelUnread, getMentionCount]);
+      .filter((c) => {
+        const recipient = c.recipients?.[0];
+        if (!recipient || !c.lastMessageId || !c.updatedAt) return false;
+        // Don't flag the DM you're currently reading.
+        if (pathname === `/dm/${recipient.id}`) return false;
+        const seen = dmSeen[c.id];
+        return !seen || new Date(c.updatedAt).getTime() > new Date(seen).getTime();
+      })
+      .map((c) => ({ channel: c, recipient: c.recipients[0] }));
+  }, [dmChannels, dmSeen, pathname]);
 
   const totalDMUnread = unreadDMs.length;
-  const totalDMMentions = useMemo(
-    () => unreadDMs.reduce((sum, d) => sum + d.count, 0),
-    [unreadDMs]
-  );
 
   // ── handlers ──────────────────────────────────────────────────────────────
   const handleServerClick = (server: Server) => {
@@ -402,7 +458,7 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
               {/* DM unread badge on the inbox icon */}
               {totalDMUnread > 0 && (
                 <span className="absolute -bottom-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)] text-[10px] font-bold text-white leading-none">
-                  {totalDMMentions > 0 ? (totalDMMentions > 99 ? "99+" : totalDMMentions) : totalDMUnread}
+                  {totalDMUnread > 99 ? "99+" : totalDMUnread}
                 </span>
               )}
             </button>
@@ -412,41 +468,58 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
           </TooltipContent>
         </Tooltip>
 
-        {/* Unread DM avatars — the people pinging you, right under the inbox */}
+        {/* Unread DMs — show only the most recent sender; the rest collapse into
+            a "+N" pill that jumps to the DM home. */}
         {unreadDMs.length > 0 && (
           <div className="flex flex-col items-center gap-2 w-full">
-            {unreadDMs.slice(0, 8).map(({ channel, recipient, count }) => (
-              <Tooltip key={channel.id}>
+            {(() => {
+              const { channel, recipient } = unreadDMs[0];
+              return (
+                <Tooltip key={channel.id}>
+                  <TooltipTrigger asChild>
+                    <button
+                      onClick={() => { markDmSeen(channel); router.push(`/dm/${recipient.id}`); }}
+                      className="relative flex items-center justify-center w-12 h-12 rounded-[24px] transition-[border-radius] duration-200 hover:rounded-[16px] group overflow-hidden"
+                    >
+                      <Avatar className="w-12 h-12">
+                        <AvatarImage src={recipient.avatar} alt={recipient.displayName || recipient.username} />
+                        <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
+                          {(recipient.displayName || recipient.username).charAt(0).toUpperCase()}
+                        </AvatarFallback>
+                      </Avatar>
+                      <div className="absolute left-0 w-1 h-2.5 bg-[var(--text-primary)] rounded-r-full group-hover:h-5 transition-all duration-200" />
+                      <span className="absolute bottom-0 right-0 w-3.5 h-3.5 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)]" />
+                    </button>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
+                    {recipient.displayName || recipient.username}
+                  </TooltipContent>
+                </Tooltip>
+              );
+            })()}
+
+            {unreadDMs.length > 1 && (
+              <Tooltip>
                 <TooltipTrigger asChild>
                   <button
-                    onClick={() => router.push(`/dm/${recipient.id}`)}
-                    className="relative flex items-center justify-center w-12 h-12 rounded-[24px] transition-[border-radius] duration-200 hover:rounded-[16px] group overflow-hidden"
+                    onClick={() => router.push("/channels/me")}
+                    className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[var(--bg-sidebar-elevated)] transition-[border-radius] duration-200 hover:rounded-[16px] hover:bg-[var(--app-accent)] text-[var(--text-primary)] text-sm font-bold"
                   >
-                    <Avatar className="w-12 h-12">
-                      <AvatarImage src={recipient.avatar} alt={recipient.displayName || recipient.username} />
-                      <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
-                        {(recipient.displayName || recipient.username).charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div className="absolute left-0 w-1 h-2.5 bg-[var(--text-primary)] rounded-r-full group-hover:h-5 transition-all duration-200" />
-                    <span className="absolute bottom-0 right-0 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)] text-[10px] font-bold text-white leading-none">
-                      {count > 0 ? (count > 99 ? "99+" : count) : ""}
-                      {count === 0 && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
-                    </span>
+                    +{unreadDMs.length - 1}
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
-                  {recipient.displayName || recipient.username}
+                  {gt("{count} more unread DMs", { count: unreadDMs.length - 1 })}
                 </TooltipContent>
               </Tooltip>
-            ))}
+            )}
           </div>
         )}
 
         <Separator className="w-8 h-0.5 bg-[var(--app-border)] rounded-full" />
 
         {/* Server List — drag to rearrange, folders group servers */}
-        <div className="flex-1 w-full overflow-y-auto scrollbar-hide">
+        <div className="flex-1 w-full overflow-y-auto server-rail-scroll py-0.5">
           <Reorder.Group
             axis="y"
             values={entries}

@@ -237,16 +237,19 @@ interface PopulatedMemberUser {
 
 function normalizeRoleColor(color?: number | string | null): string {
   if (typeof color === 'number' && Number.isFinite(color)) {
+    if (color === 0) return '#99AAB5';
     return `#${Math.max(0, color).toString(16).padStart(6, '0').toUpperCase()}`;
   }
 
   if (typeof color === 'string' && color.trim()) {
     const stripped = color.trim().replace(/^#/, '');
     if (/^[0-9a-fA-F]{6}$/.test(stripped)) {
+      if (stripped.toLowerCase() === '000000') return '#99AAB5';
       return `#${stripped.toUpperCase()}`;
     }
     const asNumber = Number.parseInt(stripped, 16);
     if (Number.isFinite(asNumber)) {
+      if (asNumber === 0) return '#99AAB5';
       return `#${Math.max(0, asNumber).toString(16).padStart(6, '0').toUpperCase()}`;
     }
   }
