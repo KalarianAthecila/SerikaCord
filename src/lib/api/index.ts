@@ -8,7 +8,7 @@ import { checkRateLimit, getClientIP, rejectInvalidObjectIdParams, decryptFromSt
 import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection, ServerMember, Server, Role, ServerEmoji, ServerSticker, Channel, Message } from '@/lib/models';
 import { RichPresence } from '@/lib/models/RichPresence';
 import { authRoutes } from './auth';
-import { serverRoutes, inviteRoutes, partnerRoutes } from './servers';
+import { serverRoutes, inviteRoutes, partnerRoutes, computeOnlineCount } from './servers';
 import { channelRoutes } from './channels';
 import { uploadRoutes } from './uploads';
 import { dmRoutes } from './dms';
@@ -574,10 +574,11 @@ const userRoutes = new Elysia({ prefix: '/users' })
     const servers = serverIds.length > 0 ? await Server.find({ id: { in: serverIds } }) : [];
     const serverMap = new Map(servers.map(s => [s.id, s]));
 
-    const result = memberships
+    const result = await Promise.all(memberships
       .filter(m => serverMap.has(m.serverId))
-      .map(m => {
+      .map(async (m) => {
         const server = serverMap.get(m.serverId) as any;
+        const onlineCount = await computeOnlineCount(server.id);
         return {
           id: server.id,
           name: server.name,
@@ -585,6 +586,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
           banner: server.banner ?? null,
           description: server.description,
           memberCount: server.memberCount,
+          onlineCount,
           isOfficial: server.isOfficial,
           isVerified: server.isVerified,
           isPartnered: Boolean(server.isPartnered),
@@ -600,7 +602,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
           roles: m.roles,
           nickname: m.nickname,
         };
-      });
+      }));
 
     return result;
   })

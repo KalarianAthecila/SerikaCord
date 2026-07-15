@@ -15,6 +15,7 @@ interface Server {
   isAgeGated?: boolean;
   description?: string;
   memberCount?: number;
+  onlineCount?: number;
   systemChannelId?: string | null;
   rulesChannelId?: string | null;
   afkChannelId?: string | null;

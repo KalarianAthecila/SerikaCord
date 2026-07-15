@@ -13,7 +13,7 @@ import { User } from '@/lib/models';
 // Live count of members who are actually online right now (status + fresh
 // heartbeat), mirroring resolveEffectiveStatus. The Server.onlineCount field
 // is never written to and must not be trusted as a source of truth.
-async function computeOnlineCount(serverId: string): Promise<number> {
+export async function computeOnlineCount(serverId: string): Promise<number> {
   const members = await ServerMember.find({ serverId });
   const userIds = members.map(m => m.userId);
   const users = userIds.length > 0 ? await User.find({ id: { in: userIds } }) : [];

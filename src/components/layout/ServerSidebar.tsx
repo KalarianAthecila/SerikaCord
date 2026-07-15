@@ -18,7 +18,7 @@ import {
 } from "@/components/ui/dropdown-menu";
 import {
   Plus, Compass, MessageSquare, Check, BellOff, Bell, Copy, LogOut,
-  FolderPlus, FolderMinus, Folder as FolderIcon, Pencil,
+  FolderPlus, FolderMinus, Folder as FolderIcon, Pencil, Users,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { motion } from "framer-motion";
@@ -27,6 +27,7 @@ import { useServerMutes } from "@/hooks/useServerMutes";
 import { useServerLayout, type ServerLayoutEntry } from "@/hooks/useServerLayout";
 import { usePolling } from "@/hooks/usePolling";
 import { useGT } from "gt-next";
+import { ServerBadge } from "@/components/ui/badges";
 
 interface ServerSidebarProps {
   onCreateServer: () => void;
@@ -389,8 +390,30 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
               )}
             </motion.button>
           </TooltipTrigger>
-          <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
-            {server.name}
+          <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)] p-3 max-w-[260px]">
+            <div className="flex flex-col gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {server.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
+                <span className="font-bold text-sm leading-tight">{server.name}</span>
+              </div>
+              {server.description && (
+                <p className="text-xs text-[var(--text-muted)] line-clamp-2 leading-relaxed">{server.description}</p>
+              )}
+              <div className="flex items-center gap-3 mt-0.5">
+                {server.onlineCount !== undefined && server.onlineCount > 0 && (
+                  <span className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                    <span className="w-2 h-2 rounded-full bg-[#23A55A]" />
+                    {server.onlineCount.toLocaleString()} {gt("Online")}
+                  </span>
+                )}
+                {server.memberCount !== undefined && (
+                  <span className="flex items-center gap-1 text-xs text-[var(--text-muted)]">
+                    <Users className="w-3 h-3" />
+                    {server.memberCount.toLocaleString()} {gt("Members")}
+                  </span>
+                )}
+              </div>
+            </div>
           </TooltipContent>
         </Tooltip>
 
