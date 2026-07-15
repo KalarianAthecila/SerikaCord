@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, Fragment } from "react";
 import { 
   Users, 
   Search,
@@ -12,7 +12,8 @@ import {
   UserPlus,
   Clock,
   Crown,
-  Shield, 
+  Shield,
+  Copy,
 } from "lucide-react";
 import { useAuth, type BadgeId } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
@@ -31,6 +32,7 @@ import { SwipeableRow } from "@/components/ui/swipe-actions";
 import { T, useGT } from "gt-next";
 import { statusLabel } from "@/lib/statusLabels";
 import { Loader } from "@/components/ui/Loader";
+import { toast } from "sonner";
 
 type Tab = "online" | "all" | "pending" | "blocked" | "add";
 
@@ -74,6 +76,7 @@ export default function DirectMessagesPage() {
   const { user } = useAuth();
   const router = useRouter();
   const [activeTab, setActiveTab] = useState<Tab>("online");
+  const [contextMenuFriendId, setContextMenuFriendId] = useState<string | null>(null);
   const [searchQuery, setSearchQuery] = useState("");
   const [addFriendUsername, setAddFriendUsername] = useState("");
   const [isLoading, setIsLoading] = useState(true);
@@ -661,8 +664,8 @@ export default function DirectMessagesPage() {
                       </p>
                       <div className="flex flex-col">
                         {filteredFriends.map((friend, idx) => (
+                          <Fragment key={friend.id}>
                           <SwipeableRow
-                            key={friend.id}
                             className="group"
                             actions={[
                               {
@@ -680,7 +683,7 @@ export default function DirectMessagesPage() {
                             ]}
                           >
                             {idx > 0 && <div className="mx-4 h-px bg-[var(--border-subtle)]" />}
-                            <div className="group flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--bg-hover)] cursor-pointer transition-colors rounded-lg mx-1">
+                            <div onContextMenu={(e) => { e.preventDefault(); setContextMenuFriendId(friend.id); }} className="group flex items-center gap-3 px-3 py-2.5 hover:bg-[var(--bg-hover)] cursor-pointer transition-colors rounded-lg mx-1">
                               <button
                                 className="flex items-center gap-3 flex-1 min-w-0 text-left"
                                 onClick={() => startDM(friend.id)}
@@ -799,6 +802,50 @@ export default function DirectMessagesPage() {
                               </div>
                             </div>
                           </SwipeableRow>
+                          <DropdownMenu open={contextMenuFriendId === friend.id} onOpenChange={(o) => setContextMenuFriendId(o ? friend.id : null)}>
+                            <DropdownMenuTrigger asChild>
+                              <span className="absolute inset-0 pointer-events-none" aria-hidden />
+                            </DropdownMenuTrigger>
+                            <DropdownMenuContent className="bg-[var(--bg-card)] border-[var(--border-subtle)]">
+                              <DropdownMenuItem
+                                onClick={() => { setContextMenuFriendId(null); startDM(friend.id); }}
+                                className="text-[var(--text-secondary)] focus:text-[var(--text-on-accent)] focus:bg-[var(--app-accent)]"
+                              >
+                                <MessageCircle className="w-4 h-4 mr-2" />
+                                <T>Message</T>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => { setContextMenuFriendId(null); navigator.clipboard?.writeText(friend.username); toast.success(gt("Username copied")); }}
+                              >
+                                <Copy className="w-4 h-4 mr-2" />
+                                <T>Copy Username</T>
+                              </DropdownMenuItem>
+                              {user?.badges?.some((b: string) => ["admin", "serikacord_developer"].includes(b)) && (
+                                <DropdownMenuItem
+                                  onClick={() => { setContextMenuFriendId(null); navigator.clipboard?.writeText(friend.id); toast.success(gt("User ID copied")); }}
+                                >
+                                  <Copy className="w-4 h-4 mr-2" />
+                                  <T>Copy User ID</T>
+                                </DropdownMenuItem>
+                              )}
+                              <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
+                              <DropdownMenuItem
+                                onClick={() => { setContextMenuFriendId(null); handleRemoveFriend(friend.id); }}
+                                className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
+                              >
+                                <UserX className="w-4 h-4 mr-2" />
+                                <T>Remove Friend</T>
+                              </DropdownMenuItem>
+                              <DropdownMenuItem
+                                onClick={() => { setContextMenuFriendId(null); handleBlockUser(friend.id); }}
+                                className="text-red-400 focus:text-[var(--text-on-accent)] focus:bg-red-500"
+                              >
+                                <Shield className="w-4 h-4 mr-2" />
+                                <T>Block</T>
+                              </DropdownMenuItem>
+                            </DropdownMenuContent>
+                          </DropdownMenu>
+                          </Fragment>
                         ))}
                       </div>
                     </>

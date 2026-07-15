@@ -1,16 +1,20 @@
 "use client";
 
 import { useState, useCallback, useMemo, useRef } from "react";
-import { Crown, Play, Pause, Music2, Gamepad2, Code2, Bot, Check } from "lucide-react";
+import { Crown, Play, Pause, Music2, Gamepad2, Code2, Bot, Check, Copy, MessageSquare, UserCircle, X } from "lucide-react";
 import { useServer, useServerMembers } from "@/contexts/ServerContext";
+import { useAuth } from "@/contexts/AuthContext";
 import { useUserActivity } from "@/hooks/useMoeActivity";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { cn } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
 import { getNameplateBackground } from "@/lib/constants/nameplates";
 import { T, useGT } from "gt-next";
+import { toast } from "sonner";
+import { useRouter } from "next/navigation";
 
 interface MemberRole {
   id: string;
@@ -169,6 +173,9 @@ interface MemberItemProps {
 
 function MemberItem({ member, serverId }: MemberItemProps) {
   const gt = useGT();
+  const router = useRouter();
+  const { user } = useAuth();
+  const [menuOpen, setMenuOpen] = useState(false);
   const isOffline = member.status === "offline";
   const roleColor = member.highestRole?.color;
   // Only poll live activity for members who are actually around.
@@ -183,6 +190,10 @@ function MemberItem({ member, serverId }: MemberItemProps) {
 
   return (
     <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
+      <div
+        className="relative"
+        onContextMenu={(e) => { e.preventDefault(); setMenuOpen(true); }}
+      >
       <button
         className={cn(
           "relative overflow-hidden w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",
@@ -281,6 +292,37 @@ function MemberItem({ member, serverId }: MemberItemProps) {
           )}
         </div>
       </button>
+      <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+        <DropdownMenuTrigger asChild>
+          <span className="absolute inset-0 pointer-events-none" aria-hidden />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent side="left" align="start" className="w-52">
+          <DropdownMenuItem onClick={() => { setMenuOpen(false); router.push(`/dm/${member.id}`); }}>
+            <MessageSquare className="w-4 h-4" />
+            {gt("Send Message")}
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.username); toast.success(gt("Username copied")); }}>
+            <Copy className="w-4 h-4" />
+            {gt("Copy Username")}
+          </DropdownMenuItem>
+          {user?.badges?.some((b: string) => ["admin", "serikacord_developer"].includes(b)) && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.id); toast.success(gt("User ID copied")); }}>
+                <Copy className="w-4 h-4" />
+                {gt("Copy User ID")}
+              </DropdownMenuItem>
+              {serverId && (
+                <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.membershipId); toast.success(gt("Membership ID copied")); }}>
+                  <Copy className="w-4 h-4" />
+                  {gt("Copy Membership ID")}
+                </DropdownMenuItem>
+              )}
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      </div>
     </MemberProfilePopup>
   );
 }

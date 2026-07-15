@@ -35,6 +35,11 @@ export function ImageLightbox({
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [isTauri, setIsTauri] = useState(false);
+
+  useEffect(() => {
+    setIsTauri(typeof window !== "undefined" && Boolean((window as any).__TAURI__));
+  }, []);
   const fallbackItems: ImageLightboxItem[] = src ? [{ src, alt }] : [];
   const galleryItems = items && items.length > 0 ? items : fallbackItems;
   const hasItems = galleryItems.length > 0;
@@ -206,16 +211,18 @@ export function ImageLightbox({
         >
           <ZoomIn className="w-5 h-5" />
         </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDownload();
-          }}
-          className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
-          title={gt("Download")}
-        >
-          <Download className="w-5 h-5" />
-        </button>
+        {!isTauri && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDownload();
+            }}
+            className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
+            title={gt("Download")}
+          >
+            <Download className="w-5 h-5" />
+          </button>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();

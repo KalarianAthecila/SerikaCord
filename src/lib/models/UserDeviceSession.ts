@@ -20,6 +20,7 @@ export const UserDeviceSession = {
         case 'id': conditions.push(eq(schema.userDeviceSessions.id, normalizeId(value as string))); break;
         case 'userId': conditions.push(eq(schema.userDeviceSessions.userId, normalizeId(value as string))); break;
         case 'current': conditions.push(eq(schema.userDeviceSessions.current, value as boolean)); break;
+        case 'browser': conditions.push(eq(schema.userDeviceSessions.browser, value as string)); break;
       }
     }
     let query = db.select().from(schema.userDeviceSessions);
@@ -53,6 +54,19 @@ export const UserDeviceSession = {
   async updateById(id: string, data: Partial<typeof schema.userDeviceSessions.$inferInsert>) {
     const [row] = await db.update(schema.userDeviceSessions).set({ ...data, updatedAt: new Date() }).where(eq(schema.userDeviceSessions.id, normalizeId(id))).returning();
     return row || null;
+  },
+
+  async updateMany(filter: Record<string, unknown>, data: Partial<typeof schema.userDeviceSessions.$inferInsert>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'userId': conditions.push(eq(schema.userDeviceSessions.userId, normalizeId(value as string))); break;
+        case 'current': conditions.push(eq(schema.userDeviceSessions.current, value as boolean)); break;
+      }
+    }
+    if (conditions.length === 0) return;
+    await db.update(schema.userDeviceSessions).set(data).where(and(...conditions));
   },
 
   async deleteById(id: string) {

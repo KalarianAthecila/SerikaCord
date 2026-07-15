@@ -512,15 +512,17 @@ export function CustomEmojiPicker({
               {serverId || availableServerStickers.length > 0 ? gt("Server Stickers") : gt("Stickers")}
             </p>
           </div>
-          <div className="p-3 flex-1 overflow-y-auto">
+          <div className="flex-1 overflow-y-auto">
             {isLoadingStickers ? (
-              <div className="grid grid-cols-5 gap-2">
-                {Array.from({ length: 10 }).map((_, idx) => (
-                  <div key={idx} className="h-16 rounded-md bg-[#2a2a40] animate-pulse" />
-                ))}
+              <div className="p-3">
+                <div className="grid grid-cols-5 gap-2">
+                  {Array.from({ length: 10 }).map((_, idx) => (
+                    <div key={idx} className="h-16 rounded-md bg-[#2a2a40] animate-pulse" />
+                  ))}
+                </div>
               </div>
             ) : stickers.length > 0 ? (
-              <div className="space-y-4">
+              <div className="p-3 space-y-4">
                 {Object.entries(
                   stickers.reduce((acc, sticker) => {
                     const group = sticker.serverName || (sticker.serverId ? "Server" : "Stickers");
@@ -530,7 +532,7 @@ export function CustomEmojiPicker({
                   }, {} as Record<string, StickerItem[]>)
                 ).map(([serverName, serverStickers]) => (
                   <div key={serverName}>
-                    <p className="text-xs uppercase tracking-wider text-[#8888aa] mb-2 sticky top-0 bg-[#1a1a2e] py-1">
+                    <p className="text-xs uppercase tracking-wider text-[#8888aa] mb-2 sticky top-0 bg-[#1a1a2e] py-1 z-10 -mx-3 px-3">
                       {serverName}
                     </p>
                     <div className="grid grid-cols-5 gap-2">
@@ -554,7 +556,7 @@ export function CustomEmojiPicker({
                 ))}
               </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center">
+              <div className="h-full flex flex-col items-center justify-center text-center p-3">
                 <Sticker className="w-8 h-8 text-[#8888aa] mb-3" />
                 <p className="text-[#8888aa] text-sm">
                   {serverId || availableServerStickers.length > 0 ? gt("No stickers uploaded yet") : gt("Open a server channel to use stickers")}

@@ -1291,19 +1291,66 @@ const userRoutes = new Elysia({ prefix: '/users' })
 
     const userAgent = request.headers.get('user-agent') || 'Unknown Device';
     const userId = (authUser as any).id || (authUser as any)._id;
-    const existingCurrent = await UserDeviceSession.findOne({ userId, current: true });
-    if (!existingCurrent) {
+
+    // Parse user agent for a friendly device name
+    const isTauri = userAgent.includes('Tauri') || request.headers.get('x-serika-client') === 'tauri';
+    let browser = 'Unknown Browser';
+    let platform = 'Desktop';
+    let deviceName = 'Unknown Device';
+
+    if (isTauri) {
+      deviceName = 'SerikaCord Desktop App';
+      browser = 'Tauri';
+      if (userAgent.includes('Windows')) platform = 'Windows';
+      else if (userAgent.includes('Mac')) platform = 'macOS';
+      else if (userAgent.includes('Linux')) platform = 'Linux';
+    } else {
+      // Detect browser
+      if (userAgent.includes('Edg/')) browser = 'Edge';
+      else if (userAgent.includes('OPR/') || userAgent.includes('Opera')) browser = 'Opera';
+      else if (userAgent.includes('Chrome/') && !userAgent.includes('Edg/')) browser = 'Chrome';
+      else if (userAgent.includes('Firefox/')) browser = 'Firefox';
+      else if (userAgent.includes('Safari/') && !userAgent.includes('Chrome/')) browser = 'Safari';
+
+      // Detect platform
+      if (userAgent.includes('Android')) { platform = 'Android'; deviceName = `${browser} on Android`; }
+      else if (userAgent.includes('iPhone') || userAgent.includes('iPad')) { platform = 'iOS'; deviceName = `${browser} on iOS`; }
+      else if (userAgent.includes('Windows')) { platform = 'Windows'; deviceName = `${browser} on Windows`; }
+      else if (userAgent.includes('Mac')) { platform = 'macOS'; deviceName = `${browser} on macOS`; }
+      else if (userAgent.includes('Linux')) { platform = 'Linux'; deviceName = `${browser} on Linux`; }
+      else deviceName = `${browser} on Desktop`;
+    }
+
+    if (isTauri) {
+      deviceName = `SerikaCord Desktop (${platform})`;
+    }
+
+    // Match by UA fingerprint so the same browser/app reuses its session
+    const uaFingerprint = userAgent.slice(0, 200);
+    const existing = await UserDeviceSession.findOne({ userId, browser: uaFingerprint });
+
+    // Unset any previous "current" sessions for this user
+    await UserDeviceSession.updateMany({ userId, current: true }, { current: false });
+
+    if (existing) {
+      await UserDeviceSession.updateById(existing.id, {
+        current: true,
+        lastActiveAt: new Date(),
+        deviceName,
+        platform,
+        browser: uaFingerprint,
+        ipAddress: getClientIP(request),
+      });
+    } else {
       await UserDeviceSession.create({
         userId,
-        deviceName: userAgent.slice(0, 120),
-        platform: userAgent.includes('Mobile') ? 'Mobile' : 'Desktop',
-        browser: userAgent.slice(0, 80),
+        deviceName,
+        platform,
+        browser: uaFingerprint,
         ipAddress: getClientIP(request),
         current: true,
         lastActiveAt: new Date(),
       });
-    } else {
-      await UserDeviceSession.updateById(existingCurrent.id, { lastActiveAt: new Date() });
     }
 
     const devices = await UserDeviceSession.find({ userId });

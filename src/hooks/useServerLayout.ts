@@ -208,6 +208,58 @@ export function useServerLayout(liveServerIds: string[]) {
     });
   }, []);
 
+  // Unified move: extract a server from wherever it is (folder or top-level)
+  // and place it at a new position. Handles all drag-drop scenarios in one
+  // state update so there's no race between remove + insert.
+  const moveServer = useCallback((serverId: string, target:
+    | { kind: "topLevel"; index: number }
+    | { kind: "folder"; folderId: string }
+    | { kind: "mergeWithServer"; targetServerId: string }
+  ) => {
+    setEntries((prev) => {
+      const next: ServerLayoutEntry[] = [];
+      for (const e of prev) {
+        if (e.kind === "folder" && e.serverIds.includes(serverId)) {
+          const remaining = e.serverIds.filter((id) => id !== serverId);
+          if (remaining.length > 0) next.push({ ...e, serverIds: remaining });
+        } else if (e.kind === "server" && e.id === serverId) {
+          // skip — will be re-inserted below
+        } else {
+          next.push(e);
+        }
+      }
+
+      if (target.kind === "topLevel") {
+        const idx = Math.min(Math.max(0, target.index), next.length);
+        next.splice(idx, 0, { kind: "server", id: serverId });
+      } else if (target.kind === "folder") {
+        for (const e of next) {
+          if (e.kind === "folder" && e.id === target.folderId) {
+            if (!e.serverIds.includes(serverId)) e.serverIds.push(serverId);
+            break;
+          }
+        }
+      } else if (target.kind === "mergeWithServer") {
+        const targetIdx = next.findIndex((e) => e.kind === "server" && e.id === target.targetServerId);
+        if (targetIdx !== -1) {
+          const folder: ServerLayoutEntry = {
+            kind: "folder",
+            id: newId(),
+            name: "New Folder",
+            color: randomFolderColor(),
+            serverIds: [target.targetServerId, serverId],
+          };
+          next.splice(targetIdx, 1, folder);
+        } else {
+          next.push({ kind: "server", id: serverId });
+        }
+      }
+
+      save({ entries: next });
+      return next;
+    });
+  }, []);
+
   const folders = reconciled.filter(
     (e): e is Extract<ServerLayoutEntry, { kind: "folder" }> => e.kind === "folder"
   );
@@ -222,6 +274,7 @@ export function useServerLayout(liveServerIds: string[]) {
     removeFromFolder,
     renameFolder,
     recolorFolder,
+    moveServer,
     folderColors: FOLDER_COLORS,
   };
 }

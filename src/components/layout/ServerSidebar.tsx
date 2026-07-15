@@ -98,8 +98,8 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
 
   const liveIds = useMemo(() => uniqueServers.map((s) => s.id), [uniqueServers]);
   const {
-    entries, folders, reorder, createFolder, mergeIntoNewFolder, addToFolder, removeFromFolder,
-    renameFolder, recolorFolder, folderColors,
+    entries, folders, reorder, createFolder, addToFolder, removeFromFolder,
+    renameFolder, recolorFolder, moveServer, folderColors,
   } = useServerLayout(liveIds);
 
   const entryKey = (e: ServerLayoutEntry) => (e.kind === "server" ? `s:${e.id}` : `f:${e.id}`);
@@ -142,14 +142,54 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
     const targetKey = entryKey(target);
     if (source === targetKey) return;
 
-    if (dt.mode === "into" && source.startsWith("s:")) {
+    if (source.startsWith("s:")) {
       const sourceId = source.slice(2);
-      if (target.kind === "folder") { addToFolder(sourceId, target.id); return; }
-      mergeIntoNewFolder(sourceId, target.id); // server onto server
+
+      // "into" mode: merge into folder or create new folder with target server
+      if (dt.mode === "into") {
+        if (target.kind === "folder") {
+          moveServer(sourceId, { kind: "folder", folderId: target.id });
+        } else {
+          moveServer(sourceId, { kind: "mergeWithServer", targetServerId: target.id });
+        }
+        return;
+      }
+
+      // "before"/"after" reorder — handle servers from folders and top-level
+      const inFolder = folders.find((f) => f.serverIds.includes(sourceId));
+      if (inFolder) {
+        // Extract from folder, then insert at position
+        const without = entries
+          .map((e) =>
+            e.kind === "folder" && e.id === inFolder.id
+              ? { ...e, serverIds: e.serverIds.filter((id) => id !== sourceId) }
+              : e
+          )
+          .filter((e) => !(e.kind === "folder" && e.serverIds.length === 0))
+          .filter((e) => !(e.kind === "server" && e.id === sourceId));
+        const targetIdx = without.findIndex((en) => entryKey(en) === targetKey);
+        if (targetIdx === -1) {
+          without.push({ kind: "server", id: sourceId });
+        } else {
+          const insertAt = dt.mode === "before" ? targetIdx : targetIdx + 1;
+          without.splice(insertAt, 0, { kind: "server", id: sourceId });
+        }
+        reorder(without);
+      } else {
+        // Top-level server reorder
+        const src = entries.find((en) => entryKey(en) === source);
+        if (!src) return;
+        const without = entries.filter((en) => entryKey(en) !== source);
+        const targetIdx = without.findIndex((en) => entryKey(en) === targetKey);
+        if (targetIdx === -1) return;
+        const insertAt = dt.mode === "before" ? targetIdx : targetIdx + 1;
+        without.splice(insertAt, 0, src);
+        reorder(without);
+      }
       return;
     }
 
-    // Reorder at the top level.
+    // Folder drag — only reorder at top level
     const src = entries.find((en) => entryKey(en) === source);
     if (!src) return;
     const without = entries.filter((en) => entryKey(en) !== source);
@@ -158,6 +198,45 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
     const insertAt = dt.mode === "before" ? targetIdx : targetIdx + 1;
     without.splice(insertAt, 0, src);
     reorder(without);
+  };
+
+  const handleDropOnBottom = () => {
+    const source = draggingKey;
+    setDraggingKey(null);
+    setDropTarget(null);
+    if (!source) return;
+
+    if (source.startsWith("s:")) {
+      const sourceId = source.slice(2);
+      const inFolder = folders.find((f) => f.serverIds.includes(sourceId));
+      if (inFolder) {
+        // Pull out of folder and append to end
+        const without = entries
+          .map((e) =>
+            e.kind === "folder" && e.id === inFolder.id
+              ? { ...e, serverIds: e.serverIds.filter((id) => id !== sourceId) }
+              : e
+          )
+          .filter((e) => !(e.kind === "folder" && e.serverIds.length === 0))
+          .filter((e) => !(e.kind === "server" && e.id === sourceId));
+        without.push({ kind: "server", id: sourceId });
+        reorder(without);
+      } else {
+        // Already top-level, move to end
+        const src = entries.find((en) => entryKey(en) === source);
+        if (!src) return;
+        const without = entries.filter((en) => entryKey(en) !== source);
+        without.push(src);
+        reorder(without);
+      }
+    } else {
+      // Folder to end
+      const src = entries.find((en) => entryKey(en) === source);
+      if (!src) return;
+      const without = entries.filter((en) => entryKey(en) !== source);
+      without.push(src);
+      reorder(without);
+    }
   };
 
   const clearDrag = () => { setDraggingKey(null); setDropTarget(null); };
@@ -481,9 +560,21 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
             className="flex flex-col items-center gap-2 w-full rounded-[12px] py-2"
             style={{ backgroundColor: `${folder.color}1A` }}
           >
-            {folderServers.map((s) => (
-              <div key={s.id}>{renderServerIcon(s, true)}</div>
-            ))}
+            {folderServers.map((s) => {
+              const sKey = `s:${s.id}`;
+              const isDraggingOut = draggingKey === sKey;
+              return (
+                <div
+                  key={s.id}
+                  draggable
+                  onDragStart={(e) => { setDraggingKey(sKey); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", sKey); }}
+                  onDragEnd={clearDrag}
+                  className={cn("transition-opacity", isDraggingOut && "opacity-40")}
+                >
+                  {renderServerIcon(s, true)}
+                </div>
+              );
+            })}
           </motion.div>
         )}
       </div>
@@ -574,9 +665,12 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
         <Separator className="w-8 h-0.5 bg-[var(--app-border)] rounded-full" />
 
         {/* Server List — drag a server onto another to make a folder, or between
-            items to reorder. Native DnD so the avatar image itself never gets
-            dragged and no horizontal scroll appears. */}
-        <div className="flex-1 w-full overflow-x-hidden overflow-y-auto server-rail-scroll py-0.5">
+            items to reorder. Dropping on the empty area below moves to end. */}
+        <div
+          className="flex-1 w-full overflow-x-hidden overflow-y-auto server-rail-scroll py-0.5"
+          onDragOver={(e) => { if (draggingKey) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
+          onDrop={(e) => { if (draggingKey && !dropTarget) { e.preventDefault(); handleDropOnBottom(); } }}
+        >
           <div className="flex flex-col items-center gap-2">
             {entries.map((entry) => {
               const key = entryKey(entry);
@@ -591,9 +685,9 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                   onDragStart={(e) => { setDraggingKey(key); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", key); }}
                   onDragEnd={clearDrag}
                   onDragOver={(e) => handleDragOver(e, entry)}
-                  onDrop={(e) => { e.preventDefault(); applyDrop(entry); }}
+                  onDrop={(e) => { e.preventDefault(); e.stopPropagation(); applyDrop(entry); }}
                   className={cn(
-                    "relative w-full flex justify-center transition-opacity",
+                    "relative w-full flex justify-center transition-opacity duration-150",
                     isDragging && "opacity-40"
                   )}
                 >
@@ -608,6 +702,14 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
                 </div>
               );
             })}
+            {/* Bottom drop zone — visible only while dragging */}
+            {draggingKey && (
+              <div
+                className="w-full min-h-[24px] rounded transition-colors"
+                onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
+                onDrop={(e) => { e.preventDefault(); e.stopPropagation(); handleDropOnBottom(); }}
+              />
+            )}
           </div>
         </div>
 
