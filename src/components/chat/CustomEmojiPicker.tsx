@@ -599,7 +599,7 @@ export function CustomEmojiPicker({
           {/* Main Content - Sidebar + Emoji Grid */}
           <div className="flex flex-1 min-h-0">
             {/* Category Sidebar */}
-            <div className="w-12 bg-[#0f0f1a] flex flex-col items-center py-2 gap-1 border-r border-[#2a2a40] overflow-y-auto scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent">
+            <div className="w-12 h-[440px] max-h-[60dvh] bg-[#0f0f1a] flex flex-col items-center py-2 gap-1 border-r border-[#2a2a40] overflow-y-auto scrollbar-thin scrollbar-thumb-[#2a2a40] scrollbar-track-transparent">
               {/* Server icons — same sizing as category icons, at the top */}
               {groupedCustomEmojis.map((group) => {
                 const sectionId = `server-${group.serverId || group.server}`;
