@@ -6,6 +6,9 @@ import dynamic from "next/dynamic";
 import { useAuth } from "@/contexts/AuthContext";
 import { ServerProvider, useServer } from "@/contexts/ServerContext";
 import { UnreadProvider } from "@/contexts/UnreadContext";
+import { useAppHotkeys } from "@/hooks/useAppHotkeys";
+import { onHotkey } from "@/lib/keybinds";
+import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcutsDialog";
 import { ServerSidebar } from "@/components/layout/ServerSidebar";
 import { ChannelSidebar } from "@/components/layout/ChannelSidebar";
 import { BottomNavigation } from "@/components/mobile";
@@ -144,6 +147,16 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
   const { currentServer } = useServer();
+
+  // Global Discord-style keyboard shortcuts (navigation handled internally;
+  // UI actions arrive as broadcast events, wired below).
+  useAppHotkeys();
+  useEffect(() => {
+    const unsubs = [
+      onHotkey("create-server", () => setShowCreateServer(true)),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, []);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -294,6 +307,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
         <BottomNavigation />
 
         {/* Dialogs */}
+        <KeyboardShortcutsDialog />
         <CreateServerDialog
           open={showCreateServer}
           onOpenChange={setShowCreateServer}
@@ -354,6 +368,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
       </div>
 
       {/* Dialogs */}
+      <KeyboardShortcutsDialog />
       <CreateServerDialog
         open={showCreateServer}
         onOpenChange={setShowCreateServer}

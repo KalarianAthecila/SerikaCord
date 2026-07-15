@@ -232,7 +232,39 @@ export default function DMConversationPage() {
     messageBarRef.current?.getComposer()?.focus();
   }, []);
 
+  /** Begin editing the current user's most recent editable message. */
+  const editLastOwnMessage = () => {
+    if (!user) return false;
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      const m = chat.messages[i];
+      if (m.author?.id !== user.id) continue;
+      if (m.pending || m.id.startsWith("temp-")) continue;
+      chat.actions.startEditing(m);
+      messageListRef.current?.scrollToMessage(m.id);
+      return true;
+    }
+    return false;
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
+    const composer = messageBarRef.current?.getComposer();
+    const isComposerEmpty = (composer?.getText().trim().length ?? 0) === 0;
+
+    // ArrowUp on an empty composer edits your last message (Discord parity).
+    if (e.key === "ArrowUp" && isComposerEmpty && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (editLastOwnMessage()) {
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // Escape clears the active reply.
+    if (e.key === "Escape" && chat.actions.replyToMessage) {
+      e.preventDefault();
+      chat.actions.setReplyToMessage(null);
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSend();

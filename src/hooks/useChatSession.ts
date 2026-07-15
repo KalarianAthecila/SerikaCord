@@ -230,6 +230,10 @@ export function useChatSession<M extends ChatMessage>({
   const [messages, setMessages] = useState<M[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isSending, setIsSending] = useState(false);
+  // Synchronous re-entrancy guard: `isSending` state updates only after a
+  // render, so rapid Enter presses (especially while attachments upload) could
+  // otherwise fire sendMessage multiple times before the flag flips.
+  const sendingRef = useRef(false);
   const [hasMoreOlder, setHasMoreOlder] = useState(false);
   const [isLoadingMore, setIsLoadingMore] = useState(false);
   const [pinnedMessages, setPinnedMessages] = useState<M[]>([]);
@@ -627,6 +631,10 @@ export function useChatSession<M extends ChatMessage>({
         return;
       }
 
+      // Drop duplicate sends triggered before the previous one settled.
+      if (sendingRef.current) return;
+      sendingRef.current = true;
+
       const replyReference = actions.replyToMessage;
       if (!isOverrideSend) {
         composer?.clear();
@@ -731,6 +739,7 @@ export function useChatSession<M extends ChatMessage>({
         restoreDraft();
         toast.error(gt("Failed to send message. Check your connection."));
       } finally {
+        sendingRef.current = false;
         setIsSending(false);
         actions.setReplyToMessage(null);
       }

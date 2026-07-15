@@ -211,7 +211,7 @@ function MemberItem({ member, serverId }: MemberItemProps) {
       >
       <button
         className={cn(
-          "relative overflow-hidden w-full px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-all group",
+          "relative overflow-hidden px-2 py-1.5 mx-2 rounded-lg flex items-center gap-3 bg-white/[0.02] hover:bg-[var(--app-surface)] transition-colors group",
           isOffline && "opacity-50"
         )}
         style={{ width: "calc(100% - 16px)", touchAction: "pan-y" }}

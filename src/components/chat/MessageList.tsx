@@ -31,6 +31,10 @@ export interface MessageListHandle {
   scrollToMessage: (messageId: string) => void;
   isAtBottom: () => boolean;
   forceScrollToBottom: () => void;
+  /** Scroll roughly one viewport up (dir -1) or down (dir 1). */
+  scrollByViewport: (dir: 1 | -1) => void;
+  /** Scroll to the very top (loading older messages happens automatically). */
+  scrollToTop: () => void;
 }
 
 interface MentionUser {
@@ -189,6 +193,16 @@ function MessageListInner<M extends ChatMessage>(
     forceScrollRef.current = true;
   }, []);
 
+  const scrollByViewport = useCallback((dir: 1 | -1) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollBy({ top: dir * viewport.clientHeight * 0.9, behavior: "smooth" });
+  }, []);
+
+  const scrollToTop = useCallback(() => {
+    viewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -196,8 +210,10 @@ function MessageListInner<M extends ChatMessage>(
       scrollToMessage,
       isAtBottom: () => isAtBottomRef.current,
       forceScrollToBottom,
+      scrollByViewport,
+      scrollToTop,
     }),
-    [scrollToBottom, scrollToMessage, forceScrollToBottom]
+    [scrollToBottom, scrollToMessage, forceScrollToBottom, scrollByViewport, scrollToTop]
   );
 
   // Scroll restoration after loading older messages — runs synchronously

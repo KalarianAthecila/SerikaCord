@@ -67,6 +67,7 @@ import {
   type AppLeafCommand,
 } from "@/lib/chat/appCommandContext";
 import type { ChatMessage } from "@/lib/chat/types";
+import { onHotkey } from "@/lib/keybinds";
 import { EMOJI_NAMES } from "@/lib/constants/emojis";
 import { T, useGT, useLocale } from "gt-next";
 import { Loader } from "@/components/ui/Loader";
@@ -1244,6 +1245,21 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     });
   }, [currentChannel]);
 
+  /** Begin editing the current user's most recent editable message. */
+  const editLastOwnMessage = useCallback(() => {
+    if (!user) return false;
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      const m = chat.messages[i];
+      if (m.author?.id !== user.id) continue;
+      // Skip optimistic (not-yet-persisted) messages
+      if (m.pending || m.id.startsWith("temp-")) continue;
+      chat.actions.startEditing(m);
+      messageListRef.current?.scrollToMessage(m.id);
+      return true;
+    }
+    return false;
+  }, [user, chat.messages, chat.actions]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (mentionSuggestions.length > 0) {
       if (e.key === "ArrowDown") {
@@ -1263,7 +1279,9 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         setActiveMentionIndex(0);
         return;
       }
-      // Tab inserts the selected suggestion (autocomplete)
+      // Tab / Enter accept the highlighted suggestion (autocomplete).
+      // Enter only autocompletes here when there's a real selectable item;
+      // it otherwise falls through to send below.
       if (e.key === "Tab") {
         const selected = mentionSuggestions[activeMentionIndex];
         if (selected) {
@@ -1290,6 +1308,26 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
       }
     }
 
+    const composer = messageBarRef.current?.getComposer();
+    const isComposerEmpty = (composer?.getText().trim().length ?? 0) === 0;
+
+    // ArrowUp on an empty composer edits your last message (Discord parity).
+    if (e.key === "ArrowUp" && isComposerEmpty && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (editLastOwnMessage()) {
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // Escape clears the active reply, then falls back to blurring the composer.
+    if (e.key === "Escape") {
+      if (chat.actions.replyToMessage) {
+        e.preventDefault();
+        chat.actions.setReplyToMessage(null);
+        return;
+      }
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       void handleSend();
@@ -1304,6 +1342,19 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const focusComposer = useCallback(() => {
     messageBarRef.current?.getComposer()?.focus();
   }, []);
+
+  // Wire broadcast keyboard-shortcut actions owned by the chat surface.
+  useEffect(() => {
+    const unsubs = [
+      onHotkey("toggle-pins", () => setShowPins((v) => !v)),
+      onHotkey("toggle-members", () => onToggleMembers?.()),
+      onHotkey("focus-composer", () => messageBarRef.current?.getComposer()?.focus()),
+      onHotkey("scroll-up", () => messageListRef.current?.scrollByViewport(-1)),
+      onHotkey("scroll-down", () => messageListRef.current?.scrollByViewport(1)),
+      onHotkey("jump-oldest-unread", () => messageListRef.current?.scrollToTop()),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, [onToggleMembers]);
 
   const formatTimestamp = (ts: string) => formatMessageTimestamp(ts, gt, locale);
 

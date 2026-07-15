@@ -47,6 +47,7 @@ import {
 import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
 import { RichComposer, type RichComposerHandle, type ComposerEmoji } from "@/components/chat/RichComposer";
 import { decodeHtmlEntities } from "@/lib/chat/messages";
+import { onHotkey } from "@/lib/keybinds";
 import { T, useGT } from "gt-next";
 import { Loader } from "@/components/ui/Loader";
 
@@ -230,6 +231,18 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
           }
         })
         .catch(() => {});
+    }, []);
+
+    // Broadcast keyboard-shortcut actions owned by the composer.
+    useEffect(() => {
+      const unsubs = [
+        onHotkey("toggle-emoji", () => {
+          setPickerTab("emoji");
+          setShowEmojiPicker((v) => !v);
+        }),
+        onHotkey("upload-file", () => fileInputRef.current?.click()),
+      ];
+      return () => unsubs.forEach((u) => u());
     }, []);
 
     useEffect(() => {

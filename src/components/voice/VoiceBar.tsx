@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
 import { useSpeakingUsers } from "@/hooks/useSpeakingUsers";
 import { VoiceParticipantAvatar } from "@/components/voice/VoiceParticipantAvatar";
+import { onHotkey } from "@/lib/keybinds";
 import { useGT } from "gt-next";
 
 interface VoiceBarProps {
@@ -76,6 +77,15 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
     setIsDeafened(deafened);
     if (deafened) setIsMuted(true);
   }, []);
+
+  // Ctrl+Shift+M / Ctrl+Shift+D global toggles (only act while connected).
+  useEffect(() => {
+    const unsubs = [
+      onHotkey("toggle-mute", () => { if (voiceService.connected) handleMute(); }),
+      onHotkey("toggle-deafen", () => { if (voiceService.connected) handleDeafen(); }),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, [handleMute, handleDeafen]);
 
   const handleVideo = useCallback(async () => {
     const videoOn = await voiceService.toggleVideo();
