@@ -628,8 +628,8 @@ textarea::selection,
 
 /* Render optimization: skip layout/paint for off-screen message groups */
 .msg-group-cv {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 88px;
+  /* content-visibility: auto; */
+  /* contain-intrinsic-size: auto 88px; */
   /* content-visibility forces paint containment, which clips anything drawn
      outside the box — including the hover toolbar floated above the first row
      (-top-3). Reserve headroom + a matching negative margin so the toolbar

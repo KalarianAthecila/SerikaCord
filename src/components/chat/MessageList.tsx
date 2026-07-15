@@ -239,6 +239,7 @@ function MessageListInner<M extends ChatMessage>(
   // useLayoutEffect ensures instant scroll (no flash) on initial load and
   // force-scroll; RAF-deferred smooth scroll for subsequent new messages.
   useLayoutEffect(() => {
+    if (isLoading) return;
     if (pendingScrollRestoreRef.current) return; // handled above
     const prevCount = prevMessageCountRef.current;
     prevMessageCountRef.current = messageCount;
@@ -280,7 +281,7 @@ function MessageListInner<M extends ChatMessage>(
     if (animateIn) {
       Promise.resolve().then(() => setAnimateIn(false));
     }
-  }, [messageCount, animateIn]);
+  }, [messageCount, animateIn, isLoading]);
 
   // Detect if new groups were appended at the bottom (vs prepended at top).
   // Used to apply slide-in animation to newly arrived messages.

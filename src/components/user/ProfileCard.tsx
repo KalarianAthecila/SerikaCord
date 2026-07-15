@@ -165,6 +165,7 @@ export function ProfileCard({
   const [fullProfileOpen, setFullProfileOpen] = useState(false);
   const [canManageRoles, setCanManageRoles] = useState(false);
   const [canModerate, setCanModerate] = useState(false);
+  const [isAdminOfServer, setIsAdminOfServer] = useState(false);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [isUpdatingRoles, setIsUpdatingRoles] = useState(false);
 
@@ -203,6 +204,10 @@ export function ProfileCard({
           setCanModerate(
             Boolean(permData.isOwner) ||
               MOD_BITS.some((bit) => hasPermissionBit(permData.permissions, bit))
+          );
+          setIsAdminOfServer(
+            Boolean(permData.isOwner) ||
+              hasPermissionBit(permData.permissions, 1n << 3n)
           );
         }
       } catch {
@@ -329,6 +334,18 @@ export function ProfileCard({
           <div className="absolute inset-0 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#4F46E5]" />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-[#0c0c10]/70 via-transparent to-transparent" />
+
+        {/* Mod view button in the top right of the banner */}
+        {!isSelf && user.id && serverId && isAdminOfServer && onOpenModView && (
+          <button
+            onClick={onOpenModView}
+            aria-label={gt("Open in Mod View")}
+            title={gt("Open in Mod View")}
+            className="absolute top-3.5 right-3.5 z-20 p-2 rounded-lg bg-black/40 hover:bg-black/60 active:scale-[0.95] text-white backdrop-blur-md border border-white/[0.06] transition-all"
+          >
+            <ShieldAlert className="w-4 h-4" />
+          </button>
+        )}
       </div>
 
       <div className="relative flex-1 flex flex-col min-h-0 px-4 pb-4">
@@ -351,16 +368,6 @@ export function ProfileCard({
 
         {/* Actions */}
         <div className="flex justify-end gap-2 pt-3 min-h-[44px]">
-          {!isSelf && user.id && serverId && canModerate && onOpenModView && (
-            <button
-              onClick={onOpenModView}
-              aria-label={gt("Open in Mod View")}
-              title={gt("Open in Mod View")}
-              className="p-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] active:scale-[0.97] text-white transition-all mr-auto"
-            >
-              <ShieldAlert className="w-4 h-4" />
-            </button>
-          )}
           {!isSelf && user.id && (
             <>
               {!hideMessageButton && (
@@ -573,7 +580,7 @@ export function ProfileCard({
                       </PopoverTrigger>
                       <PopoverContent
                         align="start"
-                        className="w-52 p-1 bg-[#1e1f22] border-[#2b2d31] text-white shadow-xl"
+                        className="w-52 max-h-64 overflow-y-auto p-1 bg-[#1e1f22] border-[#2b2d31] text-white shadow-xl"
                       >
                         {(() => {
                           const assignable = serverRoles.filter(
