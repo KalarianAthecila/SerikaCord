@@ -2774,6 +2774,15 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   { id: "art", name: gt("Art & Design") },
                   { id: "education", name: gt("Education") },
                   { id: "entertainment", name: gt("Entertainment") },
+                  { id: "anime", name: gt("Anime & Manga") },
+                  { id: "science", name: gt("Science") },
+                  { id: "sports", name: gt("Sports & Fitness") },
+                  { id: "food", name: gt("Food & Drink") },
+                  { id: "travel", name: gt("Travel") },
+                  { id: "languages", name: gt("Languages") },
+                  { id: "photography", name: gt("Photography") },
+                  { id: "business", name: gt("Business") },
+                  { id: "lifestyle", name: gt("Lifestyle") },
                 ].map((cat) => {
                   const selectedCats = (settingsDraft.draft.discoveryCategories as string[]) || [];
                   const isSelected = selectedCats.includes(cat.id);

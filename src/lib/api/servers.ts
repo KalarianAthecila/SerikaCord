@@ -1090,7 +1090,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
           if (!Array.isArray(v)) {
             fieldErrors[key] = 'Must be an array of categories';
           } else {
-            const allowed = ['gaming', 'music', 'tech', 'art', 'education', 'entertainment'];
+            const allowed = ['gaming', 'music', 'tech', 'art', 'education', 'entertainment', 'anime', 'science', 'sports', 'food', 'travel', 'languages', 'photography', 'business', 'lifestyle'];
             const valid = v.every((c: any) => typeof c === 'string' && allowed.includes(c));
             if (!valid) {
               fieldErrors[key] = `Categories must be one or more of: ${allowed.join(', ')}`;

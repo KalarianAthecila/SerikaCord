@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { useServer } from "@/contexts/ServerContext";
+import { useUnread } from "@/contexts/UnreadContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { Separator } from "@/components/ui/separator";
@@ -11,56 +12,56 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { Plus, Compass, Download, MessageSquare, Check, BellOff, Bell, Copy, LogOut } from "lucide-react";
+import {
+  Plus, Compass, MessageSquare, Check, BellOff, Bell, Copy, LogOut,
+  FolderPlus, FolderMinus, Folder as FolderIcon, Pencil,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
-import { motion } from "framer-motion";
+import { motion, Reorder } from "framer-motion";
 import { useMentions } from "@/hooks/useMentions";
 import { useServerMutes } from "@/hooks/useServerMutes";
+import { useServerLayout, type ServerLayoutEntry } from "@/hooks/useServerLayout";
+import { usePolling } from "@/hooks/usePolling";
 import { useGT } from "gt-next";
 
 interface ServerSidebarProps {
   onCreateServer: () => void;
 }
 
-// Check if running in native app (Electron, Tauri, or Capacitor)
-function isNativeApp(): boolean {
-  if (typeof window === 'undefined') return false;
-  // Check for Electron (contextBridge object, body class, or user agent)
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const win = window as any;
-  if (win.electron || win.electron?.isElectron) return true;
-  if (typeof document !== 'undefined' && document.body?.classList.contains('electron-app')) return true;
-  if (typeof navigator !== 'undefined' && /Electron/i.test(navigator.userAgent)) return true;
-  // Check for Tauri
-  if (typeof win.__TAURI__ !== 'undefined') return true;
-  // Check for Capacitor
-  if (win.Capacitor?.isNativePlatform?.()) return true;
-  // Check for standalone mode (PWA)
-  if (window.matchMedia('(display-mode: standalone)').matches) return true;
-  return false;
+type Server = ReturnType<typeof useServer>["servers"][number];
+
+interface DMRecipient {
+  id: string;
+  username: string;
+  displayName?: string;
+  avatar?: string;
 }
+interface DMChannel {
+  id: string;
+  type: string;
+  recipients: DMRecipient[];
+  updatedAt?: string;
+}
+
+const DM_POLL_INTERVAL = 30_000;
 
 export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
   const gt = useGT();
   const router = useRouter();
   const { servers, currentServer, setCurrentServer, leaveServer, prefetchServer } = useServer();
-  // Must start false to match SSR (window is unavailable on the server);
-  // the real value is resolved after mount to avoid a hydration mismatch.
-  const [isNative, setIsNative] = useState(false);
   const { serverMentionCounts, markServerRead } = useMentions();
   const { isMuted, toggleMute } = useServerMutes();
+  const { isChannelUnread, getMentionCount, registerChannels } = useUnread();
 
-  useEffect(() => {
-    setIsNative(isNativeApp());
-  }, []);
-
-  // Defensive: drop any entries without an id and de-duplicate by id so the
-  // list keys are always unique (guards against races in server add/refetch).
-  const uniqueServers = (() => {
+  // Defensive: drop entries without an id and de-duplicate by id.
+  const uniqueServers = useMemo(() => {
     const seen = new Set<string>();
-    const out: typeof servers = [];
+    const out: Server[] = [];
     for (const s of servers) {
       const id = s?.id;
       if (!id || seen.has(id)) continue;
@@ -68,41 +69,320 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
       out.push(s);
     }
     return out;
-  })();
+  }, [servers]);
+
+  const serversById = useMemo(() => {
+    const map = new Map<string, Server>();
+    for (const s of uniqueServers) map.set(s.id, s);
+    return map;
+  }, [uniqueServers]);
+
+  const liveIds = useMemo(() => uniqueServers.map((s) => s.id), [uniqueServers]);
+  const {
+    entries, folders, reorder, createFolder, addToFolder, removeFromFolder,
+    renameFolder, recolorFolder, folderColors,
+  } = useServerLayout(liveIds);
 
   const [menuServerId, setMenuServerId] = useState<string | null>(null);
+  const [menuFolderId, setMenuFolderId] = useState<string | null>(null);
+  const [openFolders, setOpenFolders] = useState<Set<string>>(new Set());
+  const [renamingFolder, setRenamingFolder] = useState<string | null>(null);
 
-  const handleServerClick = (server: typeof servers[0]) => {
+  // ── DM unread rail ────────────────────────────────────────────────────────
+  const [dmChannels, setDmChannels] = useState<DMChannel[]>([]);
+
+  const fetchDMs = useCallback(async () => {
+    try {
+      const res = await fetch("/api/dms");
+      if (!res.ok) return;
+      const data = await res.json();
+      const channels = (data.channels || []) as DMChannel[];
+      setDmChannels(channels);
+      // Feed the unread engine so DM unread state is available app-wide.
+      registerChannels(
+        channels.map((c) => ({ id: c.id, type: "dm", lastMessageAt: c.updatedAt ?? null }))
+      );
+    } catch {
+      /* ignore — rail just won't populate */
+    }
+  }, [registerChannels]);
+
+  // usePolling fires immediately on mount (and on tab refocus), so no separate
+  // initial-fetch effect is needed.
+  usePolling(() => void fetchDMs(), DM_POLL_INTERVAL);
+
+  const unreadDMs = useMemo(() => {
+    return dmChannels
+      .filter((c) => c.recipients?.[0] && isChannelUnread(c.id))
+      .map((c) => ({ channel: c, recipient: c.recipients[0], count: getMentionCount(c.id) }));
+  }, [dmChannels, isChannelUnread, getMentionCount]);
+
+  const totalDMUnread = unreadDMs.length;
+  const totalDMMentions = useMemo(
+    () => unreadDMs.reduce((sum, d) => sum + d.count, 0),
+    [unreadDMs]
+  );
+
+  // ── handlers ──────────────────────────────────────────────────────────────
+  const handleServerClick = (server: Server) => {
     setCurrentServer(server);
     router.push(`/channels/${server.id}`);
   };
-
-  const handleCopyServerId = (serverId: string) => {
-    void navigator.clipboard?.writeText(serverId);
-  };
-
-  const handleLeaveServer = async (server: typeof servers[0]) => {
+  const handleCopyServerId = (serverId: string) => void navigator.clipboard?.writeText(serverId);
+  const handleHomeClick = () => { setCurrentServer(null); router.push("/channels/me"); };
+  const handleLeaveServer = async (server: Server) => {
     if (!window.confirm(gt("Leave '{name}'? You'll need a new invite to rejoin.", { name: server.name }))) return;
     try {
       await leaveServer(server.id);
-      if (currentServer?.id === server.id) {
-        setCurrentServer(null);
-        router.push("/channels/me");
-      }
-    } catch {
-      /* leaveServer surfaces its own errors */
-    }
+      if (currentServer?.id === server.id) { setCurrentServer(null); router.push("/channels/me"); }
+    } catch { /* leaveServer surfaces its own errors */ }
+  };
+  const toggleFolder = (id: string) =>
+    setOpenFolders((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+
+  // ── reusable server icon button (plain render fn — no component boundary so
+  //     Reorder items don't remount on every parent state change) ─────────────
+  const renderServerIcon = (server: Server, inFolder: boolean) => {
+    const mentionCount = serverMentionCounts.get(server.id) || 0;
+    const muted = isMuted(server.id);
+    const hasMention = mentionCount > 0 && !muted;
+    const isActive = currentServer?.id === server.id;
+    const folderOfServer = folders.find((f) => f.serverIds.includes(server.id));
+
+    return (
+      <div
+        className="relative"
+        onContextMenu={(e) => { e.preventDefault(); setMenuServerId(server.id); }}
+      >
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <motion.button
+              onClick={() => handleServerClick(server)}
+              onMouseEnter={() => prefetchServer(server.id)}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: "spring", stiffness: 500, damping: 30 }}
+              className={cn(
+                "relative flex items-center justify-center bg-[var(--bg-sidebar-elevated)] transition-[border-radius] duration-200 group overflow-hidden",
+                inFolder ? "w-10 h-10 rounded-[12px] hover:rounded-[10px]" : "w-12 h-12 rounded-[24px] hover:rounded-[16px]",
+                isActive && (inFolder ? "rounded-[10px]" : "rounded-[16px]"),
+                muted && "opacity-60"
+              )}
+            >
+              {server.icon ? (
+                <Avatar className={cn("rounded-none", inFolder ? "w-10 h-10" : "w-12 h-12")}>
+                  <AvatarImage src={server.icon} alt={server.name} />
+                  <AvatarFallback className="rounded-none bg-[var(--app-accent)] text-[var(--text-on-accent)]">
+                    {server.name.charAt(0).toUpperCase()}
+                  </AvatarFallback>
+                </Avatar>
+              ) : (
+                <span className={cn("font-semibold text-[var(--text-primary)]", inFolder ? "text-sm" : "text-lg")}>
+                  {server.name.charAt(0).toUpperCase()}
+                </span>
+              )}
+              {!inFolder && (
+                <div
+                  className={cn(
+                    "absolute left-0 w-1 bg-[var(--text-primary)] rounded-r-full transition-all duration-200",
+                    isActive ? "h-10" : "h-0 group-hover:h-5"
+                  )}
+                />
+              )}
+              {hasMention && !isActive && (
+                <span className="absolute bottom-0 right-0 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)] text-[10px] font-bold text-white leading-none">
+                  {mentionCount > 99 ? "99+" : mentionCount}
+                </span>
+              )}
+            </motion.button>
+          </TooltipTrigger>
+          <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
+            {server.name}
+          </TooltipContent>
+        </Tooltip>
+
+        <DropdownMenu
+          open={menuServerId === server.id}
+          onOpenChange={(o) => setMenuServerId(o ? server.id : null)}
+        >
+          <DropdownMenuTrigger asChild>
+            <span className="absolute inset-0 pointer-events-none" aria-hidden />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent side="right" align="start" className="w-56">
+            <DropdownMenuItem disabled={mentionCount === 0} onClick={() => markServerRead(server.id)}>
+              <Check className="w-4 h-4" />
+              {gt("Mark As Read")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => toggleMute(server.id)}>
+              {muted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
+              {muted ? gt("Unmute Server") : gt("Mute Server")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            {/* Folder management */}
+            {folderOfServer ? (
+              <DropdownMenuItem onClick={() => removeFromFolder(server.id)}>
+                <FolderMinus className="w-4 h-4" />
+                {gt("Remove from Folder")}
+              </DropdownMenuItem>
+            ) : (
+              <>
+                <DropdownMenuItem onClick={() => createFolder(server.id)}>
+                  <FolderPlus className="w-4 h-4" />
+                  {gt("New Folder")}
+                </DropdownMenuItem>
+                {folders.length > 0 && (
+                  <DropdownMenuSub>
+                    <DropdownMenuSubTrigger>
+                      <FolderIcon className="w-4 h-4" />
+                      {gt("Add to Folder")}
+                    </DropdownMenuSubTrigger>
+                    <DropdownMenuSubContent className="w-48">
+                      {folders.map((f) => (
+                        <DropdownMenuItem key={f.id} onClick={() => addToFolder(server.id, f.id)}>
+                          <span className="w-3 h-3 rounded-full" style={{ backgroundColor: f.color }} />
+                          <span className="truncate">{f.name}</span>
+                        </DropdownMenuItem>
+                      ))}
+                    </DropdownMenuSubContent>
+                  </DropdownMenuSub>
+                )}
+              </>
+            )}
+            <DropdownMenuItem onClick={() => handleCopyServerId(server.id)}>
+              <Copy className="w-4 h-4" />
+              {gt("Copy Server ID")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => void handleLeaveServer(server)}>
+              <LogOut className="w-4 h-4" />
+              {gt("Leave Server")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
+    );
   };
 
-  const handleHomeClick = () => {
-    setCurrentServer(null);
-    router.push("/channels/me");
+  // ── folder tile (plain render fn) ────────────────────────────────────────────
+  const renderFolder = (folder: Extract<ServerLayoutEntry, { kind: "folder" }>) => {
+    const folderServers = folder.serverIds
+      .map((id) => serversById.get(id))
+      .filter((s): s is Server => Boolean(s));
+    const isOpen = openFolders.has(folder.id);
+    const folderMentions = folderServers.reduce((sum, s) => sum + (serverMentionCounts.get(s.id) || 0), 0);
+    const menuOpen = menuFolderId === folder.id;
+    const setMenuOpen = (o: boolean) => setMenuFolderId(o ? folder.id : null);
+
+    return (
+      <div className="flex flex-col items-center gap-2 w-full">
+        <div
+          className="relative"
+          onContextMenu={(e) => { e.preventDefault(); setMenuOpen(true); }}
+        >
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <button
+                onClick={() => toggleFolder(folder.id)}
+                className={cn(
+                  "relative flex items-center justify-center w-12 h-12 rounded-[16px] transition-all duration-200 overflow-hidden",
+                  isOpen ? "bg-transparent" : "hover:rounded-[12px]"
+                )}
+                style={!isOpen ? { backgroundColor: `${folder.color}33` } : undefined}
+              >
+                {isOpen ? (
+                  <FolderIcon className="w-6 h-6" style={{ color: folder.color }} />
+                ) : (
+                  <div className="grid grid-cols-2 gap-0.5 p-1.5 w-full h-full">
+                    {folderServers.slice(0, 4).map((s) => (
+                      s.icon ? (
+                        <img key={s.id} src={s.icon} alt="" className="w-full h-full object-cover rounded-[4px]" />
+                      ) : (
+                        <span key={s.id} className="flex items-center justify-center rounded-[4px] bg-[var(--bg-sidebar-elevated)] text-[9px] font-bold text-[var(--text-primary)]">
+                          {s.name.charAt(0).toUpperCase()}
+                        </span>
+                      )
+                    ))}
+                  </div>
+                )}
+                {!isOpen && folderMentions > 0 && (
+                  <span className="absolute bottom-0 right-0 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)] text-[10px] font-bold text-white leading-none">
+                    {folderMentions > 99 ? "99+" : folderMentions}
+                  </span>
+                )}
+              </button>
+            </TooltipTrigger>
+            <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
+              {folder.name}
+            </TooltipContent>
+          </Tooltip>
+
+          <DropdownMenu open={menuOpen} onOpenChange={setMenuOpen}>
+            <DropdownMenuTrigger asChild>
+              <span className="absolute inset-0 pointer-events-none" aria-hidden />
+            </DropdownMenuTrigger>
+            <DropdownMenuContent side="right" align="start" className="w-52">
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); setRenamingFolder(folder.id); }}>
+                <Pencil className="w-4 h-4" />
+                {gt("Rename Folder")}
+              </DropdownMenuItem>
+              <DropdownMenuSub>
+                <DropdownMenuSubTrigger>
+                  <span className="w-3 h-3 rounded-full" style={{ backgroundColor: folder.color }} />
+                  {gt("Folder Color")}
+                </DropdownMenuSubTrigger>
+                <DropdownMenuSubContent className="flex flex-wrap gap-1 p-2 w-36">
+                  {folderColors.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => recolorFolder(folder.id, c)}
+                      className={cn("w-6 h-6 rounded-full border-2", folder.color === c ? "border-white" : "border-transparent")}
+                      style={{ backgroundColor: c }}
+                    />
+                  ))}
+                </DropdownMenuSubContent>
+              </DropdownMenuSub>
+            </DropdownMenuContent>
+          </DropdownMenu>
+        </div>
+
+        {/* Rename inline input */}
+        {renamingFolder === folder.id && (
+          <input
+            autoFocus
+            defaultValue={folder.name}
+            onBlur={(e) => { renameFolder(folder.id, e.target.value.trim() || folder.name); setRenamingFolder(null); }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") { renameFolder(folder.id, (e.target as HTMLInputElement).value.trim() || folder.name); setRenamingFolder(null); }
+              if (e.key === "Escape") setRenamingFolder(null);
+            }}
+            className="w-16 text-[10px] text-center bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)] rounded px-1 py-0.5 outline-none"
+          />
+        )}
+
+        {/* Expanded servers */}
+        {isOpen && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            className="flex flex-col items-center gap-2 w-full rounded-[12px] py-2"
+            style={{ backgroundColor: `${folder.color}1A` }}
+          >
+            {folderServers.map((s) => (
+              <div key={s.id}>{renderServerIcon(s, true)}</div>
+            ))}
+          </motion.div>
+        )}
+      </div>
+    );
   };
 
   return (
     <TooltipProvider delayDuration={0}>
       <div className="flex flex-col items-center w-[72px] h-full bg-[var(--app-bg)] py-3 gap-2 border-r border-[var(--app-border)]">
-        {/* Home Button (DMs) */}
+        {/* Home Button (DMs / message inbox) */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -113,13 +393,18 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
               )}
             >
               <MessageSquare className="w-7 h-7 text-[var(--text-secondary)] group-hover:text-[var(--text-on-accent)] transition-colors" />
-              {/* Pill indicator */}
               <div
                 className={cn(
                   "absolute left-0 w-1 bg-[var(--text-primary)] rounded-r-full transition-all duration-200",
                   !currentServer ? "h-10" : "h-0 group-hover:h-5"
                 )}
               />
+              {/* DM unread badge on the inbox icon */}
+              {totalDMUnread > 0 && (
+                <span className="absolute -bottom-0.5 -right-0.5 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)] text-[10px] font-bold text-white leading-none">
+                  {totalDMMentions > 0 ? (totalDMMentions > 99 ? "99+" : totalDMMentions) : totalDMUnread}
+                </span>
+              )}
             </button>
           </TooltipTrigger>
           <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
@@ -127,115 +412,65 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
           </TooltipContent>
         </Tooltip>
 
-        <Separator className="w-8 h-0.5 bg-[var(--app-border)] rounded-full" />
-
-        {/* Server List */}
-        <div className="flex-1 w-full overflow-y-auto scrollbar-hide">
-          <div className="flex flex-col items-center gap-2">
-            {uniqueServers.map((server) => {
-              const mentionCount = serverMentionCounts.get(server.id) || 0;
-              const muted = isMuted(server.id);
-              const hasMention = mentionCount > 0 && !muted;
-              const isActive = currentServer?.id === server.id;
-              return (
-              <div
-                key={server.id}
-                className="relative"
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setMenuServerId(server.id);
-                }}
-              >
-              <Tooltip>
+        {/* Unread DM avatars — the people pinging you, right under the inbox */}
+        {unreadDMs.length > 0 && (
+          <div className="flex flex-col items-center gap-2 w-full">
+            {unreadDMs.slice(0, 8).map(({ channel, recipient, count }) => (
+              <Tooltip key={channel.id}>
                 <TooltipTrigger asChild>
-                  <motion.button
-                    onClick={() => handleServerClick(server)}
-                    onMouseEnter={() => prefetchServer(server.id)}
-                    whileTap={{ scale: 0.88 }}
-                    transition={{ type: "spring", stiffness: 500, damping: 30 }}
-                    className={cn(
-                      "relative flex items-center justify-center w-12 h-12 rounded-[24px] bg-[var(--bg-sidebar-elevated)] transition-[border-radius] duration-200 hover:rounded-[16px] group overflow-hidden",
-                      isActive && "rounded-[16px]",
-                      muted && "opacity-60"
-                    )}
+                  <button
+                    onClick={() => router.push(`/dm/${recipient.id}`)}
+                    className="relative flex items-center justify-center w-12 h-12 rounded-[24px] transition-[border-radius] duration-200 hover:rounded-[16px] group overflow-hidden"
                   >
-                    {server.icon ? (
-                      <Avatar className="w-12 h-12 rounded-none">
-                        <AvatarImage src={server.icon} alt={server.name} />
-                        <AvatarFallback className="rounded-none bg-[var(--app-accent)] text-[var(--text-on-accent)]">
-                          {server.name.charAt(0).toUpperCase()}
-                        </AvatarFallback>
-                      </Avatar>
-                    ) : (
-                      <span className="text-lg font-semibold text-[var(--text-primary)]">
-                        {server.name.charAt(0).toUpperCase()}
-                      </span>
-                    )}
-                    {/* Pill indicator */}
-                    <div
-                      className={cn(
-                        "absolute left-0 w-1 bg-[var(--text-primary)] rounded-r-full transition-all duration-200",
-                        isActive ? "h-10" : "h-0 group-hover:h-5"
-                      )}
-                    />
-                    {/* Accent mention badge */}
-                    {hasMention && !isActive && (
-                      <span className="absolute bottom-0 right-0 min-w-[20px] h-[20px] px-1 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)] text-[10px] font-bold text-white leading-none">
-                        {mentionCount > 99 ? "99+" : mentionCount}
-                      </span>
-                    )}
-                  </motion.button>
+                    <Avatar className="w-12 h-12">
+                      <AvatarImage src={recipient.avatar} alt={recipient.displayName || recipient.username} />
+                      <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
+                        {(recipient.displayName || recipient.username).charAt(0).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div className="absolute left-0 w-1 h-2.5 bg-[var(--text-primary)] rounded-r-full group-hover:h-5 transition-all duration-200" />
+                    <span className="absolute bottom-0 right-0 min-w-[18px] h-[18px] px-1 flex items-center justify-center rounded-full bg-[var(--accent-color)] border-[3px] border-[var(--app-bg)] text-[10px] font-bold text-white leading-none">
+                      {count > 0 ? (count > 99 ? "99+" : count) : ""}
+                      {count === 0 && <span className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </span>
+                  </button>
                 </TooltipTrigger>
                 <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
-                  {server.name}
+                  {recipient.displayName || recipient.username}
                 </TooltipContent>
               </Tooltip>
-
-              {/* Right-click options. The trigger is an invisible anchor
-                  overlaying the icon so left-click still navigates and the
-                  menu positions correctly beside the icon. */}
-              <DropdownMenu
-                open={menuServerId === server.id}
-                onOpenChange={(o) => setMenuServerId(o ? server.id : null)}
-              >
-                <DropdownMenuTrigger asChild>
-                  <span className="absolute inset-0 pointer-events-none" aria-hidden />
-                </DropdownMenuTrigger>
-                <DropdownMenuContent side="right" align="start" className="w-52">
-                  <DropdownMenuItem
-                    disabled={mentionCount === 0}
-                    onClick={() => markServerRead(server.id)}
-                  >
-                    <Check className="w-4 h-4" />
-                    {gt("Mark As Read")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => toggleMute(server.id)}>
-                    {muted ? <Bell className="w-4 h-4" /> : <BellOff className="w-4 h-4" />}
-                    {muted ? gt("Unmute Server") : gt("Mute Server")}
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onClick={() => handleCopyServerId(server.id)}>
-                    <Copy className="w-4 h-4" />
-                    {gt("Copy Server ID")}
-                  </DropdownMenuItem>
-                  <DropdownMenuSeparator />
-                  <DropdownMenuItem
-                    variant="destructive"
-                    onClick={() => void handleLeaveServer(server)}
-                  >
-                    <LogOut className="w-4 h-4" />
-                    {gt("Leave Server")}
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-              </div>
-              );
-            })}
+            ))}
           </div>
+        )}
+
+        <Separator className="w-8 h-0.5 bg-[var(--app-border)] rounded-full" />
+
+        {/* Server List — drag to rearrange, folders group servers */}
+        <div className="flex-1 w-full overflow-y-auto scrollbar-hide">
+          <Reorder.Group
+            axis="y"
+            values={entries}
+            onReorder={reorder}
+            className="flex flex-col items-center gap-2"
+          >
+            {entries.map((entry) => (
+              <Reorder.Item
+                key={entry.kind === "server" ? `s:${entry.id}` : `f:${entry.id}`}
+                value={entry}
+                className="w-full flex justify-center"
+                whileDrag={{ scale: 1.06, zIndex: 50 }}
+              >
+                {entry.kind === "server"
+                  ? (serversById.has(entry.id) ? renderServerIcon(serversById.get(entry.id)!, false) : null)
+                  : renderFolder(entry)}
+              </Reorder.Item>
+            ))}
+          </Reorder.Group>
         </div>
 
         <Separator className="w-8 h-0.5 bg-[var(--app-border)] rounded-full" />
 
-        {/* Add Server Button */}
+        {/* Add Server */}
         <Tooltip>
           <TooltipTrigger asChild>
             <button
@@ -253,7 +488,7 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
         {/* Explore Servers */}
         <Tooltip>
           <TooltipTrigger asChild>
-            <button 
+            <button
               onClick={() => router.push("/channels/explore")}
               className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[var(--bg-sidebar-elevated)] transition-all duration-200 hover:rounded-[16px] hover:bg-[var(--app-accent)] group"
             >
@@ -264,23 +499,6 @@ export function ServerSidebar({ onCreateServer }: ServerSidebarProps) {
             {gt("Explore Discoverable Servers")}
           </TooltipContent>
         </Tooltip>
-
-        {/* Download Apps - Hidden in native apps */}
-        {!isNative && (
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <button 
-                onClick={() => router.push("/download")}
-                className="flex items-center justify-center w-12 h-12 rounded-[24px] bg-[var(--bg-sidebar-elevated)] transition-all duration-200 hover:rounded-[16px] hover:bg-[var(--app-accent)] group"
-              >
-                <Download className="w-6 h-6 text-[var(--app-accent)] group-hover:text-[var(--text-on-accent)] transition-colors" />
-              </button>
-            </TooltipTrigger>
-            <TooltipContent side="right" className="bg-[var(--bg-card)] text-[var(--text-primary)] border border-[var(--border-subtle)]">
-              {gt("Download Apps")}
-            </TooltipContent>
-          </Tooltip>
-        )}
       </div>
     </TooltipProvider>
   );

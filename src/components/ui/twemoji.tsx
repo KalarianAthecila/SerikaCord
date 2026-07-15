@@ -3,6 +3,7 @@
 import { useEffect, useRef, useMemo } from "react";
 import twemoji from "@twemoji/api";
 import { cn } from "@/lib/utils";
+import { twemojiOnError } from "@/lib/twemoji-helpers";
 
 interface CustomEmojiData {
   id: string;
@@ -69,7 +70,8 @@ export function Twemoji({ children, className, size = "normal", customEmojis }: 
         folder: "svg",
         ext: ".svg",
         className: "emoji",
-      });
+        onerror: twemojiOnError,
+      } as Parameters<typeof twemoji.parse>[1]);
     }
   }, [processedContent, children]);
 

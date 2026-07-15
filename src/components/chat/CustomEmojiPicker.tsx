@@ -1,7 +1,6 @@
 "use client";
 
 import { useState, useRef, useCallback, useEffect, useMemo, useDeferredValue, memo } from "react";
-import { useExperiment } from "@/hooks/useExperiments";
 import { 
   Search, Clock, Star, Smile, Users, Dog, Apple, Gamepad2, 
   Plane, Lightbulb, Heart, Flag, ImageIcon, Sticker, X, Plus
@@ -89,16 +88,15 @@ function getEmojiUrl(emoji: string): string {
   const codePoints = [...emoji]
     .map(char => char.codePointAt(0)?.toString(16))
     .filter(Boolean)
-    .join('-')
-    .replace(/-fe0f/g, ''); // Remove variation selector
+    .join('-');
   return `https://cdn.jsdelivr.net/gh/jdecked/twemoji@17.0.2/assets/svg/${codePoints}.svg`;
 }
 
 // Memoized emoji button component - only re-renders when emoji changes.
 // Always renders the twemoji SVG so the picker matches how emoji look in chat.
-// The speed win in the "fast" variant comes from content-visibility windowing on
-// the sections (below), which also keeps these images from loading until scrolled
-// into view — not from swapping the artwork.
+// The speed win comes from LazyEmojiSection (below), which only mounts a
+// section's buttons once it nears the viewport, plus loading="lazy" so images
+// aren't fetched until visible — not from swapping the artwork.
 const EmojiButton = memo(function EmojiButton({
   emoji,
   onClick,
@@ -122,8 +120,58 @@ const EmojiButton = memo(function EmojiButton({
   );
 });
 
+// Lazily mounts a heavy emoji section only when it scrolls near the viewport.
+// Off-screen sections render nothing but reserve their scroll height, so the
+// picker opens instantly and stays smooth no matter how many emoji exist —
+// while still rendering real twemoji images once a section comes into view.
+const LazyEmojiSection = memo(function LazyEmojiSection({
+  estimatedHeight,
+  scrollRef,
+  setRef,
+  children,
+}: {
+  estimatedHeight: number;
+  scrollRef: React.RefObject<HTMLDivElement | null>;
+  setRef: (el: HTMLDivElement | null) => void;
+  children: React.ReactNode;
+}) {
+  const [visible, setVisible] = useState(false);
+  const localRef = useRef<HTMLDivElement | null>(null);
+
+  const assignRef = useCallback((el: HTMLDivElement | null) => {
+    localRef.current = el;
+    setRef(el);
+  }, [setRef]);
+
+  useEffect(() => {
+    if (visible) return;
+    const el = localRef.current;
+    const root = scrollRef.current;
+    if (!el) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) {
+          setVisible(true);
+          observer.disconnect();
+        }
+      },
+      // rootMargin pre-mounts sections just before they reach the viewport so
+      // scrolling never reveals an empty placeholder.
+      { root: root ?? null, rootMargin: "400px 0px" }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [scrollRef, visible]);
+
+  return (
+    <div ref={assignRef} style={visible ? undefined : { minHeight: estimatedHeight }}>
+      {visible ? children : null}
+    </div>
+  );
+});
+
 // Memoized custom emoji button
-const CustomEmojiButton = memo(function CustomEmojiButton({ 
+const CustomEmojiButton = memo(function CustomEmojiButton({
   emoji, 
   onClick 
 }: { 
@@ -177,9 +225,6 @@ export function CustomEmojiPicker({
   initialTab = "emoji",
 }: EmojiPickerProps) {
   const gt = useGT();
-  // A/B experiment: 50% of users get the faster native-glyph picker.
-  const { variant } = useExperiment("better_emoji_picker");
-  const fast = variant?.id === "treatment" || (variant?.config as { enabled?: boolean } | undefined)?.enabled === true;
   const [search, setSearch] = useState("");
   // Keep typing responsive: filtering runs against the deferred value so
   // keystrokes never block on re-filtering thousands of emojis.
@@ -643,15 +688,15 @@ export function CustomEmojiPicker({
                   </div>
                 ))}
 
-                {/* Standard Emoji Categories */}
+                {/* Standard Emoji Categories — each section mounts its emoji
+                    grid lazily as it nears the viewport so the picker never
+                    renders thousands of images at once. */}
                 {filteredCategories.map((category) => (
-                  <div
+                  <LazyEmojiSection
                     key={category.id}
-                    ref={setSectionRef(category.id)}
-                    // content-visibility lets the browser skip layout/paint for
-                    // off-screen sections; contain-intrinsic-size reserves the
-                    // right scroll height so scrolling stays smooth.
-                    style={fast ? { contentVisibility: "auto", containIntrinsicSize: `${Math.ceil(category.emojis.length / 8) * 40 + 28}px` } : undefined}
+                    scrollRef={scrollRef}
+                    setRef={setSectionRef(category.id)}
+                    estimatedHeight={Math.ceil(category.emojis.length / 8) * 40 + 28}
                   >
                     <h3 className="text-xs font-semibold text-[#8888aa] mb-2 uppercase tracking-wide sticky top-0 bg-[#1a1a2e] py-1 z-10">
                       {category.name}
@@ -665,7 +710,7 @@ export function CustomEmojiPicker({
                         />
                       ))}
                     </div>
-                  </div>
+                  </LazyEmojiSection>
                 ))}
 
                 {/* No results */}
