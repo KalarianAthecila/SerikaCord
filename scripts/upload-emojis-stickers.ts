@@ -32,9 +32,9 @@ async function uploadStickerGif(data: Buffer, contentType: string, filename: str
   return `${config.CDN_URL}/${key}`;
 }
 
-const SERVER_ID = 'e5732422-2df9-4320-86c2-c25cf1502b2f';
-const EMOJI_DIR = '/home/pikachubolk/Documents/servers-jsons/784963585449263124_emojis';
-const STICKER_DIR = '/dev/null';
+const SERVER_ID = '1f3c10d9-bf64-44ae-83a6-1583dc11003a';
+const EMOJI_DIR = '/home/pikachubolk/Documents/servers-jsons/1101377723932360734_emojis';
+const STICKER_DIR = '/home/pikachubolk/Documents/servers-jsons/1101377723932360734_stickers';
 
 const MIME_MAP: Record<string, string> = {
   '.png': 'image/png',
@@ -110,8 +110,51 @@ async function main() {
   }
   console.log(`Emojis done: ${emojiCount}/${emojiFiles.length}`);
 
-  // ── Stickers (none for this server) ──
-  console.log('\n--- Skipping Stickers (none provided) ---');
+  // ── Stickers ──
+  console.log('\n--- Uploading Stickers ---');
+  const stickerFiles = await readdir(STICKER_DIR);
+  let stickerCount = 0;
+  for (const filename of stickerFiles) {
+    const filePath = join(STICKER_DIR, filename);
+    const data = await readFile(filePath);
+    const contentType = getMime(filename);
+    const name = extractName(filename);
+
+    console.log(`  Uploading sticker: ${name} (${filename}, ${data.length} bytes)...`);
+
+    try {
+      let url: string;
+      if (contentType === 'image/gif') {
+        url = await uploadStickerGif(data, contentType, filename, SERVER_ID, uploadedBy);
+      } else {
+        const result = await storage.upload({
+          category: 'stickers',
+          contentType,
+          data,
+          size: data.length,
+          filename,
+          serverId: SERVER_ID,
+          userId: uploadedBy,
+        });
+        url = result.url;
+      }
+
+      await ServerSticker.create({
+        serverId: SERVER_ID,
+        name,
+        imageUrl: url,
+        tags: ['sticker'],
+        available: true,
+        uploadedBy,
+      });
+
+      stickerCount++;
+      console.log(`  ✓ Created sticker: ${name} -> ${url}`);
+    } catch (err) {
+      console.error(`  ✗ Failed for ${name}:`, err instanceof Error ? err.message : err);
+    }
+  }
+  console.log(`Stickers done: ${stickerCount}/${stickerFiles.length}`);
 
   console.log('\n=== All done ===');
   process.exit(0);

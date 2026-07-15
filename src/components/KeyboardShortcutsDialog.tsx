@@ -41,7 +41,7 @@ export function KeyboardShortcutsDialog() {
             return (
               <div key={category}>
                 <h3 className="text-[11px] font-bold uppercase tracking-wider text-[var(--app-muted)] mb-2">
-                  {gt(category)}
+                  {category}
                 </h3>
                 <div className="rounded-lg border border-[var(--app-border)] overflow-hidden divide-y divide-[var(--app-border)]">
                   {rows.map((hk) => (
@@ -49,7 +49,7 @@ export function KeyboardShortcutsDialog() {
                       key={hk.action}
                       className="flex items-center justify-between gap-4 px-3 py-2 bg-[var(--app-surface)]"
                     >
-                      <span className="text-sm text-[var(--text-primary)]">{gt(hk.label)}</span>
+                      <span className="text-sm text-[var(--text-primary)]">{hk.label}</span>
                       <kbd className="shrink-0 px-2 py-1 rounded-md bg-[var(--app-surface-alt)] border border-[var(--app-border)] text-xs font-mono text-[var(--text-secondary)] whitespace-nowrap">
                         {formatHotkey(hk)}
                       </kbd>

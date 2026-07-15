@@ -9,6 +9,7 @@ import { UnreadProvider } from "@/contexts/UnreadContext";
 import { useAppHotkeys } from "@/hooks/useAppHotkeys";
 import { onHotkey } from "@/lib/keybinds";
 import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcutsDialog";
+import { QuickSwitcher } from "@/components/QuickSwitcher";
 import { ServerSidebar } from "@/components/layout/ServerSidebar";
 import { ChannelSidebar } from "@/components/layout/ChannelSidebar";
 import { BottomNavigation } from "@/components/mobile";
@@ -308,6 +309,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
 
         {/* Dialogs */}
         <KeyboardShortcutsDialog />
+        <QuickSwitcher />
         <CreateServerDialog
           open={showCreateServer}
           onOpenChange={setShowCreateServer}
@@ -369,6 +371,7 @@ function ChannelsContent({ children }: { children: React.ReactNode }) {
 
       {/* Dialogs */}
       <KeyboardShortcutsDialog />
+      <QuickSwitcher />
       <CreateServerDialog
         open={showCreateServer}
         onOpenChange={setShowCreateServer}

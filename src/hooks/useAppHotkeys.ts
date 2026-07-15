@@ -104,7 +104,6 @@ export function useAppHotkeys() {
         if (prev) router.push(prev);
         return;
       }
-      case "goto-dm": return void router.push("/channels/me");
       case "toggle-mentions": return void router.push("/channels/notifications");
       case "mark-channel-read": {
         if (currentChannel) markChannelRead(currentChannel.id);

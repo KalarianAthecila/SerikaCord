@@ -9,11 +9,18 @@ import { BottomNavigation } from "@/components/mobile";
 import { VoiceAudioSink } from "@/components/voice/VoiceAudioSink";
 import { ServerProvider } from "@/contexts/ServerContext";
 import { UnreadProvider } from "@/contexts/UnreadContext";
+import { useAppHotkeys } from "@/hooks/useAppHotkeys";
+import { onHotkey } from "@/lib/keybinds";
+import { KeyboardShortcutsDialog } from "@/components/KeyboardShortcutsDialog";
+import { QuickSwitcher } from "@/components/QuickSwitcher";
 
 function DMContent({ children }: { children: React.ReactNode }) {
   const [showCreateServer, setShowCreateServer] = useState(false);
   const [showUserSettings, setShowUserSettings] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+
+  useAppHotkeys();
+  useEffect(() => onHotkey("create-server", () => setShowCreateServer(true)), []);
 
   useEffect(() => {
     const query = window.matchMedia('(max-width: 767px)');
@@ -42,6 +49,8 @@ function DMContent({ children }: { children: React.ReactNode }) {
         <BottomNavigation />
 
         {/* Dialogs */}
+        <KeyboardShortcutsDialog />
+        <QuickSwitcher />
         <CreateServerDialog
           open={showCreateServer}
           onOpenChange={setShowCreateServer}
@@ -63,6 +72,8 @@ function DMContent({ children }: { children: React.ReactNode }) {
       <div className="flex-1 flex flex-col min-w-0 min-h-0 overflow-hidden">
         <main className="flex-1 flex min-w-0 min-h-0 overflow-hidden">{children}</main>
       </div>
+      <KeyboardShortcutsDialog />
+      <QuickSwitcher />
       <CreateServerDialog
         open={showCreateServer}
         onOpenChange={setShowCreateServer}
