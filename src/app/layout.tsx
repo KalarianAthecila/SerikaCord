@@ -93,6 +93,8 @@ export default function RootLayout({
         <link rel="apple-touch-icon" href="/logo-icon.svg" />
         <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
         <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: rtlBootstrapScript }} />
+        <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: "document.addEventListener('contextmenu',function(e){e.preventDefault();},false);" }} />
+        <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: "if(window.__TAURI__){var _f=window.fetch;window.fetch=function(u,o){o=o||{};o.headers=o.headers||{};if(o.headers instanceof Headers){o.headers.set('x-serika-client','tauri');}else{o.headers['x-serika-client']='tauri';}return _f.call(window,u,o);};}" }} />
       </head>
       <body
         className={`${inter.variable} ${notoKufi.variable} font-sans antialiased`}

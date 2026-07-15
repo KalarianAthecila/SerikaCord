@@ -1,11 +1,12 @@
 "use client";
 
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ServerBadge } from "@/components/ui/badges";
+import { useServer } from "@/contexts/ServerContext";
 import {
   Search,
   Users,
@@ -35,6 +36,7 @@ import {
 import { cn } from "@/lib/utils";
 import { T, useGT } from "gt-next";
 import { Loader } from "@/components/ui/Loader";
+import { toast } from "sonner";
 
 type GTFunc = ReturnType<typeof useGT>;
 
@@ -83,6 +85,7 @@ interface Server {
   category?: string;
   tags?: string[];
   createdAt?: string;
+  vanityUrlCode?: string | null;
 }
 
 interface DiscoverResponse {
@@ -175,11 +178,13 @@ function ServerCard({
   featured,
   onJoin,
   joining,
+  isJoined,
 }: {
   server: Server;
   featured?: boolean;
   onJoin: () => void;
   joining: boolean;
+  isJoined: boolean;
 }) {
   const gt = useGT();
   const gradient = getServerGradient(server.id + server.name);
@@ -292,16 +297,26 @@ function ServerCard({
         )}
 
         {/* Join button */}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            onJoin();
-          }}
-          disabled={joining}
-          className="mt-4 w-full px-4 py-2 rounded-full bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-60 disabled:hover:scale-100"
-        >
-          {joining ? <Loader size={16} className="mx-auto" /> : server.joinMode === "apply_to_join" ? gt("Apply to Join") : gt("Join Server")}
-        </button>
+        {isJoined ? (
+          <button
+            disabled
+            className="mt-4 w-full px-4 py-2 rounded-full bg-[#23A55A]/20 text-[#23A55A] text-sm font-medium flex items-center justify-center gap-1.5 cursor-default"
+          >
+            <CheckCircle2 className="w-4 h-4" />
+            {gt("Joined")}
+          </button>
+        ) : (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              onJoin();
+            }}
+            disabled={joining}
+            className="mt-4 w-full px-4 py-2 rounded-full bg-[#5865F2] hover:bg-[#4752c4] text-white text-sm font-medium transition-all hover:scale-[1.02] active:scale-95 disabled:opacity-60 disabled:hover:scale-100"
+          >
+            {joining ? <Loader size={16} className="mx-auto" /> : server.joinMode === "apply_to_join" ? gt("Apply to Join") : gt("Join Server")}
+          </button>
+        )}
       </div>
     </div>
   );
@@ -310,6 +325,7 @@ function ServerCard({
 export default function ExplorePage() {
   const gt = useGT();
   const router = useRouter();
+  const { servers: joinedServers, fetchServers } = useServer();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
   const [sortMode, setSortMode] = useState<SortMode>("popular");
@@ -321,6 +337,12 @@ export default function ExplorePage() {
   const [applyServer, setApplyServer] = useState<Server | null>(null);
   const [applyAnswer, setApplyAnswer] = useState("");
   const [isSubmittingApply, setIsSubmittingApply] = useState(false);
+  const [joinedServerIds, setJoinedServerIds] = useState<Set<string>>(new Set());
+
+  // Track joined servers from ServerContext
+  useEffect(() => {
+    setJoinedServerIds(new Set(joinedServers.map((s) => s.id)));
+  }, [joinedServers]);
 
   const [debouncedSearch, setDebouncedSearch] = useState("");
 
@@ -350,9 +372,17 @@ export default function ExplorePage() {
       .finally(() => setIsLoading(false));
   }, [selectedCategory, debouncedSearch, sortMode]);
 
-  const handleJoinServer = async (serverId: string) => {
+  const handleJoinServer = useCallback(async (serverId: string) => {
     const server = servers.find((s) => s.id === serverId);
-    if (server?.joinMode === "apply_to_join") {
+    if (!server) return;
+
+    // Already joined — navigate to server
+    if (joinedServerIds.has(serverId)) {
+      router.push(`/channels/${serverId}`);
+      return;
+    }
+
+    if (server.joinMode === "apply_to_join") {
       setApplyServer(server);
       setApplyAnswer("");
       return;
@@ -360,18 +390,44 @@ export default function ExplorePage() {
 
     setJoiningServerId(serverId);
     try {
-      const response = await fetch(`/api/servers/${serverId}/join`, {
+      // Try direct join first (works for open servers)
+      let response = await fetch(`/api/servers/${serverId}/join`, {
         method: "POST",
       });
+
+      // If direct join fails with 403 (invite-only), try via vanity URL or invite code
+      if (!response.ok && response.status === 403 && server.vanityUrlCode) {
+        response = await fetch(`/api/invites/${server.vanityUrlCode}`, {
+          method: "POST",
+        });
+      }
+
+      const data = await response.json();
+
       if (response.ok) {
+        // Update joined server list reactively
+        await fetchServers();
+        // Optimistically mark as joined
+        setJoinedServerIds((prev) => new Set(prev).add(serverId));
+        toast.success(gt("Joined") + " " + server.name);
         router.push(`/channels/${serverId}`);
+      } else if (response.status === 400 && data.error?.includes("Already a member")) {
+        // Already a member — navigate to server
+        setJoinedServerIds((prev) => new Set(prev).add(serverId));
+        router.push(`/channels/${serverId}`);
+      } else if (data.error === "application_required") {
+        setApplyServer(server);
+        setApplyAnswer("");
+      } else {
+        toast.error(data.error || gt("Failed to join server"));
       }
     } catch (error) {
       console.error("Failed to join server:", error);
+      toast.error(gt("Something went wrong. Please try again."));
     } finally {
       setJoiningServerId(null);
     }
-  };
+  }, [servers, joinedServerIds, router, fetchServers, gt]);
 
   const handleSubmitApplication = async () => {
     if (!applyServer || !applyAnswer.trim()) return;
@@ -389,10 +445,14 @@ export default function ExplorePage() {
       if (response.ok) {
         setApplyServer(null);
         setApplyAnswer("");
-        alert(gt("Application submitted! You will be notified when it is reviewed."));
+        toast.success(gt("Application submitted! You will be notified when it is reviewed."));
+      } else {
+        const data = await response.json();
+        toast.error(data.error || gt("Failed to submit application"));
       }
     } catch (error) {
       console.error("Failed to submit application:", error);
+      toast.error(gt("Something went wrong. Please try again."));
     } finally {
       setIsSubmittingApply(false);
     }
@@ -609,6 +669,7 @@ export default function ExplorePage() {
                     featured
                     onJoin={() => handleJoinServer(server.id)}
                     joining={joiningServerId === server.id}
+                    isJoined={joinedServerIds.has(server.id)}
                   />
                 ))}
               </div>
@@ -664,6 +725,7 @@ export default function ExplorePage() {
                     server={server}
                     onJoin={() => handleJoinServer(server.id)}
                     joining={joiningServerId === server.id}
+                    isJoined={joinedServerIds.has(server.id)}
                   />
                 ))}
               </div>

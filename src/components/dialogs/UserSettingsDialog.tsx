@@ -3140,11 +3140,34 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                     </div>
                   ) : activeTab === "devices" ? (
                     <div className="space-y-2">
+                      {deviceSessions.length === 0 && (
+                        <div className="text-center py-8 text-[var(--text-muted)] text-sm">
+                          <MonitorSmartphone className="w-10 h-10 mx-auto mb-2 opacity-50" />
+                          <T>No active devices. Your sessions will appear here.</T>
+                        </div>
+                      )}
                       {deviceSessions.map((device) => (
-                        <div key={device.id} className="bg-[var(--bg-app)] rounded-lg p-4 flex items-center justify-between">
-                          <div>
-                            <p className="text-white text-sm">{device.deviceName}</p>
-                            <p className="text-xs text-[var(--text-secondary)]">{device.platform} • {new Date(device.lastActiveAt).toLocaleString()}</p>
+                        <div key={device.id} className={cn(
+                          "bg-[var(--bg-app)] rounded-lg p-4 flex items-center justify-between",
+                          device.current && "ring-1 ring-[var(--app-accent)]/40"
+                        )}>
+                          <div className="flex items-center gap-3">
+                            <div className="w-10 h-10 rounded-lg bg-[var(--bg-card)] flex items-center justify-center flex-shrink-0">
+                              <MonitorSmartphone className="w-5 h-5 text-[var(--app-accent)]" />
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <p className="text-white text-sm font-medium">{device.deviceName}</p>
+                                {device.current && (
+                                  <span className="px-1.5 py-0.5 text-[10px] font-bold rounded bg-[var(--app-accent)]/20 text-[var(--app-accent)]">
+                                    <T>Current</T>
+                                  </span>
+                                )}
+                              </div>
+                              <p className="text-xs text-[var(--text-secondary)]">
+                                {device.platform} · {new Date(device.lastActiveAt).toLocaleString()}
+                              </p>
+                            </div>
                           </div>
                           {!device.current && (
                             <button
@@ -3331,9 +3354,108 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                             <span className="text-white"><T>Developer Mode</T></span>
                             <ToggleSwitch size="sm" checked={Boolean(userSettings.advanced?.developerMode)} onCheckedChange={(checked) => saveSettingsPatch({ advanced: { ...(userSettings.advanced || {}), developerMode: checked } }, "advanced")} />
                           </label>
-                          <p className="text-xs text-[var(--text-secondary)]">
+                          <p className="text-xs text-[var(--text-secondary)] mb-4">
                             <T>Enables extra technical information, such as copying IDs from context menus.</T>
                           </p>
+
+                          <div className="h-px bg-[var(--border-subtle)] my-3" />
+
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white"><T>Verbose Logging</T></span>
+                            <ToggleSwitch size="sm" checked={Boolean(userSettings.advanced?.verboseLogging)} onCheckedChange={(checked) => saveSettingsPatch({ advanced: { ...(userSettings.advanced || {}), verboseLogging: checked } }, "advanced")} />
+                          </label>
+                          <p className="text-xs text-[var(--text-secondary)] mb-4">
+                            <T>Logs detailed API requests and WebSocket events to the browser console.</T>
+                          </p>
+
+                          <div className="h-px bg-[var(--border-subtle)] my-3" />
+
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white"><T>Show API Latency</T></span>
+                            <ToggleSwitch size="sm" checked={Boolean(userSettings.advanced?.showLatency)} onCheckedChange={(checked) => saveSettingsPatch({ advanced: { ...(userSettings.advanced || {}), showLatency: checked } }, "advanced")} />
+                          </label>
+                          <p className="text-xs text-[var(--text-secondary)] mb-4">
+                            <T>Displays real-time API response times and WebSocket ping in the UI.</T>
+                          </p>
+
+                          <div className="h-px bg-[var(--border-subtle)] my-3" />
+
+                          <label className="flex items-center justify-between py-2">
+                            <span className="text-white"><T>Debug Overlay</T></span>
+                            <ToggleSwitch size="sm" checked={Boolean(userSettings.advanced?.debugOverlay)} onCheckedChange={(checked) => saveSettingsPatch({ advanced: { ...(userSettings.advanced || {}), debugOverlay: checked } }, "advanced")} />
+                          </label>
+                          <p className="text-xs text-[var(--text-secondary)] mb-4">
+                            <T>Shows a floating overlay with render performance, memory usage, and component counts.</T>
+                          </p>
+
+                          <div className="h-px bg-[var(--border-subtle)] my-3" />
+
+                          <div className="py-2">
+                            <p className="text-white text-sm mb-2"><T>Developer Tools</T></p>
+                            <div className="flex flex-wrap gap-2">
+                              <button
+                                onClick={() => {
+                                  const token = localStorage.getItem("serika-token") || localStorage.getItem("auth-token") || "";
+                                  if (token) {
+                                    navigator.clipboard?.writeText(token);
+                                    toast.success(gt("Session token copied to clipboard"));
+                                  } else {
+                                    toast.error(gt("No session token found"));
+                                  }
+                                }}
+                                className="px-3 py-1.5 text-xs rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-white hover:border-[var(--app-accent)] transition-colors flex items-center gap-1.5"
+                              >
+                                <Activity className="w-3.5 h-3.5" />
+                                <T>Copy Session Token</T>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const keys = Object.keys(localStorage).filter(k => k.startsWith("serika") || k.startsWith("sc:"));
+                                  keys.forEach(k => localStorage.removeItem(k));
+                                  toast.success(gt("Cleared {count} cache entries", { count: keys.length }));
+                                  setTimeout(() => window.location.reload(), 500);
+                                }}
+                                className="px-3 py-1.5 text-xs rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-white hover:border-[var(--app-accent)] transition-colors flex items-center gap-1.5"
+                              >
+                                <RefreshCw className="w-3.5 h-3.5" />
+                                <T>Clear App Cache</T>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  const info = {
+                                    userAgent: navigator.userAgent,
+                                    platform: navigator.platform,
+                                    language: navigator.language,
+                                    screenResolution: `${screen.width}x${screen.height}`,
+                                    windowSize: `${window.innerWidth}x${window.innerHeight}`,
+                                    isTauri: Boolean((window as any).__TAURI__),
+                                    localStorage: Object.keys(localStorage).length,
+                                    timestamp: new Date().toISOString(),
+                                  };
+                                  navigator.clipboard?.writeText(JSON.stringify(info, null, 2));
+                                  toast.success(gt("Debug info copied to clipboard"));
+                                }}
+                                className="px-3 py-1.5 text-xs rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-white hover:border-[var(--app-accent)] transition-colors flex items-center gap-1.5"
+                              >
+                                <Database className="w-3.5 h-3.5" />
+                                <T>Copy Debug Info</T>
+                              </button>
+                              <button
+                                onClick={() => {
+                                  if (typeof window !== "undefined" && (window as any).__TAURI__) {
+                                    const { open } = (window as any).__TAURI__?.core?.invoke ?? {};
+                                    toast.info(gt("Tauri devtools available via F12 or Ctrl+Shift+I"));
+                                  } else {
+                                    toast.info(gt("Browser devtools: F12 or Ctrl+Shift+I"));
+                                  }
+                                }}
+                                className="px-3 py-1.5 text-xs rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-secondary)] hover:text-white hover:border-[var(--app-accent)] transition-colors flex items-center gap-1.5"
+                              >
+                                <Zap className="w-3.5 h-3.5" />
+                                <T>Open DevTools</T>
+                              </button>
+                            </div>
+                          </div>
                         </>
                       )}
 

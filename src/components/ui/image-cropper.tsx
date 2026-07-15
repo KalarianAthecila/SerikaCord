@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
 import {
@@ -63,15 +63,24 @@ export function ImageCropper({
   const [crop, setCrop] = useState<Crop>();
   const [scale, setScale] = useState(1);
   const [isProcessing, setIsProcessing] = useState(false);
+  const [imgSize, setImgSize] = useState<{ w: number; h: number }>({ w: 0, h: 0 });
   const imgRef = useRef<HTMLImageElement>(null);
 
   const onImageLoad = useCallback(
     (e: React.SyntheticEvent<HTMLImageElement>) => {
       const { width, height } = e.currentTarget;
+      setImgSize({ w: width, h: height });
       setCrop(centerAspectCrop(width, height, aspectRatio));
     },
     [aspectRatio]
   );
+
+  // Re-center crop when aspect ratio changes (e.g. switching between avatar/banner)
+  useEffect(() => {
+    if (imgSize.w > 0 && imgSize.h > 0) {
+      setCrop(centerAspectCrop(imgSize.w, imgSize.h, aspectRatio));
+    }
+  }, [aspectRatio, imgSize]);
 
   const getCroppedImg = useCallback(async (): Promise<Blob | null> => {
     const image = imgRef.current;
@@ -141,9 +150,8 @@ export function ImageCropper({
 
   const handleReset = () => {
     setScale(1);
-    if (imgRef.current) {
-      const { width, height } = imgRef.current;
-      setCrop(centerAspectCrop(width, height, aspectRatio));
+    if (imgSize.w > 0) {
+      setCrop(centerAspectCrop(imgSize.w, imgSize.h, aspectRatio));
     }
   };
 
@@ -169,8 +177,11 @@ export function ImageCropper({
                 ref={imgRef}
                 src={imageUrl}
                 alt={gt("Crop preview")}
-                style={{ transform: `scale(${scale})` }}
                 onLoad={onImageLoad}
+                style={{
+                  width: imgSize.w ? `${imgSize.w * scale}px` : undefined,
+                  height: imgSize.h ? `${imgSize.h * scale}px` : undefined,
+                }}
                 className="max-w-full max-h-[380px] object-contain"
               />
             </ReactCrop>

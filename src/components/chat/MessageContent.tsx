@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useMemo, memo } from "react";
 import twemoji from "@twemoji/api";
+import { twemojiOnError } from "@/lib/twemoji-helpers";
 import { useChatGt } from "./ChatGtContext";
 import { cn } from "@/lib/utils";
 import { isImageLikeUrl, isGifUrl, isGifProviderUrl } from "@/lib/chat/media";
@@ -263,7 +264,8 @@ export const MessageContent = memo(function MessageContent({
           folder: "svg",
           ext: ".svg",
           className: "emoji",
-        });
+          onerror: twemojiOnError,
+        } as Parameters<typeof twemoji.parse>[1]);
       });
     }
   }, [displayContent, serverEmojis]);

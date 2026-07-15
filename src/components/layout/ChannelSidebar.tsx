@@ -206,6 +206,7 @@ export function ChannelSidebar({
     // Make the drag image semi-transparent
     if (e.currentTarget instanceof HTMLElement) {
       e.currentTarget.style.opacity = "0.4";
+      e.currentTarget.style.transition = "opacity 150ms ease";
     }
   };
 
@@ -1247,20 +1248,12 @@ export function ChannelSidebar({
             );
           })}
 
-          {/* Bottom drop zone for reordering to the absolute end */}
-          {draggedChannel && (
-            <div
-              className={cn(
-                "h-12 mx-3 my-2 rounded border border-dashed border-[var(--border-subtle)] bg-[var(--bg-sidebar-elevated)]/40 hover:bg-[var(--bg-sidebar-elevated)] transition-all flex items-center justify-center text-xs text-[var(--text-muted)] animate-pulse"
-              )}
-              onDragOver={handleDragOver}
-              onDragEnter={(e) => handleDragEnter(e, "__bottom_drop_zone__")}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDropOnBottom}
-            >
-              Drop here to move to bottom
-            </div>
-          )}
+          {/* Invisible bottom drop zone — no visual cringe, just works */}
+          <div
+            className={cn("w-full transition-all", draggedChannel ? "min-h-[32px]" : "min-h-0")}
+            onDragOver={(e) => { if (draggedChannel) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
+            onDrop={(e) => { if (draggedChannel) { e.preventDefault(); handleDropOnBottom(e); } }}
+          />
         </div>
       </ScrollArea>
 

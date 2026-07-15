@@ -13,7 +13,7 @@ import { User } from '@/lib/models';
 // Live count of members who are actually online right now (status + fresh
 // heartbeat), mirroring resolveEffectiveStatus. The Server.onlineCount field
 // is never written to and must not be trusted as a source of truth.
-async function computeOnlineCount(serverId: string): Promise<number> {
+export async function computeOnlineCount(serverId: string): Promise<number> {
   const members = await ServerMember.find({ serverId });
   const userIds = members.map(m => m.userId);
   const users = userIds.length > 0 ? await User.find({ id: { in: userIds } }) : [];
@@ -237,16 +237,19 @@ interface PopulatedMemberUser {
 
 function normalizeRoleColor(color?: number | string | null): string {
   if (typeof color === 'number' && Number.isFinite(color)) {
+    if (color === 0) return '#99AAB5';
     return `#${Math.max(0, color).toString(16).padStart(6, '0').toUpperCase()}`;
   }
 
   if (typeof color === 'string' && color.trim()) {
     const stripped = color.trim().replace(/^#/, '');
     if (/^[0-9a-fA-F]{6}$/.test(stripped)) {
+      if (stripped.toLowerCase() === '000000') return '#99AAB5';
       return `#${stripped.toUpperCase()}`;
     }
     const asNumber = Number.parseInt(stripped, 16);
     if (Number.isFinite(asNumber)) {
+      if (asNumber === 0) return '#99AAB5';
       return `#${Math.max(0, asNumber).toString(16).padStart(6, '0').toUpperCase()}`;
     }
   }
@@ -1090,7 +1093,7 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
           if (!Array.isArray(v)) {
             fieldErrors[key] = 'Must be an array of categories';
           } else {
-            const allowed = ['gaming', 'music', 'tech', 'art', 'education', 'entertainment'];
+            const allowed = ['gaming', 'music', 'tech', 'art', 'education', 'entertainment', 'anime', 'science', 'sports', 'food', 'travel', 'languages', 'photography', 'business', 'lifestyle'];
             const valid = v.every((c: any) => typeof c === 'string' && allowed.includes(c));
             if (!valid) {
               fieldErrors[key] = `Categories must be one or more of: ${allowed.join(', ')}`;

@@ -281,10 +281,19 @@ html.theme-midnight body {
   input[type="range"] {
     accent-color: var(--app-accent);
   }
+}
 
-  ::selection {
-    background: color-mix(in srgb, var(--app-accent) 30%, transparent);
-  }
+/* Text selection highlight — outside @layer base so it overrides Tailwind utilities */
+::selection {
+  background: color-mix(in srgb, var(--app-accent) 30%, transparent);
+  color: inherit;
+}
+
+input::selection,
+textarea::selection,
+[contenteditable]::selection {
+  background: color-mix(in srgb, var(--app-accent) 35%, transparent);
+  color: inherit;
 }
 
 .premium-panel {
@@ -336,6 +345,39 @@ html.theme-midnight body {
 }
 .scrollbar-thin::-webkit-scrollbar-thumb:hover {
   background: var(--app-muted, rgba(255, 255, 255, 0.28));
+  background-clip: padding-box;
+}
+
+/* Slim, auto-hiding scrollbar for the narrow vertical server rail. The thumb
+   stays invisible until the rail is hovered, then fades in as a rounded pill so
+   it never crowds the 72px column or overlaps the server icons. */
+.server-rail-scroll {
+  scrollbar-width: none;
+  scrollbar-color: transparent transparent;
+}
+.server-rail-scroll:hover {
+  scrollbar-width: thin;
+  scrollbar-color: var(--app-border, rgba(255, 255, 255, 0.18)) transparent;
+}
+.server-rail-scroll::-webkit-scrollbar {
+  width: 6px;
+}
+.server-rail-scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+.server-rail-scroll::-webkit-scrollbar-thumb {
+  background: transparent;
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  transition: background 0.2s ease;
+}
+.server-rail-scroll:hover::-webkit-scrollbar-thumb {
+  background: var(--app-border, rgba(255, 255, 255, 0.22));
+  background-clip: padding-box;
+}
+.server-rail-scroll::-webkit-scrollbar-thumb:hover {
+  background: var(--app-muted, rgba(255, 255, 255, 0.4));
   background-clip: padding-box;
 }
 
@@ -510,7 +552,7 @@ html.theme-midnight body {
 }
 
 .safe-area-bottom {
-  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
 }
 
 /* Mirror self-view video */

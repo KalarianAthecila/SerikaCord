@@ -15,6 +15,7 @@ interface Server {
   isAgeGated?: boolean;
   description?: string;
   memberCount?: number;
+  onlineCount?: number;
   systemChannelId?: string | null;
   rulesChannelId?: string | null;
   afkChannelId?: string | null;
@@ -334,29 +335,10 @@ export function ServerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const createServer = useCallback(async (name: string, icon?: File): Promise<Server> => {
-    let iconUrl: string | undefined;
-    
-    // Upload icon first if provided
-    if (icon) {
-      const formData = new FormData();
-      formData.append("file", icon);
-      formData.append("type", "server-icon");
-      
-      const uploadResponse = await fetch("/api/uploads/icon", {
-        method: "POST",
-        body: formData,
-      });
-      
-      if (uploadResponse.ok) {
-        const uploadData = await uploadResponse.json();
-        iconUrl = uploadData.url;
-      }
-    }
-
     const response = await fetch("/api/servers", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name, icon: iconUrl }),
+      body: JSON.stringify({ name }),
     });
 
     if (!response.ok) {
@@ -369,6 +351,25 @@ export function ServerProvider({ children }: { children: ReactNode }) {
     // The create response may carry `_id` rather than `id`; normalize it so
     // the new server has a stable key and is clickable/navigable immediately.
     const server: Server = { ...raw, id: raw.id || raw._id };
+
+    // Upload the icon now that the server exists. The upload endpoint keyed by
+    // serverId is the only one that actually persists the icon.
+    if (icon) {
+      const formData = new FormData();
+      formData.append("file", icon);
+      try {
+        const uploadResponse = await fetch(`/api/upload/server/${server.id}/icon`, {
+          method: "POST",
+          body: formData,
+        });
+        if (uploadResponse.ok) {
+          const uploadData = await uploadResponse.json();
+          if (uploadData.url) server.icon = uploadData.url;
+        }
+      } catch {
+        // Non-fatal: server is created, icon can be set later in settings.
+      }
+    }
     setServers((prev) => {
       if (prev.some((s) => s.id === server.id)) return prev;
       return [...prev, server];

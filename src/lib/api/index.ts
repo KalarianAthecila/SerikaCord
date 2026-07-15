@@ -8,7 +8,7 @@ import { checkRateLimit, getClientIP, rejectInvalidObjectIdParams, decryptFromSt
 import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection, ServerMember, Server, Role, ServerEmoji, ServerSticker, Channel, Message } from '@/lib/models';
 import { RichPresence } from '@/lib/models/RichPresence';
 import { authRoutes } from './auth';
-import { serverRoutes, inviteRoutes, partnerRoutes } from './servers';
+import { serverRoutes, inviteRoutes, partnerRoutes, computeOnlineCount } from './servers';
 import { channelRoutes } from './channels';
 import { uploadRoutes } from './uploads';
 import { dmRoutes } from './dms';
@@ -574,10 +574,11 @@ const userRoutes = new Elysia({ prefix: '/users' })
     const servers = serverIds.length > 0 ? await Server.find({ id: { in: serverIds } }) : [];
     const serverMap = new Map(servers.map(s => [s.id, s]));
 
-    const result = memberships
+    const result = await Promise.all(memberships
       .filter(m => serverMap.has(m.serverId))
-      .map(m => {
+      .map(async (m) => {
         const server = serverMap.get(m.serverId) as any;
+        const onlineCount = await computeOnlineCount(server.id);
         return {
           id: server.id,
           name: server.name,
@@ -585,6 +586,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
           banner: server.banner ?? null,
           description: server.description,
           memberCount: server.memberCount,
+          onlineCount,
           isOfficial: server.isOfficial,
           isVerified: server.isVerified,
           isPartnered: Boolean(server.isPartnered),
@@ -600,7 +602,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
           roles: m.roles,
           nickname: m.nickname,
         };
-      });
+      }));
 
     return result;
   })
@@ -1291,19 +1293,66 @@ const userRoutes = new Elysia({ prefix: '/users' })
 
     const userAgent = request.headers.get('user-agent') || 'Unknown Device';
     const userId = (authUser as any).id || (authUser as any)._id;
-    const existingCurrent = await UserDeviceSession.findOne({ userId, current: true });
-    if (!existingCurrent) {
+
+    // Parse user agent for a friendly device name
+    const isTauri = userAgent.includes('Tauri') || request.headers.get('x-serika-client') === 'tauri';
+    let browser = 'Unknown Browser';
+    let platform = 'Desktop';
+    let deviceName = 'Unknown Device';
+
+    if (isTauri) {
+      deviceName = 'SerikaCord Desktop App';
+      browser = 'Tauri';
+      if (userAgent.includes('Windows')) platform = 'Windows';
+      else if (userAgent.includes('Mac')) platform = 'macOS';
+      else if (userAgent.includes('Linux')) platform = 'Linux';
+    } else {
+      // Detect browser
+      if (userAgent.includes('Edg/')) browser = 'Edge';
+      else if (userAgent.includes('OPR/') || userAgent.includes('Opera')) browser = 'Opera';
+      else if (userAgent.includes('Chrome/') && !userAgent.includes('Edg/')) browser = 'Chrome';
+      else if (userAgent.includes('Firefox/')) browser = 'Firefox';
+      else if (userAgent.includes('Safari/') && !userAgent.includes('Chrome/')) browser = 'Safari';
+
+      // Detect platform
+      if (userAgent.includes('Android')) { platform = 'Android'; deviceName = `${browser} on Android`; }
+      else if (userAgent.includes('iPhone') || userAgent.includes('iPad')) { platform = 'iOS'; deviceName = `${browser} on iOS`; }
+      else if (userAgent.includes('Windows')) { platform = 'Windows'; deviceName = `${browser} on Windows`; }
+      else if (userAgent.includes('Mac')) { platform = 'macOS'; deviceName = `${browser} on macOS`; }
+      else if (userAgent.includes('Linux')) { platform = 'Linux'; deviceName = `${browser} on Linux`; }
+      else deviceName = `${browser} on Desktop`;
+    }
+
+    if (isTauri) {
+      deviceName = `SerikaCord Desktop (${platform})`;
+    }
+
+    // Match by UA fingerprint so the same browser/app reuses its session
+    const uaFingerprint = userAgent.slice(0, 200);
+    const existing = await UserDeviceSession.findOne({ userId, browser: uaFingerprint });
+
+    // Unset any previous "current" sessions for this user
+    await UserDeviceSession.updateMany({ userId, current: true }, { current: false });
+
+    if (existing) {
+      await UserDeviceSession.updateById(existing.id, {
+        current: true,
+        lastActiveAt: new Date(),
+        deviceName,
+        platform,
+        browser: uaFingerprint,
+        ipAddress: getClientIP(request),
+      });
+    } else {
       await UserDeviceSession.create({
         userId,
-        deviceName: userAgent.slice(0, 120),
-        platform: userAgent.includes('Mobile') ? 'Mobile' : 'Desktop',
-        browser: userAgent.slice(0, 80),
+        deviceName,
+        platform,
+        browser: uaFingerprint,
         ipAddress: getClientIP(request),
         current: true,
         lastActiveAt: new Date(),
       });
-    } else {
-      await UserDeviceSession.updateById(existingCurrent.id, { lastActiveAt: new Date() });
     }
 
     const devices = await UserDeviceSession.find({ userId });
@@ -1848,6 +1897,76 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
       },
       blocked: blockedIds.map(mapBlockedUser).filter(Boolean),
     };
+  })
+  .get('/active', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const friendIds = (user.friends || []) as string[];
+    if (friendIds.length === 0) return { active: [] };
+
+    const friends = await User.find({ id: { in: friendIds } });
+    const now = new Date();
+
+    const activeEntries = await Promise.all(
+      friends.map(async (friend) => {
+        const showActivity = (friend.settings as any)?.privacy?.showActivity ?? true;
+        if (!showActivity) return null;
+
+        const friendId = friend.id;
+        const [watchActivity, richPresenceDocs, lastfmConnection] = await Promise.all([
+          getMoeActivity(friendId).catch(() => null),
+          RichPresence.find({ userId: friendId }).catch(() => []),
+          UserConnection.findOne({ userId: friendId, provider: 'lastfm' as any }).catch(() => null),
+        ]);
+
+        const activeRichPresence = (richPresenceDocs as any[]).filter((doc) => doc.expiresAt && new Date(doc.expiresAt) > now);
+        const activities = activeRichPresence.map((doc) => ({
+          type: doc.type,
+          name: doc.name,
+          details: doc.details ?? null,
+          state: doc.state ?? null,
+          largeImageUrl: doc.largeImageUrl ?? null,
+          largeImageText: doc.largeImageText ?? null,
+          smallImageUrl: doc.smallImageUrl ?? null,
+          smallImageText: doc.smallImageText ?? null,
+          startedAt: doc.startedAt ?? null,
+          endsAt: doc.endsAt ?? null,
+        }));
+
+        let music: import('@/lib/services/lastfmService').LastFmTrack | null = null;
+        if (lastfmConnection?.accountId) {
+          music = await getLastFmNowPlaying(lastfmConnection.accountId).catch(() => null);
+        }
+
+        const hasActivity = watchActivity || activities.length > 0 || music;
+        if (!hasActivity) return null;
+
+        return {
+          friend: {
+            id: friend.id,
+            username: friend.username,
+            displayName: friend.displayName,
+            avatar: friend.avatar,
+            status: getPublicPresenceStatus(friend),
+            customStatus: friend.customStatus,
+            isPremium: friend.isPremium,
+            badges: friend.badges || [],
+          },
+          activity: {
+            activity: watchActivity,
+            music,
+            game: activities[0] ?? null,
+            activities,
+          },
+        };
+      })
+    );
+
+    return { active: activeEntries.filter(Boolean) };
   })
   .get('/stream', async ({ headers, cookie }) => {
     const sseHeaders = {
