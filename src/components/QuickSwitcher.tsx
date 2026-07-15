@@ -45,13 +45,16 @@ export function QuickSwitcher() {
   const [dms, setDms] = useState<DMChannel[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  const openSwitcher = useCallback(() => {
-    setQuery("");
-    setActive(0);
-    setOpen(true);
+  const toggleSwitcher = useCallback(() => {
+    setOpen((prev) => {
+      if (prev) return false; // pressing the hotkey again closes it
+      setQuery("");
+      setActive(0);
+      return true;
+    });
   }, []);
 
-  useEffect(() => onHotkey("goto-dm", openSwitcher), [openSwitcher]);
+  useEffect(() => onHotkey("goto-dm", toggleSwitcher), [toggleSwitcher]);
 
   // Focus the field + (re)load DMs each time it opens. setDms lands in an async
   // callback (not the effect body), so it's compiler-safe.

@@ -794,7 +794,8 @@ export function ChannelSettingsDialog({
                       />
                     </div>
 
-                    {/* Announcement toggle */}
+                    {/* Announcement toggle — only meaningful for text channels */}
+                    {(channel.type === "text" || channel.type === "announcement") && (
                     <div className="p-6 rounded-xl bg-[var(--bg-app)] border border-[var(--border-subtle)] space-y-4">
                       <div className="flex items-center justify-between">
                         <div className="space-y-1">
@@ -821,6 +822,7 @@ export function ChannelSettingsDialog({
                         </div>
                       )}
                     </div>
+                    )}
 
                     {/* Forum settings */}
                     {channel.type === "forum" && (

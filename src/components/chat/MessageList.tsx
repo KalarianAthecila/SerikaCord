@@ -141,7 +141,10 @@ function MessageListInner<M extends ChatMessage>(
 
   // Reset scroll state when channel/DM changes so the list scrolls to bottom
   // even if the message count happens to be identical to the previous context.
-  useEffect(() => {
+  // Must be a layout effect so the force-scroll flag is set BEFORE the
+  // auto-scroll layout effect below runs on the same commit — otherwise an
+  // instant cached paint lands mid-list.
+  useLayoutEffect(() => {
     if (resetKey === undefined) return;
     prevMessageCountRef.current = 0;
     prevGroupCountRef.current = 0;
@@ -239,9 +242,11 @@ function MessageListInner<M extends ChatMessage>(
     if (pendingScrollRestoreRef.current) return; // handled above
     const prevCount = prevMessageCountRef.current;
     prevMessageCountRef.current = messageCount;
-    if (messageCount <= prevCount) return;
 
     const shouldForce = forceScrollRef.current;
+    // A pending force-scroll (e.g. from a channel switch) must always resolve to
+    // the bottom, even when the new context has the same or fewer messages.
+    if (messageCount <= prevCount && !shouldForce) return;
     forceScrollRef.current = false;
 
     if (shouldForce || isAtBottomRef.current) {

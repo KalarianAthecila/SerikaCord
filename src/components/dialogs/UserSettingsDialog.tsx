@@ -888,15 +888,22 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     initialServerBanner,
   ]);
 
-  // Handle escape key
+  // Handle escape key. Capture phase so it fires even if a child stops
+  // propagation, but yield to any nested dialog/menu/popover so Escape closes
+  // that first (e.g. an open picker inside settings) before closing settings.
   useEffect(() => {
+    if (!open) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && open) {
-        onOpenChange(false);
-      }
+      if (e.key !== "Escape") return;
+      const nested = document.querySelector(
+        '[role="dialog"],[role="alertdialog"],[role="menu"],[data-radix-popper-content-wrapper]'
+      );
+      if (nested) return; // let the nested overlay handle Escape first
+      e.preventDefault();
+      onOpenChange(false);
     };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true } as EventListenerOptions);
   }, [open, onOpenChange]);
 
   const handleSave = async () => {

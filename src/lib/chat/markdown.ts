@@ -37,6 +37,16 @@ function parseInline(text: string): MarkdownNode[] {
         if (/serika\.cc/i.test(href)) {
           return { type: "text", content: m[1], key: `l-${key++}` } as MarkdownNode;
         }
+        // Security: only allow safe URL schemes to prevent javascript: XSS
+        const trimmedHref = href.trim().toLowerCase();
+        const isSafeScheme = /^https?:\/\//i.test(trimmedHref) ||
+          /^mailto:/i.test(trimmedHref) ||
+          /^\/[^/]/i.test(trimmedHref) ||   // relative paths
+          /^#/.test(trimmedHref);              // anchor links
+        if (!isSafeScheme) {
+          // Dangerous scheme (javascript:, data:, vbscript:, etc.) — render as plain text
+          return { type: "text", content: `[${m[1]}](${href})`, key: `l-${key++}` } as MarkdownNode;
+        }
         return { type: "link", content: m[1], href, key: `l-${key++}` } as MarkdownNode;
       } },
       { regex: TIMESTAMP_RE, type: "timestamp", build: (m) => ({ type: "timestamp", content: m[1], format: m[2] || "f", options: m[3], key: `ts-${key++}` } as MarkdownNode) },

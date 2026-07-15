@@ -47,6 +47,7 @@ export const GroupAvatar = memo(function GroupAvatar({ author, serverId }: Group
       <button
         className="block rounded-full focus-visible:outline-2 focus-visible:outline-[#8B5CF6] cursor-pointer hover:opacity-90 transition-opacity"
         aria-label={`View profile of ${author.displayName || author.username}`}
+        onContextMenu={(e) => e.stopPropagation()}
       >
         {avatar}
       </button>
@@ -101,7 +102,7 @@ export const GroupHeader = memo(function GroupHeader({ author, formattedTimestam
           side="right"
           align="start"
         >
-          <button className={cn("!text-[0.8rem] font-medium leading-tight whitespace-nowrap hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded flex items-center gap-1", styleClasses)} style={chatInline}>
+          <button onContextMenu={(e) => e.stopPropagation()} className={cn("!text-[0.8rem] font-medium leading-tight whitespace-nowrap hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded flex items-center gap-1", styleClasses)} style={chatInline}>
             <span>{name}</span>
             {author.isOwner && (
               <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />

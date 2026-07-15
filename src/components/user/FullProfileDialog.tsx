@@ -12,7 +12,7 @@ import { GameActivityCard } from "@/components/user/GameActivityCard";
 import { NowWatchingCard } from "@/components/user/NowWatchingCard";
 import { useUserActivity } from "@/hooks/useMoeActivity";
 import { useCurrentTime } from "@/hooks/useCurrentTime";
-import { CalendarDays, MessageSquare, UserPlus, Clock, Check, Copy, ExternalLink, Crown, ShieldAlert } from "lucide-react";
+import { CalendarDays, MessageSquare, UserPlus, Clock, Check, Copy, ExternalLink, ShieldAlert } from "lucide-react";
 import { toast } from "sonner";
 import { useRouter } from "next/navigation";
 import { cn } from "@/lib/utils";
@@ -94,7 +94,7 @@ export function FullProfileDialog({
   }, [open, serverId, onOpenModView, isSelf, user.id]);
 
   const status = fullUser.status ?? "offline";
-  const displayName = fullUser.displayName || fullUser.username;
+  const displayName = fullUser.nickname || fullUser.displayName || fullUser.username;
   // Only poll live activity / tick the clock while the dialog is open — many of
   // these dialogs are mounted at once (one per avatar/username/mention), so
   // ungated polling saturates the network and main thread. See useUserActivity.
@@ -313,11 +313,6 @@ export function FullProfileDialog({
                   >
                     {displayName}
                   </h3>
-                  {showOwnerCrown && fullUser.isOwner && (
-                    <span title={gt("Server Owner")} className="shrink-0 text-[#F59E0B]">
-                      <Crown className="w-4 h-4" />
-                    </span>
-                  )}
                 </div>
                 <button
                   onClick={handleCopyUsername}

@@ -54,6 +54,9 @@ interface MessageContentProps {
   onImageClick?: (src: string, alt?: string) => void;
   /** Passed back through onMediaClick so parents can keep a stable handler */
   messageId?: string;
+  /** Inline mode (e.g. reply previews): render emoji/mentions inline, but never
+   *  expand into full-size images/stickers. */
+  inline?: boolean;
 }
 
 // Check if a string is only a URL (possibly with whitespace)
@@ -96,6 +99,7 @@ export const MessageContent = memo(function MessageContent({
   onMediaClick,
   onImageClick,
   messageId,
+  inline = false,
 }: MessageContentProps) {
   const gt = useChatGt();
   const textRef = useRef<HTMLSpanElement>(null);
@@ -131,6 +135,28 @@ export const MessageContent = memo(function MessageContent({
     e.preventDefault();
     e.stopPropagation();
     setEmojiCtxMenu({ x: e.clientX, y: e.clientY, emoji });
+  }, []);
+
+  // Delegated right-click handler on the whole message span so a right-click on
+  // any custom emoji reliably opens the emoji menu (and never falls through to
+  // the message context menu), regardless of how the emoji <img> was produced.
+  const handleSpanContextMenu = useCallback((e: React.MouseEvent) => {
+    const img = (e.target as HTMLElement)?.closest?.("img.custom-emoji") as HTMLElement | null;
+    if (!img) return; // not an emoji — let the message context menu handle it
+    const id = img.getAttribute("data-emoji-id");
+    if (!id) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setEmojiCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      emoji: {
+        id,
+        name: img.getAttribute("data-emoji-name") || "emoji",
+        url: img.getAttribute("data-emoji-url") || "",
+        serverId: img.getAttribute("data-emoji-server") || undefined,
+      },
+    });
   }, []);
 
   const handleCopyEmojiId = useCallback(() => {
@@ -326,6 +352,16 @@ export const MessageContent = memo(function MessageContent({
     }
   }, [displayContent, serverEmojis]);
 
+  // Inline mode (reply previews): render a compact sticker/attachment label
+  // instead of the full media so the preview stays a single line.
+  if (inline && (sticker || imageOnlyUrl)) {
+    return (
+      <span ref={textRef} onContextMenu={handleSpanContextMenu} className={cn("twemoji", className)}>
+        {sticker ? `${sticker.name}` : gt("(attachment)")}
+      </span>
+    );
+  }
+
   // If the message has a sticker, render it as a smaller Discord-like sticker
   if (sticker) {
     return (
@@ -368,8 +404,9 @@ export const MessageContent = memo(function MessageContent({
   }
 
   return (
-    <span 
-      ref={textRef} 
+    <span
+      ref={textRef}
+      onContextMenu={handleSpanContextMenu}
       className={cn(
         isLargeEmoji ? "twemoji-large" : "twemoji",
         className
@@ -385,11 +422,20 @@ export const MessageContent = memo(function MessageContent({
               title={`:${part.emoji.name}:`}
               className="custom-emoji"
               loading="lazy"
+              data-emoji-id={part.emoji.id}
+              data-emoji-name={part.emoji.name}
+              data-emoji-url={part.emoji.url || part.emoji.imageUrl || ""}
+              data-emoji-server={part.emoji.serverId || ""}
               onContextMenu={(e) => handleEmojiContextMenu(e, part.emoji!)}
             />
           );
         }
         if (part.type === "image" && part.url) {
+          if (inline) {
+            return (
+              <span key={`image-${index}`} className="opacity-70">{gt("(attachment)")}</span>
+            );
+          }
           const inlineGif = isGifUrl(part.url);
           return (
             <span key={`image-${index}`} className="block my-2">

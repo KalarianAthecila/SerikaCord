@@ -178,6 +178,22 @@ interface MessageBarProps {
   // Upload
   channelId?: string;
   uploadEndpoint?: string;
+
+  /** Stable per-context id (channel/DM). When it changes, the unsent draft for
+   *  the previous context is saved and the new context's draft is restored so
+   *  switching channels no longer loses typed-but-unsent text. */
+  draftKey?: string;
+}
+
+const DRAFT_PREFIX = "serika:draft:";
+function loadDraft(key: string): string {
+  try { return localStorage.getItem(DRAFT_PREFIX + key) || ""; } catch { return ""; }
+}
+function persistDraft(key: string, text: string) {
+  try {
+    if (text.trim()) localStorage.setItem(DRAFT_PREFIX + key, text);
+    else localStorage.removeItem(DRAFT_PREFIX + key);
+  } catch { /* storage unavailable */ }
 }
 
 export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
@@ -206,11 +222,47 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
       activeMentionIndex = 0,
       channelId,
       uploadEndpoint = "/api/upload/attachment",
+      draftKey,
     },
     ref
   ) {
     const gt = useGT();
     const composerRef = useRef<RichComposerHandle>(null);
+
+    // Draft persistence: save the previous context's unsent text and restore the
+    // new one whenever draftKey changes. Reads the live composer text at save
+    // time (empty right after a send), so sent messages never leave a stale draft.
+    const prevDraftKeyRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+      const prev = prevDraftKeyRef.current;
+      if (prev === draftKey) return;
+      if (prev !== undefined) persistDraft(prev, composerRef.current?.getText() ?? "");
+      const composer = composerRef.current;
+      if (composer && draftKey !== undefined) {
+        composer.clear();
+        const draft = loadDraft(draftKey);
+        if (draft) composer.insertTextAtCaret(draft);
+      }
+      prevDraftKeyRef.current = draftKey;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [draftKey]);
+
+    // Save the current draft on unmount and when the tab is hidden/closed.
+    useEffect(() => {
+      const save = () => {
+        if (prevDraftKeyRef.current !== undefined) {
+          persistDraft(prevDraftKeyRef.current, composerRef.current?.getText() ?? "");
+        }
+      };
+      const onVisibility = () => { if (document.visibilityState === "hidden") save(); };
+      window.addEventListener("pagehide", save);
+      document.addEventListener("visibilitychange", onVisibility);
+      return () => {
+        window.removeEventListener("pagehide", save);
+        document.removeEventListener("visibilitychange", onVisibility);
+        save();
+      };
+    }, []);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [attachments, setAttachments] = useState<File[]>([]);
     const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([]);
@@ -219,6 +271,12 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
     const [uploadProgress, setUploadProgress] = useState<Record<number, number>>({});
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [pickerTab, setPickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
+    // Mirror picker state into refs so the (once-registered) hotkey handlers can
+    // read the latest values for tab-aware toggling.
+    const showEmojiPickerRef = useRef(showEmojiPicker);
+    const pickerTabRef = useRef(pickerTab);
+    useEffect(() => { showEmojiPickerRef.current = showEmojiPicker; }, [showEmojiPicker]);
+    useEffect(() => { pickerTabRef.current = pickerTab; }, [pickerTab]);
     const [hasText, setHasText] = useState(false);
     const [acceptFileTypes, setAcceptFileTypes] = useState<string>("*/*");
 
@@ -236,19 +294,20 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
 
     // Broadcast keyboard-shortcut actions owned by the composer.
     useEffect(() => {
+      // Pressing a picker hotkey opens that tab; pressing the same one again
+      // (while that tab is showing) closes the picker.
+      const toggleTab = (tab: "emoji" | "gifs" | "stickers") => {
+        if (showEmojiPickerRef.current && pickerTabRef.current === tab) {
+          setShowEmojiPicker(false);
+        } else {
+          setPickerTab(tab);
+          setShowEmojiPicker(true);
+        }
+      };
       const unsubs = [
-        onHotkey("toggle-emoji", () => {
-          setPickerTab("emoji");
-          setShowEmojiPicker((v) => !v);
-        }),
-        onHotkey("toggle-gifs", () => {
-          setPickerTab("gifs");
-          setShowEmojiPicker(true);
-        }),
-        onHotkey("toggle-stickers", () => {
-          setPickerTab("stickers");
-          setShowEmojiPicker(true);
-        }),
+        onHotkey("toggle-emoji", () => toggleTab("emoji")),
+        onHotkey("toggle-gifs", () => toggleTab("gifs")),
+        onHotkey("toggle-stickers", () => toggleTab("stickers")),
         onHotkey("upload-file", () => fileInputRef.current?.click()),
       ];
       return () => unsubs.forEach((u) => u());

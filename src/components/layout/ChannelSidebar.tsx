@@ -1357,19 +1357,21 @@ export function ChannelSidebar({
             </button>
           )}
           {(canManageChannels || canInvite) && <div className="h-px bg-[var(--border-subtle)] my-1" />}
-          <button
-            onClick={handleCopyChannelLink}
-            className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
-          >
-            <LinkIcon className="w-4 h-4" />
-            {gt("Copy Link")}
-          </button>
+          {contextMenu?.channel?.type !== "category" && (
+            <button
+              onClick={handleCopyChannelLink}
+              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+            >
+              <LinkIcon className="w-4 h-4" />
+              {gt("Copy Link")}
+            </button>
+          )}
           <button
             onClick={handleCopyChannelId}
             className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
           >
             <Copy className="w-4 h-4" />
-            {gt("Copy Channel ID")}
+            {contextMenu?.channel?.type === "category" ? gt("Copy Category ID") : gt("Copy Channel ID")}
           </button>
           <div className="h-px bg-[var(--border-subtle)] my-1" />
           <button
@@ -1416,7 +1418,7 @@ export function ChannelSidebar({
   );
 }
 
-interface UserPanelProps {
+export interface UserPanelProps {
   user: {
     id?: string;
     username?: string;
@@ -1437,7 +1439,7 @@ interface UserPanelProps {
   } | null;
 }
 
-function UserPanel({ user }: UserPanelProps) {
+export function UserPanel({ user }: UserPanelProps) {
   const gt = useGT();
   const [isMuted, setIsMuted] = useState(voiceService.muted);
   const [isDeafened, setIsDeafened] = useState(voiceService.deafened);

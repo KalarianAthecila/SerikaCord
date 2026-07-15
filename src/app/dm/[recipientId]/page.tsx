@@ -24,6 +24,7 @@ import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
 import { PinnedMessagesDialog } from "@/components/chat/PinnedMessagesDialog";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { useChatSession } from "@/hooks/useChatSession";
+import { useComposerSuggestions } from "@/hooks/useComposerSuggestions";
 import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { playTts } from "@/lib/chat/tts";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
@@ -194,6 +195,19 @@ export default function DMConversationPage() {
     }
   }, [user?.id]);
 
+  // Auto-start a call when arriving from a "Call"/"Video Call" menu action
+  // (e.g. from the member list), via ?call=voice|video.
+  useEffect(() => {
+    if (!user?.id || !recipientId || typeof window === "undefined") return;
+    const call = new URLSearchParams(window.location.search).get("call");
+    if (call !== "voice" && call !== "video") return;
+    voiceService.setUserId(user.id);
+    void voiceService.joinChannel(`dm:${recipientId}`, call === "video");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("call");
+    window.history.replaceState(null, "", url.toString());
+  }, [user?.id, recipientId]);
+
   // Cross-server emojis/stickers for the DM pickers (best-effort)
   useEffect(() => {
     fetch("/api/users/@me/emojis")
@@ -246,7 +260,36 @@ export default function DMConversationPage() {
     return false;
   };
 
+  /** Jump to a message, loading the surrounding window first if it isn't in view. */
+  const jumpToMessage = useCallback(async (id: string) => {
+    if (!id) return;
+    const highlight = () => {
+      messageListRef.current?.scrollToMessage(id);
+      const el = document.getElementById(`message-${id}`);
+      if (el) {
+        el.classList.add("message-jump-highlight");
+        setTimeout(() => el.classList.remove("message-jump-highlight"), 1600);
+      }
+    };
+    if (document.getElementById(`message-${id}`)) { highlight(); return; }
+    const ok = await chat.jumpToMessage(id);
+    if (!ok) return;
+    requestAnimationFrame(() => requestAnimationFrame(highlight));
+  }, [chat]);
+
+  // Emoji `:` / slash `/` / `@user` autocomplete for the DM composer.
+  const composerSuggestions = useComposerSuggestions({
+    getComposer: () => messageBarRef.current?.getComposer() ?? null,
+    isServer: false,
+    customEmojis: availableServerEmojis,
+    recipient: recipientId ? { id: recipientId, username: recipient?.username || "", displayName: recipient?.displayName } : null,
+    onAfterInsert: (text) => chat.signalTyping(text),
+  });
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
+    // Let the autocomplete claim arrow/enter/tab/escape while open.
+    if (composerSuggestions.handleKeyDown(e)) return;
+
     const composer = messageBarRef.current?.getComposer();
     const isComposerEmpty = (composer?.getText().trim().length ?? 0) === 0;
 
@@ -444,6 +487,10 @@ export default function DMConversationPage() {
               ariaLabel={`${gt("Message")} @${recipientName || "..."}`}
               onSend={() => void handleSend()}
               onChange={handleMessageInputChange}
+              onCaretMove={(text, caret) => composerSuggestions.onCaretMove(text, caret)}
+              mentionSuggestions={composerSuggestions.mentionSuggestions}
+              onMentionSelect={(s) => composerSuggestions.onMentionSelect(s as unknown as import("@/hooks/useComposerSuggestions").ComposerSuggestion)}
+              activeMentionIndex={composerSuggestions.activeMentionIndex}
               onKeyDown={handleKeyPress}
               onEmojiSelect={chat.handleEmojiSelect}
               onGifSelect={chat.handleGifSelect}
@@ -453,6 +500,7 @@ export default function DMConversationPage() {
               availableServerStickers={availableServerStickers}
               replyTo={chat.actions.replyToMessage}
               onCancelReply={() => chat.actions.setReplyToMessage(null)}
+              draftKey={recipientId ? `dm:${recipientId}` : undefined}
             />
           )}
 
@@ -494,7 +542,7 @@ export default function DMConversationPage() {
         messages={chat.pinnedMessages}
         isLoading={chat.isLoadingPins}
         contextLabel={recipientName ? `@${recipientName}` : undefined}
-        onJumpToMessage={(id) => messageListRef.current?.scrollToMessage(id)}
+        onJumpToMessage={(id) => void jumpToMessage(id)}
         onUnpin={(message) => void chat.actions.togglePin(message)}
       />
 
@@ -512,6 +560,7 @@ export default function DMConversationPage() {
         onPinToggle={(message) => void chat.actions.togglePin(message)}
         onEdit={chat.actions.startEditing}
         onDelete={chat.actions.setDeleteConfirmMessage}
+        onDeleteNow={(message) => void chat.actions.deleteMessageNow(message)}
       />
 
       <ImageLightbox

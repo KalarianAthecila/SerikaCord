@@ -7,6 +7,8 @@ import { Input } from "@/components/ui/input";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ServerBadge } from "@/components/ui/badges";
 import { useServer } from "@/contexts/ServerContext";
+import { useAuth } from "@/contexts/AuthContext";
+import { UserPanel } from "@/components/layout/ChannelSidebar";
 import {
   Search,
   Users,
@@ -187,47 +189,31 @@ function ServerCard({
       className={cn(
         "group relative rounded-2xl overflow-hidden flex flex-col cursor-pointer",
         "bg-[var(--bg-card)] border border-[var(--border-subtle)]",
-        "transition-all duration-300 hover:-translate-y-1",
-        "hover:border-[var(--accent-color)]/60 hover:shadow-xl hover:shadow-[color:var(--accent-color)]/10",
+        "transition-all duration-300 ease-in-out hover:scale-[1.015]",
+        "hover:border-[var(--accent-color)]/40 hover:shadow-xl hover:shadow-black/20",
       )}
       onClick={onJoin}
     >
-      {/* Accent glow on hover */}
-      <div
-        className="pointer-events-none absolute inset-x-0 top-0 h-24 opacity-0 group-hover:opacity-100 transition-opacity duration-300"
-        style={{ background: `linear-gradient(to bottom, color-mix(in srgb, ${ACCENT} 14%, transparent), transparent)` }}
-      />
-
       {/* === BANNER === */}
       <div className={cn("relative overflow-hidden w-full", featured ? "h-32" : "h-24")}>
         {server.banner ? (
-          <img src={server.banner} alt="" className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-500" />
+          <img src={server.banner} alt="" className="w-full h-full object-cover group-hover:scale-[1.03] transition-transform duration-700" />
         ) : (
           <div
-            className="w-full h-full group-hover:scale-105 transition-transform duration-500"
+            className="w-full h-full group-hover:scale-[1.03] transition-transform duration-700"
             style={{ background: `linear-gradient(135deg, ${gradient.from}, ${gradient.to})` }}
           >
             <div className="absolute inset-0 bg-gradient-to-br from-white/15 to-transparent" />
           </div>
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg-card)] via-transparent to-transparent" />
 
         {isNew && (
           <div
-            className="absolute top-2.5 right-2.5 px-2 py-0.5 text-white text-[10px] font-bold rounded-full flex items-center gap-1 shadow-lg z-10"
+            className="absolute top-2.5 right-2.5 px-2.5 py-1 text-white text-[10px] font-bold rounded-full flex items-center gap-1 shadow-lg z-10"
             style={{ backgroundColor: ACCENT }}
           >
             <Sparkles className="w-2.5 h-2.5" />
             {gt("NEW")}
-          </div>
-        )}
-        {(server.onlineCount ?? 0) > 0 && (
-          <div className="absolute bottom-2.5 left-2.5 flex items-center gap-1.5 px-2 py-0.5 bg-black/55 backdrop-blur-sm rounded-full z-10">
-            <span className="relative flex w-2 h-2">
-              <span className="absolute inset-0 rounded-full bg-[#23A55A] animate-ping opacity-75" />
-              <span className="relative w-2 h-2 rounded-full bg-[#23A55A]" />
-            </span>
-            <span className="text-[10px] text-white font-medium">{formatMemberCount(server.onlineCount || 0)} {gt("online")}</span>
           </div>
         )}
       </div>
@@ -236,7 +222,7 @@ function ServerCard({
       <div className="flex justify-center -mt-9 mb-1.5 relative z-10">
         <Avatar
           className={cn(
-            "flex-shrink-0 border-4 border-[var(--bg-card)] ring-2 ring-transparent transition-all group-hover:ring-[var(--accent-color)]/40",
+            "flex-shrink-0 border-4 border-[var(--bg-card)] transition-all duration-300",
             featured ? "w-[68px] h-[68px]" : "w-14 h-14"
           )}
         >
@@ -251,74 +237,78 @@ function ServerCard({
       </div>
 
       {/* === INFO === */}
-      <div className="px-4 pb-4 flex flex-col items-center text-center flex-1">
-        <div className="flex items-center gap-1.5 justify-center flex-wrap max-w-full">
-          {server.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
-          {server.isVerified && (
-            <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: ACCENT }} />
-          )}
-          <h3 className="text-[var(--text-primary)] font-bold truncate text-[15px]">{server.name}</h3>
-        </div>
-
-        <p className="text-[var(--text-secondary)] text-[13px] leading-relaxed line-clamp-2 mt-1.5 min-h-[2.4rem]">
-          {server.description || gt("No description")}
-        </p>
-
-        {/* Stats row */}
-        <div className="flex items-center gap-4 mt-3 text-xs text-[var(--text-muted)]">
-          <span className="flex items-center gap-1.5">
-            <span className="w-1.5 h-1.5 rounded-full bg-[#23A55A]" />
-            {formatMemberCount(server.onlineCount || 0)} {gt("Online")}
-          </span>
-          <span className="flex items-center gap-1">
-            <Users className="w-3.5 h-3.5" />
-            {formatMemberCount(server.memberCount)} {gt("Members")}
-          </span>
-        </div>
-
-        {/* Tags — all use the accent color */}
-        {server.tags && server.tags.length > 0 && (
-          <div className="flex gap-1.5 mt-3 flex-wrap justify-center">
-            {server.tags.slice(0, 3).map((tag) => {
-              const cat = categories.find((c) => c.id === tag);
-              return (
-                <span
-                  key={tag}
-                  className="px-2 py-0.5 text-[11px] font-medium rounded-md"
-                  style={{
-                    color: ACCENT,
-                    backgroundColor: `color-mix(in srgb, ${ACCENT} 12%, transparent)`,
-                  }}
-                >
-                  {cat ? categoryLabel(cat.id, gt) : tag}
-                </span>
-              );
-            })}
+      <div className="px-4 pb-4 flex flex-col items-center text-center flex-1 w-full">
+        <div className="flex flex-col items-center w-full flex-1">
+          <div className="flex items-center gap-1.5 justify-center flex-wrap max-w-full">
+            {server.isPartnered && <ServerBadge type="partnered" size="sm" iconOnly />}
+            {server.isVerified && (
+              <CheckCircle2 className="w-4 h-4 flex-shrink-0" style={{ color: ACCENT }} />
+            )}
+            <h3 className="text-[var(--text-primary)] font-bold truncate text-[15px]">{server.name}</h3>
           </div>
-        )}
+
+          <p className="text-[var(--text-secondary)] text-[13px] leading-relaxed line-clamp-2 mt-1.5 min-h-[2.4rem]">
+            {server.description || gt("No description")}
+          </p>
+
+          {/* Stats row */}
+          <div className="flex items-center gap-4 mt-3 text-xs text-[var(--text-muted)]">
+            <span className="flex items-center gap-1.5">
+              <span className="w-1.5 h-1.5 rounded-full bg-[#23A55A]" />
+              {formatMemberCount(server.onlineCount || 0)} {gt("Online")}
+            </span>
+            <span className="flex items-center gap-1">
+              <Users className="w-3.5 h-3.5" />
+              {formatMemberCount(server.memberCount)} {gt("Members")}
+            </span>
+          </div>
+
+          {/* Tags — all use the accent color */}
+          {server.tags && server.tags.length > 0 && (
+            <div className="flex gap-1.5 mt-3.5 flex-wrap justify-center">
+              {server.tags.slice(0, 3).map((tag) => {
+                const cat = categories.find((c) => c.id === tag);
+                return (
+                  <span
+                    key={tag}
+                    className="px-2.5 py-1 text-[11px] font-semibold rounded-md"
+                    style={{
+                      color: ACCENT,
+                      backgroundColor: `color-mix(in srgb, ${ACCENT} 10%, transparent)`,
+                    }}
+                  >
+                    {cat ? categoryLabel(cat.id, gt) : tag}
+                  </span>
+                );
+              })}
+            </div>
+          )}
+        </div>
 
         {/* Join button */}
-        {isJoined ? (
-          <button
-            disabled
-            className="mt-4 w-full px-4 py-2 rounded-lg bg-[#23A55A]/15 text-[#23A55A] text-sm font-semibold flex items-center justify-center gap-1.5 cursor-default"
-          >
-            <CheckCircle2 className="w-4 h-4" />
-            {gt("Joined")}
-          </button>
-        ) : (
-          <button
-            onClick={(e) => {
-              e.stopPropagation();
-              onJoin();
-            }}
-            disabled={joining}
-            className="mt-4 w-full px-4 py-2 rounded-lg text-white text-sm font-semibold transition-all hover:brightness-110 active:scale-95 disabled:opacity-60"
-            style={{ backgroundColor: ACCENT }}
-          >
-            {joining ? <Loader size={16} className="mx-auto" /> : server.joinMode === "apply_to_join" ? gt("Apply to Join") : gt("Join Server")}
-          </button>
-        )}
+        <div className="mt-auto pt-5 w-full shrink-0">
+          {isJoined ? (
+            <button
+              disabled
+              className="w-full px-4 py-2 rounded-lg bg-[#23A55A]/15 text-[#23A55A] text-sm font-semibold flex items-center justify-center gap-1.5 cursor-default"
+            >
+              <CheckCircle2 className="w-4 h-4" />
+              {gt("Joined")}
+            </button>
+          ) : (
+            <button
+              onClick={(e) => {
+                e.stopPropagation();
+                onJoin();
+              }}
+              disabled={joining}
+              className="w-full px-4 py-2.5 rounded-lg text-white text-sm font-semibold transition-all hover:brightness-110 hover:shadow-md active:scale-95 disabled:opacity-60"
+              style={{ backgroundColor: ACCENT }}
+            >
+              {joining ? <Loader size={16} className="mx-auto" /> : server.joinMode === "apply_to_join" ? gt("Apply to Join") : gt("Join Server")}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -327,6 +317,7 @@ function ServerCard({
 export default function ExplorePage() {
   const gt = useGT();
   const router = useRouter();
+  const { user } = useAuth();
   const { servers: joinedServers, fetchServers } = useServer();
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("all");
@@ -467,7 +458,7 @@ export default function ExplorePage() {
   const showFeatured = selectedCategory === "all" && !debouncedSearch && sortMode === "popular";
 
   const featuredServers = useMemo(
-    () => (showFeatured ? servers.filter((s) => s.isPartnered).slice(0, 4) : []),
+    () => (showFeatured ? servers.filter((s) => s.isPartnered).slice(0, 3) : []),
     [servers, showFeatured]
   );
 
@@ -493,7 +484,7 @@ export default function ExplorePage() {
           <h2 className="text-[11px] font-bold text-[var(--text-muted)] uppercase tracking-wider mb-3 px-2">
             <T>Discover</T>
           </h2>
-          <nav className="space-y-0.5">
+          <nav className="space-y-1">
             {categories.map((category) => {
               const Icon = category.icon;
               const count = category.id === "all" ? stats.totalServers : (categoryCounts[category.id] || 0);
@@ -503,12 +494,12 @@ export default function ExplorePage() {
                   key={category.id}
                   onClick={() => setSelectedCategory(category.id)}
                   className={cn(
-                    "group/cat relative w-full flex items-center gap-3 pl-3 pr-2.5 py-2 rounded-lg text-sm font-medium transition-colors",
+                    "group/cat relative w-full flex items-center gap-3 px-3.5 py-2.5 rounded-xl text-sm font-medium transition-all duration-150",
                     isActive
-                      ? "text-[var(--text-primary)]"
+                      ? "text-[var(--text-primary)] font-semibold"
                       : "text-[var(--text-secondary)] hover:bg-[var(--bg-hover)] hover:text-[var(--text-primary)]"
                   )}
-                  style={isActive ? { backgroundColor: `color-mix(in srgb, ${ACCENT} 15%, transparent)` } : undefined}
+                  style={isActive ? { backgroundColor: `color-mix(in srgb, ${ACCENT} 10%, transparent)` } : undefined}
                 >
                   {isActive && (
                     <span className="absolute left-0 top-1/2 -translate-y-1/2 h-5 w-1 rounded-r-full" style={{ backgroundColor: ACCENT }} />
@@ -517,7 +508,7 @@ export default function ExplorePage() {
                   <span className="flex-1 text-left truncate">{categoryLabel(category.id, gt)}</span>
                   {count > 0 && (
                     <span
-                      className="text-[10px] font-bold px-1.5 py-0.5 rounded-full"
+                      className="text-[10px] font-bold px-2 py-0.5 rounded-full"
                       style={isActive
                         ? { color: ACCENT, backgroundColor: `color-mix(in srgb, ${ACCENT} 20%, transparent)` }
                         : { color: "var(--text-muted)", backgroundColor: "var(--bg-hover)" }}
@@ -531,29 +522,9 @@ export default function ExplorePage() {
           </nav>
         </div>
 
-        {/* Stats footer */}
-        <div className="p-4 border-t border-[var(--border-subtle)] space-y-2.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[var(--text-secondary)] flex items-center gap-1.5">
-              <Globe className="w-3.5 h-3.5" />
-              <T>Communities</T>
-            </span>
-            <span className="text-[var(--text-primary)] font-bold">{formatMemberCount(stats.totalServers)}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[var(--text-secondary)] flex items-center gap-1.5">
-              <Users className="w-3.5 h-3.5" />
-              <T>Total Members</T>
-            </span>
-            <span className="text-[var(--text-primary)] font-bold">{formatMemberCount(stats.totalMembers)}</span>
-          </div>
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-[var(--text-secondary)] flex items-center gap-1.5">
-              <Activity className="w-3.5 h-3.5 text-[#23A55A]" />
-              <T>Online Now</T>
-            </span>
-            <span className="text-[#23A55A] font-bold">{formatMemberCount(stats.totalOnline)}</span>
-          </div>
+        {/* User Panel footer */}
+        <div className="mt-auto shrink-0">
+          <UserPanel user={user} />
         </div>
       </aside>
 
@@ -561,40 +532,40 @@ export default function ExplorePage() {
       <ScrollArea className="flex-1 min-h-0">
         {/* Hero */}
         <div className="relative h-[200px] md:h-[280px] overflow-hidden flex-shrink-0">
-          {/* Accent-driven gradient background */}
+          {/* Deep dark premium background with subtle radial gradient */}
           <div
-            className="absolute inset-0"
-            style={{ background: `linear-gradient(135deg, ${ACCENT}, color-mix(in srgb, ${ACCENT} 45%, #EB459E))` }}
+            className="absolute inset-0 bg-[#0c0c0e]"
+            style={{
+              backgroundImage: `radial-gradient(circle at 50% -20%, color-mix(in srgb, ${ACCENT} 18%, transparent), transparent 75%)`
+            }}
           />
-          {/* Floating orbs */}
-          <div className="absolute top-8 left-10 w-40 h-40 bg-white/15 rounded-full blur-3xl animate-pulse" />
-          <div className="absolute bottom-6 right-16 w-52 h-52 bg-black/15 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '1s' }} />
-          <div className="absolute top-1/2 left-1/3 w-32 h-32 bg-white/10 rounded-full blur-3xl animate-pulse" style={{ animationDelay: '2s' }} />
-          {/* Grid overlay */}
-          <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-20" />
-          {/* Fade to background */}
-          <div className="absolute inset-0" style={{ background: `linear-gradient(to top, var(--app-bg), color-mix(in srgb, var(--app-bg) 40%, transparent) 45%, transparent)` }} />
+          {/* Subtle grid pattern overlay */}
+          <div className="absolute inset-0 bg-[url('/grid.svg')] opacity-[0.06] mix-blend-overlay" />
+          
+          {/* Floating subtle glowing orbs */}
+          <div className="absolute top-[-10%] left-[15%] w-72 h-72 rounded-full blur-[100px] opacity-[0.1]" style={{ backgroundColor: ACCENT }} />
+          <div className="absolute bottom-[-10%] right-[15%] w-80 h-80 rounded-full blur-[120px] opacity-[0.06]" style={{ backgroundColor: ACCENT }} />
 
-          <div className="relative h-full flex flex-col items-center justify-center px-4 text-center">
-            <h1 className="text-3xl md:text-5xl font-extrabold text-white mb-2 drop-shadow-lg">
+          <div className="relative h-full flex flex-col items-center justify-center px-4 text-center z-10">
+            <h1 className="text-3xl md:text-5xl font-extrabold text-white mb-2 tracking-tight drop-shadow-md">
               <T>Find your community</T>
             </h1>
-            <p className="text-white/85 text-sm md:text-lg max-w-xl mb-6">
+            <p className="text-white/60 text-sm md:text-lg max-w-xl mb-6 font-medium">
               <T>From gaming, to music, to learning, there's a place for you.</T>
             </p>
 
             <div className="w-full max-w-xl relative">
-              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-muted)]" />
+              <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-[var(--text-muted)] z-10 pointer-events-none" />
               <Input
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 placeholder={gt("Explore communities...")}
-                className="pl-12 h-12 bg-[var(--bg-card)]/90 backdrop-blur border border-white/10 text-[var(--text-primary)] text-base placeholder:text-[var(--text-muted)] rounded-full shadow-lg focus-visible:ring-2 focus-visible:ring-white/40"
+                className="pl-12 h-12 bg-black/40 hover:bg-black/60 focus:bg-black/85 backdrop-blur-md border border-[var(--border-subtle)] text-[var(--text-primary)] text-base placeholder:text-[var(--text-muted)] rounded-xl shadow-2xl transition-all duration-200 focus-visible:ring-2 focus-visible:ring-[var(--accent-color)]/50"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-[var(--bg-hover)] transition-colors"
+                  className="absolute right-3.5 top-1/2 -translate-y-1/2 p-1 rounded-full hover:bg-white/10 transition-colors"
                 >
                   <X className="w-4 h-4 text-[var(--text-muted)]" />
                 </button>
@@ -614,7 +585,7 @@ export default function ExplorePage() {
                   key={category.id}
                   onClick={() => setSelectedCategory(category.id)}
                   className={cn(
-                    "relative flex items-center gap-1.5 px-3 py-3 text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 border-b-2",
+                    "relative flex items-center gap-1.5 px-4 py-3.5 text-sm font-medium whitespace-nowrap transition-colors flex-shrink-0 border-b-2",
                     isActive
                       ? "text-[var(--text-primary)]"
                       : "text-[var(--text-secondary)] border-transparent hover:text-[var(--text-primary)]"
@@ -641,7 +612,7 @@ export default function ExplorePage() {
             </div>
 
             {/* Sort tabs — accent underline segmented control */}
-            <div className="flex items-center gap-1 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-1">
+            <div className="flex items-center gap-1 bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-xl p-1 shadow-sm">
               {sortOptions.map((option) => {
                 const Icon = option.icon;
                 const isActive = sortMode === option.id;
@@ -650,8 +621,8 @@ export default function ExplorePage() {
                     key={option.id}
                     onClick={() => setSortMode(option.id)}
                     className={cn(
-                      "flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-colors",
-                      isActive ? "text-white" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
+                      "flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all duration-150",
+                      isActive ? "text-white shadow-sm" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)] hover:bg-[var(--bg-hover)]/40"
                     )}
                     style={isActive ? { backgroundColor: ACCENT } : undefined}
                   >
@@ -676,7 +647,7 @@ export default function ExplorePage() {
                   <T>PARTNERED</T>
                 </span>
               </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {featuredServers.map((server) => (
                   <ServerCard
                     key={server.id}
@@ -694,7 +665,7 @@ export default function ExplorePage() {
           {/* All Servers */}
           <section>
             {isLoading ? (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {Array.from({ length: 8 }).map((_, i) => (
                   <div key={i} className="bg-[var(--bg-card)] rounded-2xl border border-[var(--border-subtle)] overflow-hidden animate-pulse flex flex-col">
                     <div className="h-24 bg-[var(--bg-hover)]" />
@@ -734,7 +705,7 @@ export default function ExplorePage() {
                 )}
               </div>
             ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
                 {filteredServers.map((server) => (
                   <ServerCard
                     key={server.id}

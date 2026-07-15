@@ -392,6 +392,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     const limit = Math.min(parseInt(query.limit as string) || 50, 100);
     const before = query.before as string | undefined;
     const after = query.after as string | undefined;
+    const around = query.around as string | undefined;
 
     // Build cursor-based DB query
     const msgFilter: Record<string, unknown> = {
@@ -411,6 +412,13 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       const afterMsg = await Message.findById(after);
       if (afterMsg) {
         msgFilter.createdAtAfter = afterMsg.createdAt;
+      }
+    } else if (around) {
+      // Load a window ending at (and including) the target message so the client
+      // can scroll to a pinned/searched message that isn't in the live tail.
+      const aroundMsg = await Message.findById(around);
+      if (aroundMsg) {
+        msgFilter.createdAtBefore = new Date(new Date(aroundMsg.createdAt as string | number | Date).getTime() + 1);
       }
     }
 

@@ -1,7 +1,10 @@
 "use client";
 
-import { useState, useCallback, useMemo, useRef } from "react";
-import { Crown, Play, Pause, Music2, Gamepad2, Code2, Bot, Check, Copy, MessageSquare, UserCircle, X, Clock } from "lucide-react";
+import { useState, useMemo, useEffect } from "react";
+import { Crown, Play, Pause, Music2, Gamepad2, Code2, Bot, Check, Copy, MessageSquare, Clock, UserPlus, UserPlus2, ShieldAlert, Phone, Video } from "lucide-react";
+import { hasPermissionBit } from "@/lib/roles/bitfield";
+import { InviteDialog } from "@/components/dialogs/InviteDialog";
+import { ModViewDialog } from "@/components/user/ModViewDialog";
 import { useServer, useServerMembers } from "@/contexts/ServerContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { useUserActivity } from "@/hooks/useMoeActivity";
@@ -86,6 +89,25 @@ export function MemberSidebar() {
   const gt = useGT();
   const { currentServer } = useServer();
   const { members, isMembersLoading: isLoading } = useServerMembers();
+  const [canModerate, setCanModerate] = useState(false);
+
+  useEffect(() => {
+    if (!currentServer) { setCanModerate(false); return; }
+    let active = true;
+    (async () => {
+      try {
+        const res = await fetch(`/api/servers/${currentServer.id}/members/@me/permissions`);
+        if (!res.ok || !active) return;
+        const data = await res.json();
+        // owner, admin, or any of kick/ban/timeout/manage-roles.
+        const MOD_BITS = [1n << 3n, 1n << 1n, 1n << 2n, 1n << 40n, 1n << 28n];
+        setCanModerate(
+          Boolean(data.isOwner) || MOD_BITS.some((bit) => hasPermissionBit(data.permissions, bit))
+        );
+      } catch { /* ignore */ }
+    })();
+    return () => { active = false; };
+  }, [currentServer]);
 
   const groupedOnlineMembers = useMemo(() => {
     const onlineMembers = sortMembersByName(members.filter((member) => member.status !== "offline"));
@@ -151,7 +173,7 @@ export function MemberSidebar() {
                     {group.label} — {group.members.length}
                   </p>
                   {group.members.map((member) => (
-                    <MemberItem key={member.id || member.membershipId} member={member} serverId={currentServer.id} />
+                    <MemberItem key={member.id || member.membershipId} member={member} serverId={currentServer.id} canModerate={canModerate} />
                   ))}
                 </div>
               ))}
@@ -162,7 +184,7 @@ export function MemberSidebar() {
                     {gt("Offline")} — {offlineMembers.length}
                   </p>
                   {offlineMembers.map((member) => (
-                    <MemberItem key={member.id || member.membershipId} member={member} serverId={currentServer.id} />
+                    <MemberItem key={member.id || member.membershipId} member={member} serverId={currentServer.id} canModerate={canModerate} />
                   ))}
                 </div>
               )}
@@ -183,13 +205,36 @@ export function MemberSidebar() {
 interface MemberItemProps {
   member: Member;
   serverId?: string;
+  canModerate?: boolean;
 }
 
-function MemberItem({ member, serverId }: MemberItemProps) {
+function MemberItem({ member, serverId, canModerate }: MemberItemProps) {
   const gt = useGT();
   const router = useRouter();
   const { user } = useAuth();
   const [menuOpen, setMenuOpen] = useState(false);
+  const [inviteOpen, setInviteOpen] = useState(false);
+  const [modViewOpen, setModViewOpen] = useState(false);
+  const isSelf = user?.id === member.id;
+
+  const handleAddFriend = async () => {
+    setMenuOpen(false);
+    try {
+      const res = await fetch(`/api/friends/add`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: member.username }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        toast.success(gt("Friend request sent to {name}", { name: member.displayName || member.username }));
+      } else {
+        toast.error(data?.error || gt("Failed to send friend request"));
+      }
+    } catch {
+      toast.error(gt("Failed to send friend request"));
+    }
+  };
   const isOffline = member.status === "offline";
   const roleColor = member.highestRole?.color;
   // Only poll live activity for members who are actually around.
@@ -320,31 +365,73 @@ function MemberItem({ member, serverId }: MemberItemProps) {
           <span className="absolute inset-0 pointer-events-none" aria-hidden />
         </DropdownMenuTrigger>
         <DropdownMenuContent side="left" align="start" className="w-52">
-          <DropdownMenuItem onClick={() => { setMenuOpen(false); router.push(`/dm/${member.id}`); }}>
-            <MessageSquare className="w-4 h-4" />
-            {gt("Send Message")}
-          </DropdownMenuItem>
+          {!isSelf && (
+            <DropdownMenuItem onClick={() => { setMenuOpen(false); router.push(`/dm/${member.id}`); }}>
+              <MessageSquare className="w-4 h-4" />
+              {gt("Send Message")}
+            </DropdownMenuItem>
+          )}
+          {!isSelf && !member.isBot && !member.isSystem && (
+            <DropdownMenuItem onClick={handleAddFriend}>
+              <UserPlus className="w-4 h-4" />
+              {gt("Add Friend")}
+            </DropdownMenuItem>
+          )}
+          {!isSelf && !member.isBot && !member.isSystem && (
+            <>
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); router.push(`/dm/${member.id}?call=voice`); }}>
+                <Phone className="w-4 h-4" />
+                {gt("Call")}
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); router.push(`/dm/${member.id}?call=video`); }}>
+                <Video className="w-4 h-4" />
+                {gt("Video Call")}
+              </DropdownMenuItem>
+            </>
+          )}
+          {serverId && !member.isSystem && (
+            <DropdownMenuItem onClick={() => { setMenuOpen(false); setInviteOpen(true); }}>
+              <UserPlus2 className="w-4 h-4" />
+              {gt("Invite to Server")}
+            </DropdownMenuItem>
+          )}
+          <DropdownMenuSeparator />
           <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.username); toast.success(gt("Username copied")); }}>
             <Copy className="w-4 h-4" />
             {gt("Copy Username")}
           </DropdownMenuItem>
-          {user?.badges?.some((b: string) => ["admin", "serikacord_developer"].includes(b)) && (
+          <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.id); toast.success(gt("User ID copied")); }}>
+            <Copy className="w-4 h-4" />
+            {gt("Copy User ID")}
+          </DropdownMenuItem>
+          {serverId && user?.badges?.some((b: string) => ["admin", "serikacord_developer"].includes(b)) && (
+            <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.membershipId); toast.success(gt("Membership ID copied")); }}>
+              <Copy className="w-4 h-4" />
+              {gt("Copy Membership ID")}
+            </DropdownMenuItem>
+          )}
+          {serverId && canModerate && !isSelf && (
             <>
               <DropdownMenuSeparator />
-              <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.id); toast.success(gt("User ID copied")); }}>
-                <Copy className="w-4 h-4" />
-                {gt("Copy User ID")}
+              <DropdownMenuItem onClick={() => { setMenuOpen(false); setModViewOpen(true); }}>
+                <ShieldAlert className="w-4 h-4" />
+                {gt("Open Mod View")}
               </DropdownMenuItem>
-              {serverId && (
-                <DropdownMenuItem onClick={() => { setMenuOpen(false); navigator.clipboard?.writeText(member.membershipId); toast.success(gt("Membership ID copied")); }}>
-                  <Copy className="w-4 h-4" />
-                  {gt("Copy Membership ID")}
-                </DropdownMenuItem>
-              )}
             </>
           )}
         </DropdownMenuContent>
       </DropdownMenu>
+      {serverId && (
+        <InviteDialog open={inviteOpen} onOpenChange={setInviteOpen} />
+      )}
+      {serverId && (
+        <ModViewDialog
+          user={{ id: member.id, username: member.username, displayName: member.displayName, avatar: member.avatar }}
+          serverId={serverId}
+          open={modViewOpen}
+          onOpenChange={setModViewOpen}
+        />
+      )}
       </div>
     </MemberProfilePopup>
   );

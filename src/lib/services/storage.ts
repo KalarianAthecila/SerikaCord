@@ -3,6 +3,7 @@ import { Upload } from '@aws-sdk/lib-storage';
 import { config } from '../config';
 import { nanoid } from 'nanoid';
 import crypto from 'crypto';
+import { sanitizeSvgBuffer } from '../security/svgSanitizer';
 
 // Initialize S3 client for Backblaze B2
 const s3Client = new S3Client({
@@ -150,6 +151,12 @@ export class StorageService {
     }
 
     const hash = await calculateHash(buffer);
+
+    // Sanitize SVGs server-side to strip <script>, event handlers, etc.
+    // This makes SVG uploads safe even if opened directly in a browser tab.
+    if (contentType === 'image/svg+xml') {
+      buffer = sanitizeSvgBuffer(buffer);
+    }
 
     // S3 metadata values must be ASCII — encode non-ASCII filenames
     const safeFilename = encodeURIComponent(filename || 'unknown');

@@ -51,6 +51,7 @@ import { useSlashCommands } from "@/hooks/useSlashCommands";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { formatMessageTimestamp } from "@/lib/chat/messages";
+import { parseSearchQuery, hasActiveFilters } from "@/lib/chat/searchQuery";
 import {
   getCommandSuggestions,
   parseCommandContext,
@@ -615,15 +616,46 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
   const lightbox = useMediaLightbox(chat.mediaGallery);
 
   const runMessageSearch = useCallback(async (query: string) => {
-    if (!currentChannel || query.trim().length < 2) {
+    if (!currentChannel) {
+      setSearchResults([]);
+      return;
+    }
+    const parsed = parseSearchQuery(query);
+    const filtersActive = hasActiveFilters(parsed);
+    // Need either a 2+ char text query or at least one filter.
+    if (parsed.text.trim().length < 2 && !filtersActive) {
       setSearchResults([]);
       return;
     }
 
+    // Resolve in:<#channel> to a channel id (defaults to the current channel).
+    let targetChannelId = currentChannel.id;
+    if (parsed.inChannel) {
+      const wanted = parsed.inChannel.toLowerCase();
+      const match = channels.find((c) => c.name?.toLowerCase() === wanted || c.id === parsed.inChannel);
+      if (match) targetChannelId = match.id;
+    }
+    // Resolve from:<user> to a member id when it matches a known member.
+    let fromValue = parsed.from;
+    if (parsed.from) {
+      const wanted = parsed.from.toLowerCase();
+      const member = members.find(
+        (m) => m.username?.toLowerCase() === wanted || m.displayName?.toLowerCase() === wanted
+      );
+      if (member) fromValue = member.id;
+    }
+
+    const params = new URLSearchParams({ limit: "20" });
+    if (parsed.text.trim().length >= 2) params.set("q", parsed.text.trim());
+    if (fromValue) params.set("from", fromValue);
+    if (parsed.has) params.set("has", parsed.has);
+    if (parsed.before) params.set("before", parsed.before);
+    if (parsed.after) params.set("after", parsed.after);
+
     setIsSearching(true);
     try {
       const response = await fetch(
-        `/api/channels/${currentChannel.id}/messages/search?q=${encodeURIComponent(query)}&limit=20`
+        `/api/channels/${targetChannelId}/messages/search?${params.toString()}`
       );
       if (!response.ok) return;
       const data = await response.json();
@@ -633,7 +665,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     } finally {
       setIsSearching(false);
     }
-  }, [currentChannel]);
+  }, [currentChannel, channels, members]);
 
   const { setReplyToMessage } = chat.actions;
   useEffect(() => {
@@ -1261,6 +1293,49 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
     return false;
   }, [user, chat.messages, chat.actions]);
 
+  const highlightAndScroll = useCallback((id: string) => {
+    messageListRef.current?.scrollToMessage(id);
+    const el = document.getElementById(`message-${id}`);
+    if (el) {
+      el.classList.add("message-jump-highlight");
+      setTimeout(() => el.classList.remove("message-jump-highlight"), 1600);
+    }
+  }, []);
+
+  /** Jump to a message, loading the surrounding window first if it isn't in view
+   *  (used by pinned-message and search-result navigation). */
+  const jumpToMessage = useCallback(async (id: string) => {
+    if (!id) return;
+    if (document.getElementById(`message-${id}`)) {
+      highlightAndScroll(id);
+      return;
+    }
+    const ok = await chat.jumpToMessage(id);
+    if (!ok) {
+      toast.error(gt("Couldn't find that message"));
+      return;
+    }
+    // Wait for the new window to render before scrolling.
+    requestAnimationFrame(() => requestAnimationFrame(() => highlightAndScroll(id)));
+  }, [chat, highlightAndScroll, gt]);
+
+  // Honor a ?jump=<messageId> query param (from a copied message link) once the
+  // channel's messages have had a moment to load.
+  useEffect(() => {
+    if (!currentChannel?.id || typeof window === "undefined") return;
+    const jid = new URLSearchParams(window.location.search).get("jump");
+    if (!jid) return;
+    const t = setTimeout(() => {
+      void jumpToMessage(jid);
+      // Strip the param so refreshes/back don't re-trigger the jump.
+      const url = new URL(window.location.href);
+      url.searchParams.delete("jump");
+      window.history.replaceState(null, "", url.toString());
+    }, 700);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChannel?.id]);
+
   const handleKeyDown = (e: React.KeyboardEvent) => {
     if (mentionSuggestions.length > 0) {
       if (e.key === "ArrowDown") {
@@ -1495,8 +1570,11 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
               {gt("Close")}
             </button>
           </div>
-          {searchQuery.trim().length < 2 ? (
-            <p className="text-sm text-[var(--app-muted)]">{gt("Type at least 2 characters to search this channel.")}</p>
+          {(() => { const p = parseSearchQuery(searchQuery); return p.text.trim().length < 2 && !hasActiveFilters(p); })() ? (
+            <div className="text-sm text-[var(--app-muted)] space-y-1">
+              <p>{gt("Type at least 2 characters, or use filters:")}</p>
+              <p className="text-xs font-mono text-[var(--app-muted)]/80">from:user · has:link|file|image|video|embed · before:2024-01-01 · after:2024-01-01 · in:#channel</p>
+            </div>
           ) : isSearching ? (
             <div className="flex items-center gap-2 text-sm text-[var(--app-muted)]">
               <Loader size={16} />
@@ -1510,7 +1588,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
                 <button
                   key={`search-${result.id}`}
                   onClick={() => {
-                    messageListRef.current?.scrollToMessage(result.id);
+                    void jumpToMessage(result.id);
                     setShowSearchResults(false);
                   }}
                   className="w-full text-left p-2 rounded-md bg-[var(--app-surface-alt)] hover:brightness-110 transition"
@@ -1593,6 +1671,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         onMentionSelect={insertMentionFromSuggestion}
         activeMentionIndex={activeMentionIndex}
         channelId={currentChannel?.id}
+        draftKey={currentChannel ? `channel:${currentChannel.id}` : undefined}
       />
 
       <ImageLightbox
@@ -1615,7 +1694,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         messages={chat.pinnedMessages}
         isLoading={chat.isLoadingPins}
         contextLabel={`#${currentChannel?.name}`}
-        onJumpToMessage={(id) => messageListRef.current?.scrollToMessage(id)}
+        onJumpToMessage={(id) => void jumpToMessage(id)}
         onUnpin={(message) => void chat.actions.togglePin(message)}
       />
 
@@ -1713,6 +1792,7 @@ export function ChatArea({ onToggleMembers, showMembers }: ChatAreaProps) {
         onPinToggle={(message) => void chat.actions.togglePin(message)}
         onEdit={chat.actions.startEditing}
         onDelete={chat.actions.setDeleteConfirmMessage}
+        onDeleteNow={(message) => void chat.actions.deleteMessageNow(message)}
       />
     </div>
   );

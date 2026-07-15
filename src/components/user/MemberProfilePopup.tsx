@@ -154,6 +154,7 @@ function MemberProfilePopupBody({
               color: r.color,
             }));
             merged.joinedAt = memberData.joinedAt;
+            if (memberData.nickname) merged.nickname = memberData.nickname;
             if (memberData.isOwner) merged.isOwner = true;
           }
           setFullProfile((prev) => ({ ...prev, ...merged }));

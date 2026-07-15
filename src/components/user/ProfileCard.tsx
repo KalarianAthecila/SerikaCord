@@ -14,7 +14,6 @@ import {
   Copy,
   Check,
   CalendarDays,
-  Crown,
   Plus,
   X,
   Clock,
@@ -43,6 +42,8 @@ export interface ProfileCardUser {
   id: string;
   username: string;
   displayName?: string;
+  /** Per-server nickname; takes precedence over displayName when in a server */
+  nickname?: string | null;
   avatar?: string | null;
   banner?: string | null;
   bio?: string | null;
@@ -57,6 +58,7 @@ export interface ProfileCardUser {
   createdAt?: string | null;
   isPremium?: boolean;
   isOwner?: boolean;
+  isSystem?: boolean;
   isFriend?: boolean;
   friendRequestSent?: boolean;
   isBot?: boolean;
@@ -212,9 +214,25 @@ export function ProfileCard({
   }, [serverId, MANAGE_ROLES_BIT]);
 
   const status = user.status ?? "offline";
-  const displayName = user.displayName || user.username;
+  const displayName = user.nickname || user.displayName || user.username;
   const userActivity = useUserActivity(user.id);
   const moeActivity = userActivity?.activity ?? null;
+
+  // Right-click context menu for role chips (copy ID / colour hex).
+  const [roleCtx, setRoleCtx] = useState<{ x: number; y: number; role: { id: string; name: string; color?: string } } | null>(null);
+  useEffect(() => {
+    if (!roleCtx) return;
+    const close = () => setRoleCtx(null);
+    const onKey = (e: KeyboardEvent) => { if (e.key === "Escape") close(); };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", onKey);
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [roleCtx]);
 
   const handleCopyUsername = async () => {
     try {
@@ -387,27 +405,15 @@ export function ProfileCard({
             >
               {displayName}
             </h3>
-            {user.isBot && (
+            {user.isBot && !user.isSystem && (
               <span className={cn(
                 "inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase",
-                user.isVerified 
-                  ? "bg-[#5865F2] text-white" 
+                user.isVerified
+                  ? "bg-[#5865F2] text-white"
                   : "bg-[#4f545c]/30 text-[#b9bbbe] border border-white/[0.04]"
               )}>
                 {user.isVerified && <Check className="w-3 h-3 shrink-0 stroke-[3px]" />}
                 {gt("Bot")}
-              </span>
-            )}
-            {showOwnerCrown && user.isOwner && (
-              <span title={gt("Server Owner")} className="shrink-0 text-[#F59E0B]">
-                <Crown className="w-4 h-4" />
-              </span>
-            )}
-            {user.isPremium && (
-              <span title={gt("Premium")} className="shrink-0">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-                  <path d="M12 2L14.5 8.5L21 9.5L16.5 14L17.5 21L12 17.5L6.5 21L7.5 14L3 9.5L9.5 8.5L12 2Z" fill="#F59E0B" stroke="#F59E0B" strokeWidth="1" strokeLinejoin="round"/>
-                </svg>
               </span>
             )}
           </div>
@@ -520,8 +526,13 @@ export function ProfileCard({
                   {memberRoles.map((role) => (
                     <span
                       key={role.id}
+                      onContextMenu={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        setRoleCtx({ x: e.clientX, y: e.clientY, role });
+                      }}
                       className={cn(
-                        "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-white/[0.06]",
+                        "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-white/[0.06] cursor-context-menu",
                         canManageRoles && !serverRoles.find((r) => r.id === role.id)?.isDefault && "group pr-1"
                       )}
                       style={{
@@ -646,6 +657,43 @@ export function ProfileCard({
           serverId={serverId}
           showOwnerCrown={showOwnerCrown}
         />
+      )}
+
+      {roleCtx && (
+        <div
+          className="fixed z-[100] min-w-[180px] py-1 rounded-lg bg-[#1e1f22] border border-[#2b2d31] shadow-xl text-sm"
+          style={{ top: roleCtx.y, left: roleCtx.x }}
+          onClick={(e) => e.stopPropagation()}
+          onContextMenu={(e) => e.preventDefault()}
+        >
+          <button
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[#dbdee1] hover:bg-[#2b2d31] transition-colors"
+            onClick={() => {
+              navigator.clipboard?.writeText(roleCtx.role.id);
+              toast.success(gt("Role ID copied"));
+              setRoleCtx(null);
+            }}
+          >
+            <Copy className="w-3.5 h-3.5 shrink-0" />
+            {gt("Copy Role ID")}
+          </button>
+          <button
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-left text-[#dbdee1] hover:bg-[#2b2d31] transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={!roleCtx.role.color}
+            onClick={() => {
+              if (!roleCtx.role.color) return;
+              navigator.clipboard?.writeText(roleCtx.role.color);
+              toast.success(gt("Colour copied"));
+              setRoleCtx(null);
+            }}
+          >
+            <span
+              className="w-3.5 h-3.5 rounded-full shrink-0 border border-white/20"
+              style={{ backgroundColor: roleCtx.role.color || "transparent" }}
+            />
+            {roleCtx.role.color ? gt("Copy Colour ({hex})", { hex: roleCtx.role.color }) : gt("No colour")}
+          </button>
+        </div>
       )}
     </div>
   );
