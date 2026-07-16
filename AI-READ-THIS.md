@@ -1,4 +1,26 @@
-# AI-READ-THIS: Translation String Implementation Guide
+# AI-READ-THIS: Development Guide
+
+## ⚠️ Fork Requirement
+
+**You MUST have your own fork of this repository.** The git remote must NOT be set to `https://github.com/serika-dev/SerikaCord`.
+
+Before doing anything:
+1. Fork the repository on GitHub.
+2. Update your remote to point to your fork:
+   ```bash
+   git remote set-url origin https://github.com/<YOUR_USERNAME>/SerikaCord.git
+   ```
+3. Verify:
+   ```bash
+   git remote -v
+   ```
+   The output must show your fork URL, not `serika-dev/SerikaCord`.
+
+This is required because pushes to `serika-dev/SerikaCord` will be rejected. All work must be done on your own fork and submitted via pull requests.
+
+---
+
+## Translation String Implementation Guide
 
 ## Overview
 

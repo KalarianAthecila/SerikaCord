@@ -647,7 +647,17 @@ export function useChatSession<M extends ChatMessage>({
       }
 
       if (data.type === "delete") {
-        setMessages((prev) => prev.filter((m) => m.id !== data.messageId));
+        setMessages((prev) => {
+          const next = prev.filter((m) => m.id !== data.messageId);
+          // Write through to the persisted (localStorage) tail cache too.
+          // The generic messages->cache sync effect only persists=false, so
+          // without this a deleted message repaints from localStorage on the
+          // next full reload until the fresh fetch lands.
+          if (next.length !== prev.length && apiBase && activeFetchContextRef.current === apiBase) {
+            writeCache(apiBase, next, true);
+          }
+          return next;
+        });
         return;
       }
 

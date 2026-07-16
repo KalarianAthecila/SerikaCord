@@ -3455,7 +3455,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
               )}
 
               {/* Default fallback for other tabs */}
-              {!["profiles", "premium", "appearance", "voice-video", "notifications", "admin-users", "admin-servers", "admin-settings", "admin-logs", "admin-experiments", "admin-tts-sounds", "admin-tts-voices", "admin-translations", "admin-badges", "admin-announcements", "connections"].includes(activeTab) && (
+              {!["profiles", "premium", "appearance", "voice-video", "notifications", "admin-users", "admin-servers", "admin-settings", "admin-logs", "admin-experiments", "admin-tts-sounds", "admin-tts-voices", "admin-translations", "admin-badges", "admin-announcements", "connections", "bug-reports", "admin-bug-reports"].includes(activeTab) && (
                 <div>
                   <h2 className="text-xl font-bold text-white mb-5 capitalize">
                     {activeTab.replace(/-/g, " ")}
