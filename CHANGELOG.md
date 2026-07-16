@@ -1,6 +1,24 @@
 # SerikaCord — Full Changelog
 
-**293 commits** · Jan 22 – Jul 16, 2026 · v0.0.1 → unreleased `postgres` branch.
+**294 commits** · Jan 22 – Jul 16, 2026 · v0.0.1 → v1.1.0.
+
+---
+
+## v1.1.0 — 2026-07-16
+
+**Tag:** `v1.1.0` · **Commit:** `fa0c0ce` · **Build:** GitHub Actions (Tauri desktop + Android APK)
+
+### Release Notes
+
+Version bump to 1.1.0 across all platforms (web, Tauri desktop, Electron desktop, Android). GitHub Actions release build triggered via `v1.1.0` tag — produces signed Tauri desktop builds (Windows .exe/.msi, macOS .dmg, Linux .AppImage/.deb/.rpm) and signed Android APK.
+
+### Changes
+
+- **Version bumps** — `package.json`, `desktop-tauri/package.json`, `tauri.conf.json`, `Cargo.toml`, `Cargo.lock`, `desktop/package.json` all updated to 1.1.0.
+- **Android version** — `versionName` → `1.1.0`, `versionCode` → 9.
+- **Mobile UI** — Version strings updated in `MobileDrawer.tsx` and `MobileProfileView.tsx`.
+- **AI-READ-THIS.md** — Added fork requirement warning: users must have their own fork, remote must not point to `serika-dev/SerikaCord`.
+- **Settings/UX improvements** — MemberSidebar, MessageList, UserSettingsDialog, MemberProfilePopup, ProfileCard, ServerContext, useChatSession updates (voice/video/accessibility/text-images settings tabs, live previews, toggle controls).
 
 ---
 
