@@ -2126,12 +2126,20 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
     const offset = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = { _limit: limitNum, _orderByPriority: true };
-    if (filterStatus && filterStatus !== 'all') filter.status = filterStatus;
+    // 'active' = the default working set: everything except resolved / won't-fix.
+    // Filtered in JS since the model only supports single-status equality, so we
+    // must fetch the full set (no tight _limit) for pagination to stay correct.
+    const isActiveFilter = filterStatus === 'active';
+    const filter: Record<string, unknown> = { _orderByPriority: true };
+    if (!isActiveFilter) filter._limit = limitNum;
+    if (filterStatus && filterStatus !== 'all' && !isActiveFilter) filter.status = filterStatus;
     if (priority && priority !== 'all') filter.priority = priority;
     if (category && category !== 'all') filter.category = category;
 
-    const allReports = await BugReport.find(filter);
+    let allReports = await BugReport.find(filter);
+    if (isActiveFilter) {
+      allReports = allReports.filter((r) => r.status !== 'resolved' && r.status !== 'wont_fix');
+    }
     const total = allReports.length;
     const reports = allReports.slice(offset, offset + limitNum);
 

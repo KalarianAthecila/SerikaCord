@@ -96,6 +96,7 @@ const PRIORITIES = [
 ];
 
 const STATUSES = [
+  { value: "active", label: "Active" },
   { value: "all", label: "All Statuses" },
   { value: "open", label: "Open" },
   { value: "acknowledged", label: "Acknowledged" },
@@ -123,6 +124,7 @@ export function AdminBugReportsPanel() {
     "Medium": gt("Medium"),
     "High": gt("High"),
     "Critical": gt("Critical"),
+    "Active": gt("Active"),
     "All Statuses": gt("All Statuses"),
     "Open": gt("Open"),
     "Acknowledged": gt("Acknowledged"),
@@ -139,7 +141,9 @@ export function AdminBugReportsPanel() {
   const [total, setTotal] = useState(0);
 
   // Filters
-  const [filterStatus, setFilterStatus] = useState("all");
+  // Default to the active working set — resolved / won't-fix are hidden until
+  // an admin explicitly selects them (or "All Statuses").
+  const [filterStatus, setFilterStatus] = useState("active");
   const [filterPriority, setFilterPriority] = useState("all");
   const [filterCategory, setFilterCategory] = useState("all");
 
