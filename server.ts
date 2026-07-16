@@ -145,9 +145,19 @@ async function main() {
       const pathname = url.pathname;
 
       // ─── Domain redirect ────────────────────────────────────
+      // serika.cc is the short-link domain → send everything to prod
+      // (FRONTEND_URL / serika.chat), EXCEPT /serika which is the invite
+      // acceptance page that must stay on serika.cc; it navigates to prod
+      // itself once the invite is accepted.
       if (frontendUrl && redirectHosts.has(req.headers.get('host')?.split(':')[0] || '')) {
-        const target = new URL(req.url, frontendUrl);
-        return Response.redirect(target.href, 301);
+        const staysOnShortDomain = pathname === '/serika' || pathname.startsWith('/serika/');
+        if (!staysOnShortDomain) {
+          // Rebase onto FRONTEND_URL by taking only path+query — passing the
+          // absolute req.url as the first arg to `new URL` would ignore the base
+          // and redirect serika.cc → serika.cc (an infinite reload loop).
+          const target = new URL(`${pathname}${url.search}`, frontendUrl);
+          return Response.redirect(target.href, 301);
+        }
       }
 
       // ─── WebSocket upgrade for gateway ──────────────────────

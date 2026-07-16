@@ -120,6 +120,10 @@ function MessageListInner<M extends ChatMessage>(
   const prevScrollHeightRef = useRef(0);
   const pendingScrollRestoreRef = useRef(false);
   const forceScrollRef = useRef(false);
+  // Gates top-pagination: stays false until the list has settled at the bottom
+  // for the current context, so opening a channel never auto-loads older
+  // history before the user has actually scrolled up.
+  const readyForPaginationRef = useRef(false);
   const scrollRafRef = useRef<number | null>(null);
   const animateInRef = useRef(true);
   const [animateIn, setAnimateIn] = useState(true);
@@ -150,6 +154,7 @@ function MessageListInner<M extends ChatMessage>(
     prevGroupCountRef.current = 0;
     isAtBottomRef.current = true;
     forceScrollRef.current = true;
+    readyForPaginationRef.current = false;
     animateInRef.current = true;
     wasLoadingRef.current = true;
     Promise.resolve().then(() => {
@@ -256,6 +261,9 @@ function MessageListInner<M extends ChatMessage>(
       // Instant scroll for initial load or force-scroll; smooth otherwise.
       if (prevCount === 0 || shouldForce) {
         viewport.scrollTop = viewport.scrollHeight;
+        // The list is now pinned to the bottom for this context; allow the user
+        // to scroll up to trigger older-history pagination from here on.
+        readyForPaginationRef.current = true;
       } else {
         // Defer smooth scroll to after paint so the browser animates properly.
         requestAnimationFrame(() => {
@@ -311,7 +319,17 @@ function MessageListInner<M extends ChatMessage>(
         setNewMessageStartId(null);
       }
 
-      if (scrollTop < 500 && hasMoreOlder && !isLoadingMore) {
+      // Only paginate once the list has settled at the bottom for this context
+      // (readyForPaginationRef) and there is real scroll room — this prevents a
+      // freshly-opened or short channel from auto-loading older history before
+      // the user has actually scrolled up.
+      if (
+        scrollTop < 500 &&
+        hasMoreOlder &&
+        !isLoadingMore &&
+        readyForPaginationRef.current &&
+        scrollHeight - clientHeight > 200
+      ) {
         prevScrollHeightRef.current = viewport.scrollHeight;
         pendingScrollRestoreRef.current = true;
         void latestRef.current.loadOlderMessages();
