@@ -119,8 +119,13 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
         setInviteCode(data.invite?.code || data.code || "");
       } else {
         const data = await response.json().catch(() => null);
-        setInviteCode("");
-        toast.error(data?.error || gt("Failed to create invite link"));
+        const errMsg = data?.error || "";
+        if (errMsg.toLowerCase().includes("custom invite link")) {
+          await fetchVanityInfo();
+        } else {
+          setInviteCode("");
+          toast.error(errMsg || gt("Failed to create invite link"));
+        }
       }
     } catch (error) {
       console.error("Failed to create invite:", error);

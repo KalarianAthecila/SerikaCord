@@ -2616,7 +2616,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                         {gt("Get exclusive features like animated avatars, custom themes, enhanced upload limits, and more.")}
                       </p>
                       <a
-                        href="https://serika.dev/premium"
+                        href="https://accounts.serika.dev"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="inline-flex items-center gap-2 px-8 py-3 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium rounded-md transition-colors"
