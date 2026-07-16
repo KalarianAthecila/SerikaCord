@@ -169,7 +169,7 @@ export function MemberSidebar() {
           ) : (
             <>
               {groupedOnlineMembers.map((group) => (
-                <div key={group.key} className="space-y-1">
+                <div key={group.key}>
                   <p className="px-4 text-[11px] font-semibold uppercase tracking-wide text-[#7d7d7d]">
                     {group.label} — {group.members.length}
                   </p>
@@ -180,7 +180,7 @@ export function MemberSidebar() {
               ))}
 
               {offlineMembers.length > 0 && (
-                <div className="space-y-1">
+                <div>
                   <p className="px-4 text-[11px] font-semibold uppercase tracking-wide text-[#7d7d7d]">
                     {gt("Offline")} — {offlineMembers.length}
                   </p>
@@ -252,7 +252,7 @@ function MemberItem({ member, serverId, canModerate }: MemberItemProps) {
   return (
     <MemberProfilePopup member={member} serverId={serverId} side="left" align="start">
       <div
-        className="relative"
+        className="relative mt-1"
         onContextMenu={(e) => { e.preventDefault(); setMenuOpen(true); }}
       >
       <button
