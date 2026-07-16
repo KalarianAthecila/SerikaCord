@@ -106,6 +106,29 @@ function generateKey(options: UploadOptions, filename: string): string {
   return parts.join('/');
 }
 
+// Strip a stored media URL down to its bucket key.
+// Tolerates the current CDN (cdn.serika.chat) as well as legacy Backblaze
+// hosts still present in older DB rows:
+//   https://cdn.serika.chat/<key>
+//   https://serikacord-media.s3.eu-central-003.backblazeb2.com/<key>   (virtual-host style)
+//   https://s3.eu-central-003.backblazeb2.com/serikacord-media/<key>   (path style)
+//   https://f003.backblazeb2.com/file/serikacord-media/<key>           (B2 friendly URL)
+export function keyFromUrl(url: string): string {
+  let key = url;
+  try {
+    const { pathname } = new URL(url);
+    key = pathname.replace(/^\/+/, '');
+    // Drop the B2 friendly-URL prefix and any leading "<bucket>/"
+    key = key.replace(/^file\//, '');
+    const bucketPrefix = `${config.B2_BUCKET_NAME}/`;
+    if (key.startsWith(bucketPrefix)) key = key.slice(bucketPrefix.length);
+  } catch {
+    // Not an absolute URL — fall back to trimming the configured CDN base.
+    key = url.replace(`${config.CDN_URL}/`, '');
+  }
+  return key;
+}
+
 // Calculate file hash for integrity
 async function calculateHash(data: Buffer | Uint8Array): Promise<string> {
   const buffer = data instanceof Buffer ? data : Buffer.from(data);
@@ -212,8 +235,7 @@ export class StorageService {
 
   // Delete by URL
   async deleteByUrl(url: string): Promise<void> {
-    const key = url.replace(`${config.CDN_URL}/`, '');
-    await this.delete(key);
+    await this.delete(keyFromUrl(url));
   }
 
   // Check if file exists

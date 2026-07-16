@@ -208,6 +208,25 @@ function sanitizeMessageContent(content: string): string {
   return decodeHtmlEntities(sanitized);
 }
 
+// Normalize message text for duplicate-spam detection. Lowercases, strips
+// diacritics, collapses runs of the same character, and removes everything
+// that isn't a letter or digit. This makes trivial variations — extra
+// whitespace, punctuation, a tacked-on character, or repeated letters —
+// collapse to the same fingerprint so "hi", "hi!", "hii" and "hi ." all match.
+function normalizeForSpamCheck(content: string): string {
+  return content
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/(.)\1+/g, '$1')
+    .trim();
+}
+
+// How many identical (post-normalization) messages in a row before a send is
+// blocked as spam. A user may send the same thing 4 times; the 5th is rejected.
+const DUPLICATE_SPAM_THRESHOLD = 4;
+
 async function extractMentionsFromContent(
   content: string,
   serverId?: string | null
@@ -1731,6 +1750,31 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     let sanitizedContent = content ? sanitizeMessageContent(content) : '';
     if (sanitizedContent) {
       sanitizedContent = normalizeEmojiFormat(sanitizedContent);
+    }
+
+    // Duplicate-spam guard: block sending the same text many times in a row.
+    // Only applies to plain text sends (attachments/stickers are exempt) and is
+    // fingerprint-based so trivial variations don't sidestep it.
+    const spamFingerprint = normalizeForSpamCheck(sanitizedContent);
+    if (spamFingerprint && attachments.length === 0 && !stickerData) {
+      const recent = await Message.find({
+        channelId: params.channelId,
+        authorId: user.id,
+        isDeleted: false,
+        _limit: DUPLICATE_SPAM_THRESHOLD,
+      });
+      if (recent.length >= DUPLICATE_SPAM_THRESHOLD) {
+        const recentContents = await Promise.all(
+          recent.map((m: any) => (m.content ? decryptFromStorage(m.content) : Promise.resolve('')))
+        );
+        const allDuplicate = recentContents.every(
+          (c) => normalizeForSpamCheck(c) === spamFingerprint
+        );
+        if (allDuplicate) {
+          set.status = 429;
+          return { error: 'Please stop sending the same message repeatedly.' };
+        }
+      }
     }
 
     // Parse custom emojis, resolve mentions, and encrypt — all independent of
