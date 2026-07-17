@@ -234,16 +234,24 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       banReason: reason || 'No reason provided',
     });
 
+    // Notify the user, then immediately kill all of their sessions so they're
+    // signed out on every device on their next request. Order matters: DM first
+    // (while their session still resolves for delivery), then revoke.
+    const { notifySuspension } = await import('@/lib/services/systemNotify');
+    const { revokeAllUserSessions } = await import('@/lib/services/auth');
+    await notifySuspension(targetUser.id, reason).catch(() => {});
+    const revoked = await revokeAllUserSessions(targetUser.id).catch(() => 0);
+
     await logAdminAction(
       user.id,
       'ban_user',
       'user',
       targetUser.id,
-      { username: targetUser.username },
+      { username: targetUser.username, sessionsRevoked: revoked },
       reason
     );
 
-    return { success: true, message: 'User banned' };
+    return { success: true, message: 'User banned', sessionsRevoked: revoked };
   }, {
     params: t.Object({
       userId: t.String(),
@@ -271,6 +279,12 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       isBanned: false,
       banReason: null,
     });
+    // Clear the cached (banned) user record so they can authenticate again.
+    const { cache } = await import('@/lib/db');
+    await cache.del(`user:${targetUser.id}`).catch(() => {});
+
+    const { notifyUnsuspension } = await import('@/lib/services/systemNotify');
+    await notifyUnsuspension(targetUser.id).catch(() => {});
 
     await logAdminAction(
       user.id,
@@ -343,6 +357,16 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const manualBadges = badges.filter((b) => (MANUAL_BADGES as readonly string[]).includes(b));
     await User.updateById(targetUser.id, { badges: manualBadges, ...staffUpdate });
     const finalBadges = await recalculateUserBadges(targetUser.id);
+
+    // DM the user about any badge they just unlocked (skip system accounts).
+    const newlyAdded = (finalBadges || manualBadges).filter((b) => !oldBadges.includes(b));
+    if (newlyAdded.length > 0 && !targetUser.isSystem) {
+      const { BADGES } = await import('@/lib/constants/badges');
+      const { notifyBadgesUnlocked } = await import('@/lib/services/systemNotify');
+      const byId = new Map(Object.values(BADGES).map((b) => [b.id, b.name]));
+      const names = newlyAdded.map((b) => byId.get(b) || b);
+      void notifyBadgesUnlocked(targetUser.id, names).catch(() => {});
+    }
 
     await logAdminAction(
       user.id,
@@ -2231,6 +2255,18 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const updated = await BugReport.updateById(params.id, updates);
+
+    // Notify the reporter when the status changes (bug report / feedback status).
+    if (updates.status && updates.status !== report.status && report.reporterId) {
+      const { notifyBugReportStatus } = await import('@/lib/services/systemNotify');
+      void notifyBugReportStatus({
+        reporterId: report.reporterId,
+        kind: report.kind || 'bug',
+        title: report.title,
+        newStatus: updates.status as string,
+        adminNote: (updates.adminNotes as string | undefined) ?? report.adminNotes,
+      }).catch(() => {});
+    }
 
     await logAdminAction(user.id, 'update_settings', 'platform', params.id, {
       action: 'bug_report_update',
