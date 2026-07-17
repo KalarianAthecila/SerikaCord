@@ -36,6 +36,11 @@ pub struct DetectedActivity {
     pub name: String,
     /// The matched executable basename (for debugging / de-duplication).
     pub exe: String,
+    /// Steam AppId when this is a Steam game — lets the web app resolve the
+    /// canonical English title/cover (the local manifest name is often
+    /// localized, e.g. Chinese). Omitted (null) for non-Steam activities.
+    #[serde(rename = "steamAppId", skip_serializing_if = "Option::is_none")]
+    pub steam_app_id: Option<String>,
 }
 
 /// Common non-game apps we recognise directly (no IGDB lookup).
@@ -75,6 +80,7 @@ fn match_known_app(exe_lower: &str) -> Option<DetectedActivity> {
                 kind: (*kind).to_string(),
                 name: (*display).to_string(),
                 exe: exe_lower.to_string(),
+                steam_app_id: None,
             });
         }
     }
@@ -125,6 +131,7 @@ fn match_known_game(exe_lower: &str) -> Option<DetectedActivity> {
                 kind: "game".to_string(),
                 name: (*search).to_string(),
                 exe: exe_lower.to_string(),
+                steam_app_id: None,
             });
         }
     }
@@ -333,6 +340,7 @@ fn detect(sys: &System, steam: &HashMap<String, String>) -> Vec<DetectedActivity
                         kind: "game".to_string(),
                         name: title.clone(),
                         exe: key,
+                        steam_app_id: Some(appid.clone()),
                     });
                 }
                 continue;
