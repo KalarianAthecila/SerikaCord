@@ -1,6 +1,27 @@
 # SerikaCord — Full Changelog
 
-**294 commits** · Jan 22 – Jul 17, 2026 · v0.0.1 → v1.1.2.
+**294 commits** · Jan 22 – Jul 17, 2026 · v0.0.1 → v1.1.3.
+
+---
+
+## v1.1.3 — 2026-07-17
+
+**Tag:** `v1.1.3` · **Build:** GitHub Actions (Tauri desktop + Android APK)
+
+### Release Notes
+
+Desktop auto-update now actually works, and Steam games report their canonical English title.
+
+### Bug Fixes
+- **Auto-update never ran** (`main.rs`) — Tauri v2's updater is fully manual, but nothing ever called `check()`, so the desktop app never updated. Added a startup update check that downloads, installs, and relaunches the newer signed build; removed the invalid v1-style `"dialog": true` key from `tauri.conf.json`.
+- **Steam/Proton games not detected on Linux** (carried from v1.1.2 line) — the detector now loads process env/cmd via `refresh_processes_specifics(everything())`.
+
+### Features
+- **English game titles** — Steam games now resolve to their canonical English title (and cover) instead of the localized Steam manifest name (e.g. Chinese). The desktop client sends the Steam AppId; the server resolves it via the Steam store API (`l=english`) with IGDB (matched by AppId, then name) for cover art. New `lookupGameBySteamAppId`; `/api/igdb/game` accepts `appId`.
+- **Games prioritized** — Detected games sort ahead of editors/IDEs so the primary reported status is the game; duplicate activities are de-duplicated.
+
+### Changes
+- **Version bumps** — All platforms to 1.1.3; Android `versionName` → 1.1.3, `versionCode` → 12.
 
 ---
 

@@ -2915,16 +2915,25 @@ const igdbRoutes = new Elysia({ prefix: '/igdb' })
       set.status = 401;
       return { error: authError || 'Unauthorized' };
     }
-    const name = (query as Record<string, string | undefined>).name?.trim();
-    if (!name) {
+    const q = query as Record<string, string | undefined>;
+    const name = q.name?.trim();
+    const appId = q.appId?.trim();
+    if (!name && !appId) {
       set.status = 400;
-      return { error: 'Missing "name" query parameter' };
+      return { error: 'Missing "name" or "appId" query parameter' };
     }
-    const { lookupGame } = await import('@/lib/services/igdbService');
-    const game = await lookupGame(name);
+    const igdb = await import('@/lib/services/igdbService');
+    // A Steam AppId resolves to the canonical English title/cover; otherwise
+    // fall back to a plain name search.
+    const game = appId
+      ? await igdb.lookupGameBySteamAppId(appId, name)
+      : await igdb.lookupGame(name!);
     return { game };
   }, {
-    query: t.Object({ name: t.String({ minLength: 1, maxLength: 128 }) }),
+    query: t.Object({
+      name: t.Optional(t.String({ minLength: 1, maxLength: 128 })),
+      appId: t.Optional(t.String({ minLength: 1, maxLength: 20 })),
+    }),
   });
 
 // Main API app

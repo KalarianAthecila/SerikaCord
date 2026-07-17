@@ -50,7 +50,11 @@ const PRESENCE_REPORTER_JS: &str = r#"
 
       if (activity.kind === 'game') {
         try {
-          var res = await api('/api/igdb/game?name=' + encodeURIComponent(activity.name));
+          // Prefer resolving by Steam AppId so the server can return the
+          // canonical English title (local Steam manifests are often localized).
+          var q = 'name=' + encodeURIComponent(activity.name);
+          if (activity.steamAppId) q += '&appId=' + encodeURIComponent(activity.steamAppId);
+          var res = await api('/api/igdb/game?' + q);
           if (res.ok) {
             var data = await res.json();
             if (data && data.game) {
@@ -95,6 +99,52 @@ const PRESENCE_REPORTER_JS: &str = r#"
   setInterval(function () { if (current && current.length) resolveAndReport(current); }, 45000);
 })();
 "#;
+
+// Check GitHub Releases for a newer signed build and, if found, download +
+// install it, then relaunch. Tauri v2's updater is entirely manual — nothing
+// happens unless we call `check()` ourselves — which is why auto-update never
+// worked before. Runs shortly after startup and fails silently (no network,
+// no release yet, already latest, …) so it never blocks the app.
+#[cfg(desktop)]
+async fn run_update_check(app: tauri::AppHandle) {
+    use tauri_plugin_updater::UpdaterExt;
+
+    let updater = match app.updater() {
+        Ok(u) => u,
+        Err(e) => {
+            eprintln!("[updater] init failed: {e}");
+            return;
+        }
+    };
+
+    match updater.check().await {
+        Ok(Some(update)) => {
+            let version = update.version.clone();
+            eprintln!("[updater] update available: {version} — downloading");
+            let mut downloaded: usize = 0;
+            let result = update
+                .download_and_install(
+                    |chunk, total| {
+                        downloaded += chunk;
+                        if let Some(total) = total {
+                            eprintln!("[updater] {downloaded}/{total} bytes");
+                        }
+                    },
+                    || eprintln!("[updater] download finished, installing"),
+                )
+                .await;
+            match result {
+                Ok(_) => {
+                    eprintln!("[updater] installed {version} — relaunching");
+                    app.restart();
+                }
+                Err(e) => eprintln!("[updater] install failed: {e}"),
+            }
+        }
+        Ok(None) => eprintln!("[updater] already up to date"),
+        Err(e) => eprintln!("[updater] check failed: {e}"),
+    }
+}
 
 fn show_main_window(app: &tauri::AppHandle) {
     if let Some(window) = app.get_webview_window("main") {
@@ -187,6 +237,13 @@ fn main() {
 
             // Start background game/app detection → reports via the web app.
             presence::spawn_detection_loop(app.handle().clone());
+
+            // Check for updates on launch (async, non-blocking).
+            #[cfg(desktop)]
+            {
+                let update_handle = app.handle().clone();
+                tauri::async_runtime::spawn(run_update_check(update_handle));
+            }
 
             Ok(())
         })

@@ -144,3 +144,94 @@ export async function lookupGame(query: string): Promise<IgdbGame | null> {
     return null;
   }
 }
+
+// Cache Steam-AppId lookups separately from name lookups.
+const steamCache = new Map<string, { value: IgdbGame | null; expiresAt: number }>();
+
+/** Fetch the canonical English store name + header image for a Steam AppId. */
+async function fetchSteamStoreEnglish(appId: string): Promise<{ name: string; headerImage: string | null } | null> {
+  try {
+    const res = await fetch(
+      `https://store.steampowered.com/api/appdetails?appids=${encodeURIComponent(appId)}&l=english&filters=basic`,
+      { headers: { Accept: 'application/json' } },
+    );
+    if (!res.ok) return null;
+    const json = (await res.json()) as Record<string, { success?: boolean; data?: { name?: string; header_image?: string } }>;
+    const entry = json?.[appId];
+    if (!entry?.success || !entry.data?.name) return null;
+    return { name: entry.data.name, headerImage: entry.data.header_image ?? null };
+  } catch {
+    return null;
+  }
+}
+
+/** Look a game up in IGDB by its Steam AppId via the external_games mapping. */
+async function lookupGameBySteamExternal(appId: string): Promise<IgdbGame | null> {
+  const token = await getAccessToken();
+  if (!token) return null;
+  try {
+    // external_games category 1 = Steam; uid = the Steam AppId.
+    const body = `fields name,cover.image_id,summary; where external_games.category = 1 & external_games.uid = "${appId.replace(/"/g, '')}"; limit 1;`;
+    const res = await fetch(`${IGDB_BASE}/games`, {
+      method: 'POST',
+      headers: {
+        'Client-ID': config.TWITCH_CLIENT_ID,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'text/plain',
+        Accept: 'application/json',
+      },
+      body,
+    });
+    if (res.status === 401) tokenState = null;
+    if (!res.ok) return null;
+    const rows = (await res.json()) as Array<{ id: number; name: string; summary?: string; cover?: { image_id?: string } }>;
+    const chosen = Array.isArray(rows) ? rows[0] : undefined;
+    if (!chosen) return null;
+    return {
+      id: chosen.id,
+      name: chosen.name,
+      coverUrl: coverUrlFromImageId(chosen.cover?.image_id),
+      summary: chosen.summary ?? null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolve a Steam game to its canonical English title + cover. Steam's store
+ * API (`l=english`) gives the authoritative English name even when the local
+ * manifest is localized (e.g. Chinese); IGDB (matched by Steam AppId, then by
+ * name) supplies nicer portrait cover art. Falls back gracefully at each step.
+ */
+export async function lookupGameBySteamAppId(appId: string, fallbackName?: string): Promise<IgdbGame | null> {
+  const id = appId.trim();
+  if (!id) return fallbackName ? lookupGame(fallbackName) : null;
+
+  const cached = steamCache.get(id);
+  if (cached && cached.expiresAt > Date.now()) return cached.value;
+
+  const [steam, igdbByAppId] = await Promise.all([
+    fetchSteamStoreEnglish(id),
+    lookupGameBySteamExternal(id),
+  ]);
+
+  // Best English name: Steam store > IGDB (AppId match) > local manifest name.
+  const englishName = steam?.name || igdbByAppId?.name || fallbackName || null;
+
+  // Cover: IGDB AppId match > IGDB name search > Steam header image.
+  let cover = igdbByAppId?.coverUrl ?? null;
+  let summary = igdbByAppId?.summary ?? null;
+  if (!cover && englishName) {
+    const byName = await lookupGame(englishName);
+    cover = byName?.coverUrl ?? null;
+    summary = summary ?? byName?.summary ?? null;
+  }
+  if (!cover) cover = steam?.headerImage ?? null;
+
+  const value: IgdbGame | null = englishName
+    ? { id: igdbByAppId?.id ?? 0, name: englishName, coverUrl: cover, summary }
+    : null;
+  steamCache.set(id, { value, expiresAt: Date.now() + RESULT_TTL_MS });
+  return value;
+}
