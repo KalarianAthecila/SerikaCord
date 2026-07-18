@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 
 const STORAGE_KEY = "serika-gif-favorites";
@@ -50,148 +50,177 @@ function writeLocalFavorites(favs: GifFavorite[]) {
   }
 }
 
-export function useGifFavorites(): UseGifFavoritesReturn {
-  const { user } = useAuth();
-  const [favorites, setFavorites] = useState<GifFavorite[]>([]);
-  const [isReady, setIsReady] = useState(false);
-  const isAuthenticated = !!user;
-  const isAuthenticatedRef = useRef(isAuthenticated);
-  useEffect(() => {
-    isAuthenticatedRef.current = isAuthenticated;
-  }, [isAuthenticated]);
+// ── Shared module-level store ────────────────────────────────────────────────
+// A GifFavoriteButton is mounted for *every* GIF rendered in chat, so a per-hook
+// implementation fired one /favorites fetch (and kept one array copy) per GIF on
+// screen. This store collapses that to a single fetch and a single shared array.
+let favorites: GifFavorite[] = [];
+let isReady = false;
+let loadedForAuth: boolean | null = null;
+let currentIsAuthenticated = false;
+const listeners = new Set<() => void>();
 
-  // Load favorites from backend (if authenticated) or localStorage.
-  useEffect(() => {
-    let cancelled = false;
+function emit() {
+  for (const listener of listeners) listener();
+}
 
-    async function loadFromApi() {
-      try {
-        const res = await fetch(`${API_BASE}/favorites`, { credentials: "include" });
-        if (!res.ok) return [];
-        const data = await res.json();
-        const apiFavs = data.favorites as Array<Record<string, unknown>>;
-        if (!Array.isArray(apiFavs)) return [];
-        return apiFavs
-          .filter((f) => f && typeof f.url === "string")
-          .map((f) => ({
-            url: String(f.url),
-            title: f.title ? String(f.title) : undefined,
-            source: f.source ? String(f.source) : undefined,
-            addedAt: Number(f.addedAt) || 0,
-          })) as GifFavorite[];
-      } catch {
-        return null;
+function subscribe(cb: () => void): () => void {
+  listeners.add(cb);
+  return () => {
+    listeners.delete(cb);
+  };
+}
+
+function getFavoritesSnapshot(): GifFavorite[] {
+  return favorites;
+}
+function getReadySnapshot(): boolean {
+  return isReady;
+}
+
+const EMPTY_FAVORITES: GifFavorite[] = [];
+function getServerFavoritesSnapshot(): GifFavorite[] {
+  return EMPTY_FAVORITES;
+}
+function getServerReadySnapshot(): boolean {
+  return false;
+}
+
+function setFavorites(next: GifFavorite[]) {
+  favorites = next;
+  emit();
+}
+
+async function loadFromApi(): Promise<GifFavorite[] | null> {
+  try {
+    const res = await fetch(`${API_BASE}/favorites`, { credentials: "include" });
+    if (!res.ok) return [];
+    const data = await res.json();
+    const apiFavs = data.favorites as Array<Record<string, unknown>>;
+    if (!Array.isArray(apiFavs)) return [];
+    return apiFavs
+      .filter((f) => f && typeof f.url === "string")
+      .map((f) => ({
+        url: String(f.url),
+        title: f.title ? String(f.title) : undefined,
+        source: f.source ? String(f.source) : undefined,
+        addedAt: Number(f.addedAt) || 0,
+      })) as GifFavorite[];
+  } catch {
+    return null;
+  }
+}
+
+function ensureLoaded(isAuthenticated: boolean) {
+  currentIsAuthenticated = isAuthenticated;
+  if (loadedForAuth === isAuthenticated) return;
+  loadedForAuth = isAuthenticated;
+  isReady = false;
+  emit();
+
+  if (!isAuthenticated) {
+    setFavorites(readLocalFavorites());
+    isReady = true;
+    emit();
+    return;
+  }
+
+  loadFromApi().then((apiFavs) => {
+    if (loadedForAuth !== true) return;
+    if (apiFavs === null) {
+      setFavorites(readLocalFavorites());
+    } else {
+      setFavorites(apiFavs);
+      const local = readLocalFavorites();
+      const apiUrls = new Set(apiFavs.map((f) => f.url));
+      const toSync = local.filter((f) => !apiUrls.has(f.url));
+      if (toSync.length > 0) {
+        Promise.all(
+          toSync.map((f) =>
+            fetch(`${API_BASE}/favorites`, {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              credentials: "include",
+              body: JSON.stringify({ url: f.url, title: f.title, source: f.source }),
+            }).catch(() => null)
+          )
+        ).then(() => {
+          if (loadedForAuth !== true) return;
+          loadFromApi().then((merged) => {
+            if (loadedForAuth === true && merged) setFavorites(merged);
+          });
+        });
+        writeLocalFavorites([]);
       }
     }
+    isReady = true;
+    emit();
+  });
+}
 
-    if (isAuthenticated) {
-      loadFromApi().then((apiFavs) => {
-        if (cancelled || apiFavs === null) {
-          // API failed — fall back to localStorage
-          setFavorites(readLocalFavorites());
-        } else {
-          setFavorites(apiFavs);
-          // Merge any localStorage favorites that aren't in the API into the backend
-          const local = readLocalFavorites();
-          const apiUrls = new Set(apiFavs.map((f) => f.url));
-          const toSync = local.filter((f) => !apiUrls.has(f.url));
-          if (toSync.length > 0) {
-            Promise.all(
-              toSync.map((f) =>
-                fetch(`${API_BASE}/favorites`, {
-                  method: "POST",
-                  headers: { "Content-Type": "application/json" },
-                  credentials: "include",
-                  body: JSON.stringify({ url: f.url, title: f.title, source: f.source }),
-                }).catch(() => null)
-              )
-            ).then(() => {
-              if (cancelled) return;
-              // Re-fetch to get the merged list with proper addedAt ordering
-              loadFromApi().then((merged) => {
-                if (!cancelled && merged) setFavorites(merged);
-              });
-            });
-            // Clear localStorage after sync
-            writeLocalFavorites([]);
-          }
-        }
-        if (!cancelled) setIsReady(true);
-      });
-    } else {
-      // Defer to avoid synchronous setState in effect
-      Promise.resolve().then(() => {
-        if (cancelled) return;
-        setFavorites(readLocalFavorites());
-        setIsReady(true);
-      });
-    }
+function addFavoriteToStore(gif: { url: string; title?: string; source?: string }) {
+  if (!gif.url) return;
+  if (favorites.some((f) => f.url === gif.url)) return;
+  setFavorites([{ ...gif, addedAt: Date.now() }, ...favorites]);
+  if (currentIsAuthenticated) {
+    fetch(`${API_BASE}/favorites`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ url: gif.url, title: gif.title, source: gif.source }),
+    }).catch(() => {
+      setFavorites(favorites.filter((f) => f.url !== gif.url));
+    });
+  } else {
+    writeLocalFavorites(favorites);
+  }
+}
 
-    return () => {
-      cancelled = true;
-    };
+function removeFavoriteFromStore(url: string) {
+  const removed = favorites.find((f) => f.url === url);
+  setFavorites(favorites.filter((f) => f.url !== url));
+  if (currentIsAuthenticated) {
+    fetch(`${API_BASE}/favorites`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ url }),
+    }).catch(() => {
+      if (removed && !favorites.some((f) => f.url === url)) {
+        setFavorites([removed, ...favorites]);
+      }
+    });
+  } else {
+    writeLocalFavorites(favorites);
+  }
+}
+
+export function useGifFavorites(): UseGifFavoritesReturn {
+  const { user } = useAuth();
+  const isAuthenticated = !!user;
+
+  const favoritesState = useSyncExternalStore(
+    subscribe,
+    getFavoritesSnapshot,
+    getServerFavoritesSnapshot
+  );
+  const isReadyState = useSyncExternalStore(subscribe, getReadySnapshot, getServerReadySnapshot);
+
+  useEffect(() => {
+    ensureLoaded(isAuthenticated);
   }, [isAuthenticated]);
 
-  // Persist to localStorage when not authenticated.
-  useEffect(() => {
-    if (!isReady || isAuthenticatedRef.current) return;
-    writeLocalFavorites(favorites);
-  }, [favorites, isReady]);
-
   const isFavorite = useCallback(
-    (url: string) => favorites.some((f) => f.url === url),
-    [favorites]
+    (url: string) => favoritesState.some((f) => f.url === url),
+    [favoritesState]
   );
 
   const addFavorite = useCallback(
-    (gif: { url: string; title?: string; source?: string }) => {
-      if (!gif.url) return;
-      // Optimistic update
-      setFavorites((prev) => {
-        if (prev.some((f) => f.url === gif.url)) return prev;
-        return [{ ...gif, addedAt: Date.now() }, ...prev];
-      });
-      // Persist to backend if authenticated
-      if (isAuthenticatedRef.current) {
-        fetch(`${API_BASE}/favorites`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ url: gif.url, title: gif.title, source: gif.source }),
-        }).catch(() => {
-          // Revert on failure
-          setFavorites((prev) => prev.filter((f) => f.url !== gif.url));
-        });
-      }
-    },
+    (gif: { url: string; title?: string; source?: string }) => addFavoriteToStore(gif),
     []
   );
 
-  const removeFavorite = useCallback(
-    (url: string) => {
-      // Optimistic update
-      const removed = favorites.find((f) => f.url === url);
-      setFavorites((prev) => prev.filter((f) => f.url !== url));
-      // Persist to backend if authenticated
-      if (isAuthenticatedRef.current) {
-        fetch(`${API_BASE}/favorites`, {
-          method: "DELETE",
-          headers: { "Content-Type": "application/json" },
-          credentials: "include",
-          body: JSON.stringify({ url }),
-        }).catch(() => {
-          // Revert on failure
-          if (removed) {
-            setFavorites((prev) => {
-              if (prev.some((f) => f.url === url)) return prev;
-              return [removed, ...prev];
-            });
-          }
-        });
-      }
-    },
-    [favorites]
-  );
+  const removeFavorite = useCallback((url: string) => removeFavoriteFromStore(url), []);
 
   const toggleFavorite = useCallback(
     (gif: { url: string; title?: string; source?: string }) => {
@@ -205,7 +234,7 @@ export function useGifFavorites(): UseGifFavoritesReturn {
   );
 
   return useMemo(
-    () => ({ favorites, isFavorite, addFavorite, removeFavorite, toggleFavorite, isReady }),
-    [favorites, isFavorite, addFavorite, removeFavorite, toggleFavorite, isReady]
+    () => ({ favorites: favoritesState, isFavorite, addFavorite, removeFavorite, toggleFavorite, isReady: isReadyState }),
+    [favoritesState, isFavorite, addFavorite, removeFavorite, toggleFavorite, isReadyState]
   );
 }
