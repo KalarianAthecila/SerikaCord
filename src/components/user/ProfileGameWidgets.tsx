@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Plus, X, Search, Star, Gamepad2, RotateCw, Bookmark, ChevronLeft, ChevronRight, Loader2 } from "lucide-react";
 import { toast } from "sonner";
 import { cn, cdnImage } from "@/lib/utils";
@@ -67,36 +67,82 @@ function GameCover({ game, size = "md" }: { game: LibraryGame; size?: "sm" | "md
 }
 
 // ── Add-game search dialog ────────────────────────────────────────────────────
+type GameTagType = "skill" | "rating" | "lookingFor";
+
+function TagPicker({
+  label,
+  value,
+  onChange,
+  options,
+}: {
+  label: string;
+  value: string;
+  onChange: (v: string) => void;
+  options: { value: string; label: string }[];
+}) {
+  return (
+    <div>
+      <p className="text-[10px] text-white/40 mb-1.5 uppercase tracking-wide">{label}</p>
+      <div className="flex flex-wrap gap-1.5">
+        {options.map((o) => (
+          <button
+            key={o.value}
+            onClick={() => onChange(o.value === value ? "" : o.value)}
+            className={cn(
+              "px-2.5 py-1 rounded-full text-[10px] border transition-colors",
+              o.value === value
+                ? "bg-[#8B5CF6] border-[#8B5CF6] text-white"
+                : "bg-white/[0.04] border-white/[0.08] text-white/60 hover:bg-white/[0.08]"
+            )}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function AddGameDialog({
-  open, onOpenChange, category, onAdded,
+  open, onOpenChange, category, existing, onAdded,
 }: {
   open: boolean;
   onOpenChange: (v: boolean) => void;
   category: GameCategory;
+  existing: LibraryGame[];
   onAdded: (game: LibraryGame) => void;
 }) {
   const gt = useGT();
   const [query, setQuery] = useState("");
   const [searching, setSearching] = useState(false);
-  const [result, setResult] = useState<{ id: number; name: string; coverUrl: string | null } | null>(null);
-  const [adding, setAdding] = useState(false);
+  const [results, setResults] = useState<{ id: number; name: string; coverUrl: string | null }[]>([]);
+  const [adding, setAdding] = useState<string | null>(null);
+  const [note, setNote] = useState("");
+  const [tags, setTags] = useState<Record<GameTagType, string>>({ skill: "", rating: "", lookingFor: "" });
 
   useEffect(() => {
-    if (!open) { setQuery(""); setResult(null); setSearching(false); }
+    if (!open) {
+      setQuery("");
+      setResults([]);
+      setAdding(null);
+      setNote("");
+      setTags({ skill: "", rating: "", lookingFor: "" });
+      setSearching(false);
+    }
   }, [open]);
 
-  // Debounced IGDB lookup (reuses the existing /api/igdb/game endpoint).
+  // Debounced IGDB search returning up to 3 results.
   useEffect(() => {
     const q = query.trim();
-    if (q.length < 2) { setResult(null); return; }
+    if (q.length < 2) { setResults([]); return; }
     setSearching(true);
     const handle = setTimeout(async () => {
       try {
-        const res = await fetch(`/api/igdb/game?name=${encodeURIComponent(q)}`);
+        const res = await fetch(`/api/igdb/games?query=${encodeURIComponent(q)}`);
         const data = await res.json();
-        setResult(data.game || null);
+        setResults(Array.isArray(data.games) ? data.games : []);
       } catch {
-        setResult(null);
+        setResults([]);
       } finally {
         setSearching(false);
       }
@@ -104,8 +150,25 @@ function AddGameDialog({
     return () => clearTimeout(handle);
   }, [query]);
 
+  const existingSet = useMemo(() => {
+    const s = new Set<string | number>();
+    for (const g of existing) {
+      if (g.igdbId != null) s.add(g.igdbId);
+      s.add(g.name.toLowerCase());
+    }
+    return s;
+  }, [existing]);
+
+  const visibleResults = results
+    .filter((r) => !existingSet.has(r.id) && !existingSet.has(r.name.toLowerCase()))
+    .slice(0, 3);
+
+  const selectedTags = [tags.skill, tags.rating, tags.lookingFor].filter(Boolean);
+  const canAddCustom = query.trim().length >= 2 && !visibleResults.some((r) => r.name.toLowerCase() === query.trim().toLowerCase());
+
   const submit = async (game: { id?: number; name: string; coverUrl?: string | null }) => {
-    setAdding(true);
+    const key = game.id?.toString() ?? game.name;
+    setAdding(key);
     try {
       const res = await fetch(`/api/users/@me/games`, {
         method: "POST",
@@ -115,6 +178,8 @@ function AddGameDialog({
           igdbId: game.id,
           name: game.name,
           coverUrl: game.coverUrl ?? undefined,
+          tags: category === "favorite" || category === "rotation" ? selectedTags : undefined,
+          note: category === "favorite" ? (note.trim() || undefined) : undefined,
         }),
       });
       const data = await res.json();
@@ -125,9 +190,35 @@ function AddGameDialog({
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
-      setAdding(false);
+      setAdding(null);
     }
   };
+
+  const tagOptions = useCallback((gt: ReturnType<typeof useGT>) => ({
+    skill: [
+      { value: "None", label: gt("None") },
+      { value: "Casual", label: gt("Casual") },
+      { value: "Intermediate", label: gt("Intermediate") },
+      { value: "Expert", label: gt("Expert") },
+      { value: "Better than you", label: gt("Better than you") },
+    ],
+    rating: [
+      { value: "Obsessed", label: gt("Obsessed") },
+      { value: "Love It", label: gt("Love It") },
+      { value: "Kind of love it", label: gt("Kind of love it") },
+      { value: "Kind of hate it", label: gt("Kind of hate it") },
+      { value: "Ragequitting", label: gt("Ragequitting") },
+    ],
+    lookingFor: [
+      { value: "Looking for group", label: gt("Looking for group") },
+      { value: "Open to play", label: gt("Open to play") },
+      { value: "Looking for tips", label: gt("Looking for tips") },
+      { value: "Open to teach", label: gt("Open to teach") },
+      { value: "Looking to discuss", label: gt("Looking to discuss") },
+    ],
+  }), []);
+
+  const options = tagOptions(gt);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -135,45 +226,71 @@ function AddGameDialog({
         <DialogHeader>
           <DialogTitle className="text-white">{gt("Add a game")}</DialogTitle>
         </DialogHeader>
-        <div className="relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
-          <input
-            autoFocus
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={gt("Search for a game…")}
-            className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-[#8B5CF6]"
-          />
-        </div>
-        <div className="min-h-[80px]">
-          {searching ? (
-            <div className="flex items-center justify-center py-6 text-white/40">
-              <Loader2 className="w-5 h-5 animate-spin" />
-            </div>
-          ) : result ? (
-            <button
-              disabled={adding}
-              onClick={() => submit({ id: result.id, name: result.name, coverUrl: result.coverUrl })}
-              className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.06] transition-colors text-left disabled:opacity-50"
-            >
-              <GameCover game={{ ...(result as unknown as LibraryGame), coverUrl: result.coverUrl }} size="sm" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm text-white font-medium truncate">{result.name}</p>
-                <p className="text-xs text-white/40">{gt("Click to add")}</p>
-              </div>
-              {adding && <Loader2 className="w-4 h-4 animate-spin text-white/60" />}
-            </button>
-          ) : query.trim().length >= 2 ? (
-            <button
-              disabled={adding}
-              onClick={() => submit({ name: query.trim() })}
-              className="w-full text-left p-2 rounded-lg hover:bg-white/[0.06] text-sm text-white/70"
-            >
-              {gt('Add "{q}" anyway', { q: query.trim() })}
-            </button>
-          ) : (
-            <p className="text-xs text-white/30 text-center py-6">{gt("Type at least 2 characters")}</p>
+        <div className="space-y-3 max-h-[70vh] overflow-y-auto">
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/40" />
+            <input
+              autoFocus
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder={gt("Search for a game…")}
+              className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg pl-9 pr-3 py-2.5 text-sm text-white placeholder:text-white/40 focus:outline-none focus:border-[#8B5CF6]"
+            />
+          </div>
+
+          {category === "favorite" && (
+            <textarea
+              value={note}
+              onChange={(e) => setNote(e.target.value)}
+              placeholder={gt("Why is this your favorite?")}
+              rows={2}
+              className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-[#8B5CF6] resize-none"
+            />
           )}
+
+          {(category === "favorite" || category === "rotation") && (
+            <div className="space-y-3">
+              <TagPicker label={gt("Skill level")} value={tags.skill} onChange={(v) => setTags((t) => ({ ...t, skill: v }))} options={options.skill} />
+              <TagPicker label={gt("Rating")} value={tags.rating} onChange={(v) => setTags((t) => ({ ...t, rating: v }))} options={options.rating} />
+              <TagPicker label={gt("Looking for")} value={tags.lookingFor} onChange={(v) => setTags((t) => ({ ...t, lookingFor: v }))} options={options.lookingFor} />
+            </div>
+          )}
+
+          <div className="min-h-[80px] space-y-1">
+            {searching ? (
+              <div className="flex items-center justify-center py-6 text-white/40">
+                <Loader2 className="w-5 h-5 animate-spin" />
+              </div>
+            ) : visibleResults.length > 0 ? (
+              visibleResults.map((game) => (
+                <button
+                  key={game.id ?? game.name}
+                  disabled={!!adding}
+                  onClick={() => submit({ id: game.id, name: game.name, coverUrl: game.coverUrl })}
+                  className="w-full flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.06] transition-colors text-left disabled:opacity-50"
+                >
+                  <GameCover game={{ ...(game as unknown as LibraryGame), coverUrl: game.coverUrl }} size="sm" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-white font-medium truncate">{game.name}</p>
+                    <p className="text-xs text-white/40">{gt("Click to add")}</p>
+                  </div>
+                  {adding === (game.id?.toString() ?? game.name) && <Loader2 className="w-4 h-4 animate-spin text-white/60" />}
+                </button>
+              ))
+            ) : canAddCustom ? (
+              <button
+                disabled={!!adding}
+                onClick={() => submit({ name: query.trim() })}
+                className="w-full text-left p-2 rounded-lg hover:bg-white/[0.06] text-sm text-white/70 disabled:opacity-50"
+              >
+                {gt('Add "{q}" anyway', { q: query.trim() })}
+              </button>
+            ) : query.trim().length >= 2 ? (
+              <p className="text-xs text-white/30 text-center py-6">{gt("No new matches")}</p>
+            ) : (
+              <p className="text-xs text-white/30 text-center py-6">{gt("Type at least 2 characters")}</p>
+            )}
+          </div>
         </div>
       </DialogContent>
     </Dialog>
@@ -276,7 +393,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
           {visible.map((game) => (
             <div key={game.id} className="group relative" title={game.name}>
               <GameCover game={game} />
-              {editControls(game, false)}
+              {editControls(game, true)}
             </div>
           ))}
         </div>
@@ -328,6 +445,16 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
             {library.rotation.map((game) => (
               <div key={game.id} className="group relative" title={game.name}>
                 <GameCover game={game} />
+                {game.tags.length > 0 && (
+                  <div className="flex flex-wrap gap-0.5 mt-1">
+                    {game.tags.slice(0, 2).map((txt) => (
+                      <span key={txt} className="text-[8px] px-1 py-0.5 rounded bg-[#8B5CF6]/20 text-[#c4b5fd] truncate max-w-full">{txt}</span>
+                    ))}
+                    {game.tags.length > 2 && (
+                      <span className="text-[8px] px-1 py-0.5 rounded bg-white/[0.06] text-white/40">+{game.tags.length - 2}</span>
+                    )}
+                  </div>
+                )}
                 {editControls(game, true)}
               </div>
             ))}
@@ -339,7 +466,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
       {renderGrid("wishlist", showAllWishlist, setShowAllWishlist, Bookmark, gt("Want to play"))}
 
       {addCategory && (
-        <AddGameDialog open={!!addCategory} onOpenChange={(v) => !v && setAddCategory(null)} category={addCategory} onAdded={onAdded} />
+        <AddGameDialog open={!!addCategory} onOpenChange={(v) => !v && setAddCategory(null)} category={addCategory} existing={library[addCategory]} onAdded={onAdded} />
       )}
     </div>
   );

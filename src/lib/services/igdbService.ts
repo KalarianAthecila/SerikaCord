@@ -77,6 +77,50 @@ function coverUrlFromImageId(imageId: string | undefined): string | null {
   return `https://images.igdb.com/igdb/image/upload/t_cover_big/${imageId}.jpg`;
 }
 
+/** Search IGDB for multiple matching games (used by profile add-game dialog). */
+export async function searchGames(query: string, limit = 3): Promise<IgdbGame[]> {
+  const q = query.trim();
+  if (!q) return [];
+
+  const token = await getAccessToken();
+  if (!token) return [];
+
+  try {
+    const escaped = q.replace(/"/g, '\\"');
+    const body = `search "${escaped}"; fields name,cover.image_id,summary; where version_parent = null; limit ${Math.min(Math.max(limit, 1), 10)};`;
+    const res = await fetch(`${IGDB_BASE}/games`, {
+      method: 'POST',
+      headers: {
+        'Client-ID': config.TWITCH_CLIENT_ID,
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'text/plain',
+        Accept: 'application/json',
+      },
+      body,
+    });
+
+    if (res.status === 401) tokenState = null;
+    if (!res.ok) return [];
+
+    const rows = (await res.json()) as Array<{
+      id: number;
+      name: string;
+      summary?: string;
+      cover?: { image_id?: string };
+    }>;
+
+    if (!Array.isArray(rows)) return [];
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      coverUrl: coverUrlFromImageId(r.cover?.image_id),
+      summary: r.summary ?? null,
+    }));
+  } catch {
+    return [];
+  }
+}
+
 /**
  * Resolve a running application/executable name to a known IGDB game.
  * Returns null when nothing confidently matches (or credentials are missing).

@@ -2999,6 +2999,26 @@ const igdbRoutes = new Elysia({ prefix: '/igdb' })
       name: t.Optional(t.String({ minLength: 1, maxLength: 128 })),
       appId: t.Optional(t.String({ minLength: 1, maxLength: 20 })),
     }),
+  })
+  .get('/games', async ({ headers, cookie, query, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+    const q = query as Record<string, string | undefined>;
+    const queryText = q.query?.trim();
+    if (!queryText) {
+      set.status = 400;
+      return { error: 'Missing "query" parameter' };
+    }
+    const igdb = await import('@/lib/services/igdbService');
+    const games = await igdb.searchGames(queryText, 3);
+    return { games };
+  }, {
+    query: t.Object({
+      query: t.String({ minLength: 1, maxLength: 128 }),
+    }),
   });
 
 // Per-user game library backing the profile game widgets (favorite / liked /
