@@ -83,7 +83,12 @@ export function buildMetadata(options: SEOPageOptions): Metadata {
     },
     robots: options.noIndex
       ? { index: false, follow: false }
-      : { index: true, follow: true },
+      : { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1, "max-video-preview": -1 },
+    other: {
+      "application-name": SITE_NAME,
+      "theme-color": "#8B5CF6",
+      "msapplication-TileColor": "#8B5CF6",
+    },
   };
 }
 

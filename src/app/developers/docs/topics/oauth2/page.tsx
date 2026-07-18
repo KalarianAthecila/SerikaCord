@@ -24,23 +24,41 @@ export default async function OAuth2Doc() {
       <CodeBlock lang="text">https://api.serika.chat/api/oauth2/token</CodeBlock>
 
       <H2 id="scopes">{gt("Scopes")}</H2>
+      <P>{gt("Scopes are space-separated values passed in the")} <InlineCode>scope</InlineCode> {gt("parameter. They determine what resources your application can access on behalf of the user.")}</P>
       <Table headers={[gt("Scope"), gt("Description")]} rows={[
         ["identify", gt("Get user ID, username, avatar, and discriminator")],
-        ["email", gt("Get user email (requires identify)")],
-        ["connections", gt("Get user connections")],
-        ["guilds", gt("Get servers the user is in")],
-        ["guilds.join", gt("Join a server on behalf of the user")],
-        ["guilds.members.read", gt("Read member info in servers")],
+        ["email", gt("Get user email address (requires identify)")],
+        ["connections", gt("Get user third-party connections (Steam, GitHub, etc.)")],
+        ["guilds", gt("Get list of servers the user is a member of")],
+        ["guilds.join", gt("Join a server on behalf of the user (requires guilds)")],
+        ["guilds.members.read", gt("Read member info (roles, nicknames) in servers the user is in")],
         ["messages.read", gt("Read messages in servers the user is in")],
-        ["rpc", gt("Connect via RPC")],
+        ["rpc", gt("Connect to SerikaCord via RPC (for desktop apps)")],
+        ["rpc.notifications.read", gt("Read desktop notifications via RPC")],
+        ["rpc.voice.read", gt("Read voice channel state via RPC")],
+        ["rpc.video.write", gt("Control video stream via RPC")],
+        ["rpc.screenshare.write", gt("Control screen share via RPC")],
         ["bot", gt("Add a bot to a server (used with permissions parameter)")],
         ["applications.commands", gt("Register slash commands globally for the user")],
         ["applications.commands.update", gt("Update slash commands per-guild for the user")],
+        ["applications.commands.permissions.update", gt("Update slash command permissions per-guild")],
+        ["applications.entitlements", gt("Read user entitlements (monetization)")],
+        ["applications.store.update", gt("Update store listings for the user's applications")],
         ["webhook.incoming", gt("Create a webhook channel")],
-        ["voice", gt("Join voice channels")],
-        ["activity.read", gt("Read embedded activities")],
-        ["activity.write", gt("Start embedded activities")],
+        ["voice", gt("Join and interact with voice channels")],
+        ["activity.read", gt("Read embedded activities status")],
+        ["activity.write", gt("Start and manage embedded activities")],
+        ["dm_channels.read", gt("Read the user's direct message channels")],
+        ["dm_channels.write", gt("Create and manage direct message channels")],
+        ["relationships.read", gt("Read the user's friends and block list")],
+        ["profile.read", gt("Read the user's full profile (bio, widgets, game library)")],
+        ["profile.write", gt("Update the user's profile (bio, widgets, game library)")],
+        ["analytics.read", gt("Read analytics data for the user's servers")],
       ]} />
+
+      <Callout type="info" title={gt("Scope hierarchy")}>
+        {gt("Some scopes require other scopes. For example,")} <InlineCode>email</InlineCode> {gt("requires")} <InlineCode>identify</InlineCode>, {gt("and")} <InlineCode>guilds.join</InlineCode> {gt("requires")} <InlineCode>guilds</InlineCode>. {gt("Invalid scope combinations will be rejected at the authorization step.")}
+      </Callout>
 
       <H2 id="authorization-code">{gt("Authorization Code Flow")}</H2>
       <P>
@@ -138,6 +156,36 @@ grant_type=refresh_token
         ["disable_guild_select", gt("No"), gt("If true, prevents changing the guild selection")],
       ]} />
 
+      <H2 id="client-credentials">{gt("Client Credentials Flow")}</H2>
+      <P>{gt("For server-to-server communication where no user context is needed (e.g., bot token management):")}</P>
+      <CodeBlock lang="bash">{`POST https://api.serika.chat/api/oauth2/token
+Content-Type: application/x-www-form-urlencoded
+
+grant_type=client_credentials
+&client_id=YOUR_CLIENT_ID
+&client_secret=YOUR_CLIENT_SECRET
+&scope=identify`}</CodeBlock>
+      <P>{gt("Response:")}</P>
+      <CodeBlock lang="json">{`{
+  "access_token": "YOUR_ACCESS_TOKEN",
+  "token_type": "Bearer",
+  "expires_in": 3600,
+  "scope": "identify"
+}`}</CodeBlock>
+      <Callout type="warning" title={gt("Limited scopes")}>
+        {gt("The client credentials flow only supports scopes that don't require user context (e.g.,")} <InlineCode>identify</InlineCode>{gt(",")} <InlineCode>applications.commands</InlineCode>{gt("). User-specific scopes like")} <InlineCode>email</InlineCode> {gt("or")} <InlineCode>guilds</InlineCode> {gt("are not available.")}
+      </Callout>
+
+      <H2 id="token-revocation">{gt("Token Revocation")}</H2>
+      <P>{gt("Revoke an access or refresh token to immediately invalidate it:")}</P>
+      <CodeBlock lang="bash">{`POST https://api.serika.chat/api/oauth2/token/revoke
+Content-Type: application/x-www-form-urlencoded
+
+token=YOUR_TOKEN
+&client_id=YOUR_CLIENT_ID
+&client_secret=YOUR_CLIENT_SECRET`}</CodeBlock>
+      <P>{gt("Returns a 200 OK with an empty body on success.")}</P>
+
       <H2 id="code-example">{gt("Full code example (Node.js)")}</H2>
       <CodeBlock lang="javascript">{`// 1. Redirect user to authorization URL
 const authUrl = \`https://api.serika.chat/api/oauth2/authorize?\` +
@@ -171,7 +219,7 @@ console.log(\`Logged in as \${user.username}\`);`}</CodeBlock>
 
       <H2 id="redirect-uri">{gt("Redirect URI Matching")}</H2>
       <Callout type="warning" title={gt("Exact match required")}>
-        {gt("Redirect URIs must exactly match what's configured in your application's OAuth2 settings in the")}{" "}<Link2 href="/developers/applications">{gt("Developer Portal")}</Link2>. {gt("Trailing slashes, protocol (http vs https), and case all matter.")}
+        {gt("Redirect URIs must exactly match what's configured in your application's OAuth2 settings in the")} {" "}<Link2 href="/developers/applications">{gt("Developer Portal")}</Link2>. {gt("Trailing slashes, protocol (http vs https), and case all matter.")}
       </Callout>
 
       <H2 id="state-parameter">{gt("State Parameter (CSRF Protection)")}</H2>
@@ -189,6 +237,19 @@ const authUrl = \`...&state=\${state}\`;
 if (req.query.state !== req.session.oauthState) {
   return res.status(403).send("Invalid state parameter");
 }`}</CodeBlock>
+
+      <H2 id="error-codes">{gt("Error Codes")}</H2>
+      <Table headers={[gt("Error"), gt("Description")]} rows={[
+        ["invalid_request", gt("Missing required parameter in the request")],
+        ["invalid_client", gt("Client ID or secret is incorrect")],
+        ["invalid_grant", gt("Authorization code or refresh token is invalid or expired")],
+        ["unsupported_grant_type", gt("The grant_type parameter is not supported")],
+        ["invalid_scope", gt("One or more requested scopes are invalid or unknown")],
+        ["unauthorized_client", gt("The client is not authorized to use this grant type")],
+      ]} />
+
+      <H2 id="rate-limits">{gt("Rate Limits")}</H2>
+      <P>{gt("The OAuth2 endpoints are rate-limited. See")} {" "}<Link2 href="/developers/docs/topics/rate-limits">{gt("Rate Limits")}</Link2> {gt("for details. Exceeding the limit returns a 429 status with a")} <InlineCode>retry_after</InlineCode> {gt("field.")}</P>
     </DocPage>
   );
 }

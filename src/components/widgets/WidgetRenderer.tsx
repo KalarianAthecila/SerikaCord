@@ -90,12 +90,16 @@ function resolve(surface: WidgetSurface | undefined, comp: string, key: string, 
   return resolveField(field(surface, comp, key), data);
 }
 
-/** Whether a surface resolves any content (used to hide empty widgets). */
+/** Whether a surface resolves any real user-provided content (not static custom_string fallbacks). */
 export function surfaceHasContent(surface: WidgetSurface | undefined, data: WidgetUserData | null): boolean {
   if (!surface?.components) return false;
   for (const comp of Object.values(surface.components)) {
     for (const f of Object.values(comp.fields ?? {})) {
-      if (resolveField(f, data)) return true;
+      // Only count data-type fields as "real content" — custom_string/application_asset
+      // are static config values that shouldn't make a widget visible by themselves.
+      if (f.value_type === "data") {
+        if (resolveField(f, data)) return true;
+      }
     }
   }
   return false;

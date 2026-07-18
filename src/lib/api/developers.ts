@@ -8,6 +8,52 @@ import { checkRateLimit, getClientIP } from '@/lib/security';
 
 const VALID_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
+// All supported OAuth2 scopes
+const VALID_OAUTH_SCOPES = new Set([
+  'identify',
+  'email',
+  'connections',
+  'guilds',
+  'guilds.join',
+  'guilds.members.read',
+  'messages.read',
+  'rpc',
+  'rpc.notifications.read',
+  'rpc.voice.read',
+  'rpc.video.write',
+  'rpc.screenshare.write',
+  'bot',
+  'applications.commands',
+  'applications.commands.update',
+  'applications.commands.permissions.update',
+  'applications.entitlements',
+  'applications.store.update',
+  'webhook.incoming',
+  'voice',
+  'activity.read',
+  'activity.write',
+  'dm_channels.read',
+  'dm_channels.write',
+  'relationships.read',
+  'profile.read',
+  'profile.write',
+  'analytics.read',
+]);
+
+// Scopes that require another scope to also be present
+const SCOPE_DEPENDENCIES: Record<string, string[]> = {
+  'email': ['identify'],
+  'guilds.join': ['guilds'],
+  'guilds.members.read': ['guilds'],
+  'rpc.notifications.read': ['rpc'],
+  'rpc.voice.read': ['rpc'],
+  'rpc.video.write': ['rpc'],
+  'rpc.screenshare.write': ['rpc'],
+  'applications.commands.update': ['applications.commands'],
+  'applications.commands.permissions.update': ['applications.commands'],
+  'profile.write': ['profile.read'],
+};
+
 // ─── Helpers ───────────────────────────────────────────────
 
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -1351,6 +1397,26 @@ export const oauth2Routes = new Elysia({ prefix: '/oauth2' })
     if (!clientId) {
       set.status = 400;
       return { error: 'Missing client_id' };
+    }
+
+    // Validate scopes
+    for (const scope of requestedScopes) {
+      if (!VALID_OAUTH_SCOPES.has(scope)) {
+        set.status = 400;
+        return { error: 'invalid_scope', message: `Unknown scope: ${scope}` };
+      }
+    }
+    // Check scope dependencies
+    for (const scope of requestedScopes) {
+      const deps = SCOPE_DEPENDENCIES[scope];
+      if (deps) {
+        for (const dep of deps) {
+          if (!requestedScopes.includes(dep)) {
+            set.status = 400;
+            return { error: 'invalid_scope', message: `Scope '${scope}' requires '${dep}'` };
+          }
+        }
+      }
     }
 
     const { Application, User, ServerMember, Server, Role, AuthorizedApp, Channel } = await import('@/lib/models');
