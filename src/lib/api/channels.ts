@@ -408,7 +408,14 @@ export function registerRawSSEConnection(
   }
   activeConnections.get(channelId)!.add(controller);
 
-  return () => { activeConnections.get(channelId)?.delete(controller); };
+  return () => {
+    const set = activeConnections.get(channelId);
+    if (!set) return;
+    set.delete(controller);
+    // Drop the channel's entry entirely once its last stream closes — otherwise
+    // the map keeps one empty Set per channel ever streamed, forever.
+    if (set.size === 0) activeConnections.delete(channelId);
+  };
 }
 
 // Publish a channel event: deliver locally AND fan out over Redis so every
@@ -2855,7 +2862,11 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           clearInterval(pingInterval);
         }
         if (controllerRef) {
-          activeConnections.get(channelKey)?.delete(controllerRef);
+          const set = activeConnections.get(channelKey);
+          if (set) {
+            set.delete(controllerRef);
+            if (set.size === 0) activeConnections.delete(channelKey);
+          }
         }
       },
     });

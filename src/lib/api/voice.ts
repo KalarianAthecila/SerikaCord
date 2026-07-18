@@ -363,13 +363,31 @@ export const voiceRoutes = new Elysia({ prefix: '/voice' })
       },
       cancel() {
         if (pingInterval) clearInterval(pingInterval);
-        if (controllerRef) {
-          const roomConns = voiceSignalingConnections.get(roomId);
-          if (roomConns) {
-            const userConns = roomConns.get(userId);
-            if (userConns) userConns.delete(controllerRef);
+        if (!controllerRef) return;
+        const roomConns = voiceSignalingConnections.get(roomId);
+        if (!roomConns) return;
+        const userConns = roomConns.get(userId);
+        if (userConns) {
+          userConns.delete(controllerRef);
+          // When the user's last signaling stream for this room drops (tab
+          // closed, navigated away, network died) without a clean POST /leave,
+          // evict them from the room mirror so they don't linger forever as a
+          // ghost participant — and tell the remaining members. A reconnect
+          // re-adds them via POST /join.
+          if (userConns.size === 0) {
+            roomConns.delete(userId);
+            const room = roomState.get(roomId);
+            if (room && room.has(userId)) {
+              room.delete(userId);
+              if (room.size === 0) roomState.delete(roomId);
+              publishMembership(roomId, 'leave', { userId });
+              broadcastToRoom(roomId, { type: 'voice:participant_left', userId });
+            }
           }
         }
+        // Drop the room's connection map once its last stream closes so the
+        // outer map doesn't retain an empty entry per room ever opened.
+        if (roomConns.size === 0) voiceSignalingConnections.delete(roomId);
       },
     });
 
