@@ -1,6 +1,5 @@
 "use client";
 
-import { Gamepad2 } from "lucide-react";
 import { cdnImage } from "@/lib/utils";
 import { WIDGET_LAYOUT_BY_KEY } from "@/lib/constants/widgets";
 
@@ -122,27 +121,27 @@ function TopHero({ surface, data, contained }: { surface?: WidgetSurface; data: 
 
   if (contained) {
     return (
-      <div className="flex items-start gap-3 p-3">
+      <div className="flex items-start gap-3 p-3.5">
         <div className="flex-1 min-w-0">
-          {title && <p className="text-base font-bold text-white">{title}</p>}
-          {desc && <p className="text-xs text-white/60 mt-1 line-clamp-3">{desc}</p>}
+          {title && <p className="text-base font-bold text-white tracking-tight">{title}</p>}
+          {desc && <p className="text-xs text-white/55 mt-1 line-clamp-3 leading-relaxed">{desc}</p>}
         </div>
-        {image && <Img src={image} className="w-16 h-16 rounded-lg object-cover shrink-0" />}
+        {image && <Img src={image} className="w-16 h-16 rounded-xl object-cover shrink-0" />}
       </div>
     );
   }
   // Hero: full-height image right, fade to the text on the left.
   return (
-    <div className="relative min-h-[104px] overflow-hidden">
+    <div className="relative min-h-[112px] overflow-hidden">
       {image && (
         <div className="absolute inset-y-0 right-0 w-1/2">
           <Img src={image} className="w-full h-full object-cover" />
-          <div className="absolute inset-0 bg-gradient-to-r from-[#101013] via-[#101013]/70 to-transparent" />
+          <div className="absolute inset-0 bg-gradient-to-r from-[#0e0e12] via-[#0e0e12]/80 to-transparent" />
         </div>
       )}
-      <div className="relative p-3 pr-24 max-w-[70%]">
-        {title && <p className="text-base font-bold text-white">{title}</p>}
-        {desc && <p className="text-xs text-white/60 mt-1 line-clamp-3">{desc}</p>}
+      <div className="relative p-3.5 pr-28 max-w-[72%]">
+        {title && <p className="text-base font-bold text-white tracking-tight">{title}</p>}
+        {desc && <p className="text-xs text-white/55 mt-1 line-clamp-3 leading-relaxed">{desc}</p>}
       </div>
     </div>
   );
@@ -157,7 +156,7 @@ function StatsGrid({ surface, data, count }: { surface?: WidgetSurface; data: Wi
     .filter((s) => s.label || s.value);
   if (items.length === 0) return null;
   return (
-    <div className="grid grid-cols-3 gap-2 p-3">
+    <div className="grid grid-cols-3 gap-2 p-3.5">
       {items.map((s, i) => (
         <div key={i} className="min-w-0">
           {s.value && <p className="text-sm font-bold text-white truncate">{s.value}</p>}
@@ -180,12 +179,12 @@ function Progress({ surface, data }: { surface?: WidgetSurface; data: WidgetUser
     .filter((s) => s.label || s.value);
   if (!image && !label && !stats.length && !current) return null;
   return (
-    <div className="flex items-center gap-3 p-3">
-      {image && <Img src={image} className="w-16 h-16 rounded-lg object-cover shrink-0" />}
+    <div className="flex items-center gap-3 p-3.5">
+      {image && <Img src={image} className="w-16 h-16 rounded-xl object-cover shrink-0" />}
       <div className="flex-1 min-w-0 space-y-2">
         {label && <p className="text-sm font-semibold text-white truncate">{label}</p>}
         <div className="h-2 rounded-full bg-white/10 overflow-hidden">
-          <div className="h-full bg-[#8B5CF6]" style={{ width: `${pct}%` }} />
+          <div className="h-full bg-gradient-to-r from-[#8B5CF6] to-[#a78bfa] rounded-full transition-all duration-300" style={{ width: `${pct}%` }} />
         </div>
         <p className="text-[10px] text-white/40">{max ? `${current} / ${max}` : `${Math.round(pct)}%`}</p>
         {stats.length > 0 && (
@@ -213,10 +212,10 @@ function Collection({ surface, data }: { surface?: WidgetSurface; data: WidgetUs
     .filter((it) => it.image || it.title || it.subtitle);
   if (items.length === 0) return null;
   return (
-    <div className="grid grid-cols-2 gap-2 p-3">
+    <div className="grid grid-cols-2 gap-2 p-3.5">
       {items.map((it, i) => (
         <div key={i} className="flex items-center gap-2 min-w-0">
-          {it.image ? <Img src={it.image} className="w-9 h-9 rounded object-cover shrink-0" /> : <div className="w-9 h-9 rounded bg-white/[0.05] shrink-0" />}
+          {it.image ? <Img src={it.image} className="w-9 h-9 rounded-lg object-cover shrink-0" /> : <div className="w-9 h-9 rounded-lg bg-white/[0.05] shrink-0" />}
           <div className="min-w-0">
             {it.title && <p className="text-[11px] font-medium text-white truncate">{it.title}</p>}
             {it.subtitle && <p className="text-[10px] text-white/50 truncate">{it.subtitle}</p>}
@@ -286,12 +285,7 @@ export function WidgetRenderer({
   const bottomSurface = mode === "add_preview" ? s.add_widget_preview ?? s.widget_bottom : s.widget_bottom;
 
   return (
-    <div className="rounded-2xl bg-[#101013] border border-white/[0.07] overflow-hidden">
-      {/* Header */}
-      <div className="flex items-center gap-2 px-3 py-2 border-b border-white/[0.05]">
-        {icon ? <Img src={icon} className="w-4 h-4 rounded" /> : <Gamepad2 className="w-4 h-4 text-white/40" />}
-        <span className="text-xs font-semibold text-white/80 truncate">{config.name}</span>
-      </div>
+    <div className="rounded-2xl bg-gradient-to-b from-[#131318] to-[#0e0e12] border border-white/[0.06] overflow-hidden transition-all duration-200 hover:border-white/[0.1]">
       <TopHero surface={topSurface} data={data} contained={contained} />
       <BottomSurface surface={bottomSurface} data={data} />
     </div>

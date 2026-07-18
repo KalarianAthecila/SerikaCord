@@ -58,9 +58,9 @@ function GameCover({ game, size = "md" }: { game: LibraryGame; size?: "sm" | "md
   const dims = size === "lg" ? "w-16 h-16" : size === "sm" ? "w-12 h-12" : "w-full aspect-[3/4]";
   return game.coverUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
-    <img src={cdnImage(game.coverUrl)} alt={game.name} className={cn(dims, "rounded-lg object-cover")} />
+    <img src={cdnImage(game.coverUrl)} alt={game.name} className={cn(dims, "rounded-lg object-cover transition-transform duration-200 group-hover:scale-[1.03]")} />
   ) : (
-    <div className={cn(dims, "rounded-lg bg-gradient-to-br from-white/[0.06] to-white/[0.02] flex flex-col items-center justify-center p-1 border border-white/[0.05]")}>
+    <div className={cn(dims, "rounded-lg bg-gradient-to-br from-white/[0.08] to-white/[0.02] flex flex-col items-center justify-center p-1 border border-white/[0.06]")}>
       <Gamepad2 className="w-1/4 h-1/4 text-white/20" />
       <span className="text-[8px] text-white/40 text-center truncate max-w-full mt-0.5">{game.name}</span>
     </div>
@@ -71,9 +71,9 @@ function AddPosterButton({ onClick, cols = 4 }: { onClick: () => void; cols?: nu
   return (
     <button
       onClick={onClick}
-      className={cn(cols === 5 ? "aspect-[3/4]" : "aspect-[3/4]", "rounded-lg border-2 border-dashed border-white/10 hover:border-[#8B5CF6]/50 bg-white/[0.02] hover:bg-[#8B5CF6]/[0.04] flex items-center justify-center transition-colors group/add")}
+      className={cn("aspect-[3/4] rounded-lg border-2 border-dashed border-white/[0.08] hover:border-[#8B5CF6]/50 bg-white/[0.01] hover:bg-[#8B5CF6]/[0.06] flex items-center justify-center transition-all duration-200 group/add")}
     >
-      <Plus className="w-5 h-5 text-white/20 group-hover/add:text-[#8B5CF6] transition-colors" />
+      <Plus className="w-5 h-5 text-white/15 group-hover/add:text-[#8B5CF6] group-hover/add:scale-110 transition-all duration-200" />
     </button>
   );
 }
@@ -320,12 +320,12 @@ function SectionHeader({ icon: Icon, title, subtitle, onMoveUp, onMoveDown }: {
       <div className="flex items-center gap-2">
         <Icon className="w-3.5 h-3.5 text-[#8B5CF6]" />
         <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide">{title}</h4>
-        {subtitle && <span className="text-[10px] text-white/30">{subtitle}</span>}
+        {subtitle && <span className="text-[10px] text-white/25">{subtitle}</span>}
       </div>
       {(onMoveUp || onMoveDown) && (
-        <div className="flex items-center gap-0.5 opacity-0 group-hover/hdr:opacity-100 transition-opacity">
-          {onMoveUp && <button onClick={onMoveUp} className="p-0.5 rounded hover:bg-white/10 text-white/40 hover:text-white"><ChevronUp className="w-3 h-3" /></button>}
-          {onMoveDown && <button onClick={onMoveDown} className="p-0.5 rounded hover:bg-white/10 text-white/40 hover:text-white"><ChevronDown className="w-3 h-3" /></button>}
+        <div className="flex items-center gap-0.5 opacity-0 group-hover/hdr:opacity-100 transition-opacity duration-200">
+          {onMoveUp && <button onClick={onMoveUp} className="p-1 rounded-md hover:bg-white/[0.08] text-white/40 hover:text-white transition-colors"><ChevronUp className="w-3 h-3" /></button>}
+          {onMoveDown && <button onClick={onMoveDown} className="p-1 rounded-md hover:bg-white/[0.08] text-white/40 hover:text-white transition-colors"><ChevronDown className="w-3 h-3" /></button>}
         </div>
       )}
     </div>
@@ -414,13 +414,13 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
   if (!isSelf && !hasAnything) return null;
 
   const editControls = (game: LibraryGame, ordered: boolean) => isSelf && (
-    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-1 bg-black/50 rounded-lg">
+    <div className="absolute inset-0 opacity-0 group-hover:opacity-100 transition-opacity duration-200 flex items-center justify-center gap-1 bg-black/60 rounded-lg backdrop-blur-[2px]">
       {ordered && (
-        <button onClick={() => move(game, -1)} className="p-1 rounded bg-black/60 hover:bg-black/80 text-white"><ChevronLeft className="w-3.5 h-3.5" /></button>
+        <button onClick={() => move(game, -1)} className="p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
       )}
-      <button onClick={() => remove(game)} className="p-1 rounded bg-red-500/80 hover:bg-red-500 text-white"><X className="w-3.5 h-3.5" /></button>
+      <button onClick={() => remove(game)} className="p-1.5 rounded-lg bg-red-500/80 hover:bg-red-500 text-white transition-colors"><X className="w-3.5 h-3.5" /></button>
       {ordered && (
-        <button onClick={() => move(game, 1)} className="p-1 rounded bg-black/60 hover:bg-black/80 text-white"><ChevronRight className="w-3.5 h-3.5" /></button>
+        <button onClick={() => move(game, 1)} className="p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
       )}
     </div>
   );
@@ -433,7 +433,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
     if (games.length === 0 && !isSelf) return null;
     if (games.length === 0 && isSelf) {
       return (
-        <div className="rounded-xl bg-white/[0.02] border border-white/[0.05] p-3">
+        <div className="rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.05] p-3 transition-colors duration-200 hover:border-white/[0.08]">
           <SectionHeader
             icon={icon}
             title={title}
@@ -450,7 +450,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
     const visible = showAll ? games : games.slice(0, 8);
     const showAddPoster = isSelf && !isFull && (visible.length < 8 || showAll);
     return (
-      <div className="rounded-xl bg-white/[0.02] border border-white/[0.05] p-3">
+      <div className="rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.05] p-3 transition-colors duration-200 hover:border-white/[0.08]">
         <SectionHeader
           icon={icon}
           title={title}
@@ -497,7 +497,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
     if (cat === "favorite") {
       if (!favorite && !isSelf) return null;
       return (
-        <div key="favorite" className="rounded-xl bg-white/[0.02] border border-white/[0.05] p-3">
+        <div key="favorite" className="rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.05] p-3 transition-colors duration-200 hover:border-white/[0.08]">
           <SectionHeader
             icon={Star}
             title={gt("Favorite game")}
@@ -506,7 +506,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
             onMoveDown={isSelf ? () => moveSection("favorite", 1) : undefined}
           />
           {favorite ? (
-            <div className="group relative flex gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.06]">
+            <div className="group relative flex gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.05] transition-colors duration-200 hover:border-white/[0.08]">
               <GameCover game={favorite} size="lg" />
               <div className="flex-1 min-w-0">
                 <p className="text-sm font-semibold text-white truncate">{favorite.name}</p>
@@ -541,7 +541,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
       if (games.length === 0 && !isSelf) return null;
       const showAddPoster = isSelf && !isFull;
       return (
-        <div key="rotation" className="rounded-xl bg-white/[0.02] border border-white/[0.05] p-3">
+        <div key="rotation" className="rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.05] p-3 transition-colors duration-200 hover:border-white/[0.08]">
           <SectionHeader
             icon={RotateCw}
             title={gt("Games in rotation")}

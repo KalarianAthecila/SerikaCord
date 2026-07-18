@@ -196,19 +196,18 @@ export function ProfileAppWidgets({ userId, isSelf, appIcon, onAddGameCategory, 
   return (
     <div>
       {isSelf && (
-        <div className="flex items-center justify-between mb-2">
-          <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide">{gt("Widgets")}</h4>
-          <button onClick={() => setAddOpen(true)} className="flex items-center gap-1 text-xs text-[#8B5CF6] hover:underline">
+        <div className="flex justify-end mb-2">
+          <button onClick={() => setAddOpen(true)} className="flex items-center gap-1 text-xs text-[#8B5CF6] hover:text-[#a78bfa] transition-colors">
             <Plus className="w-3.5 h-3.5" /> {gt("Add Widget")}
           </button>
         </div>
       )}
       <div className="space-y-2">
         {visible.map((p) => (
-          <div key={p.id} className="group relative">
+          <div key={p.id} className="group relative transition-transform duration-200 hover:scale-[1.01]">
             <WidgetRenderer config={p.config!} data={p.data ?? null} icon={appIcon} />
             {isSelf && (
-              <button onClick={() => remove(p.applicationId!)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1 rounded bg-black/60 hover:bg-red-500 text-white transition"><X className="w-3.5 h-3.5" /></button>
+              <button onClick={() => remove(p.applicationId!)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg bg-black/70 hover:bg-red-500 text-white transition-all duration-200 backdrop-blur-sm"><X className="w-3.5 h-3.5" /></button>
             )}
           </div>
         ))}
