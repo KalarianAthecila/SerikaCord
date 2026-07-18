@@ -8,6 +8,52 @@ import { checkRateLimit, getClientIP } from '@/lib/security';
 
 const VALID_IMAGE_TYPES = new Set(['image/jpeg', 'image/png', 'image/gif', 'image/webp']);
 
+// All supported OAuth2 scopes
+const VALID_OAUTH_SCOPES = new Set([
+  'identify',
+  'email',
+  'connections',
+  'guilds',
+  'guilds.join',
+  'guilds.members.read',
+  'messages.read',
+  'rpc',
+  'rpc.notifications.read',
+  'rpc.voice.read',
+  'rpc.video.write',
+  'rpc.screenshare.write',
+  'bot',
+  'applications.commands',
+  'applications.commands.update',
+  'applications.commands.permissions.update',
+  'applications.entitlements',
+  'applications.store.update',
+  'webhook.incoming',
+  'voice',
+  'activity.read',
+  'activity.write',
+  'dm_channels.read',
+  'dm_channels.write',
+  'relationships.read',
+  'profile.read',
+  'profile.write',
+  'analytics.read',
+]);
+
+// Scopes that require another scope to also be present
+const SCOPE_DEPENDENCIES: Record<string, string[]> = {
+  'email': ['identify'],
+  'guilds.join': ['guilds'],
+  'guilds.members.read': ['guilds'],
+  'rpc.notifications.read': ['rpc'],
+  'rpc.voice.read': ['rpc'],
+  'rpc.video.write': ['rpc'],
+  'rpc.screenshare.write': ['rpc'],
+  'applications.commands.update': ['applications.commands'],
+  'applications.commands.permissions.update': ['applications.commands'],
+  'profile.write': ['profile.read'],
+};
+
 // ─── Helpers ───────────────────────────────────────────────
 
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -1169,6 +1215,69 @@ export const developerRoutes = new Elysia({ prefix: '/developers' })
   body: t.Object({ file: t.File() }),
 })
 
+  // ─── Widget config (Social SDK widget editor backend) ──────────────────────
+  .get('/applications/:id/widget', async ({ headers, cookie, params, set }) => {
+    const access = await requireAppAccess(headers, cookie as Record<string, { value?: unknown }>, params.id, set);
+    if ('error' in access) return access.error;
+    const config = await WidgetConfig.findByApplication(params.id);
+    return { widget: config ?? null };
+  })
+  .put('/applications/:id/widget', async ({ headers, cookie, params, body, set }) => {
+    const access = await requireAppAccess(headers, cookie as Record<string, { value?: unknown }>, params.id, set);
+    if ('error' in access) return access.error;
+    const b = body as { name?: string; surfaces?: unknown; sampleData?: unknown };
+    const saved = await WidgetConfig.upsert(params.id, {
+      ...(b.name !== undefined ? { name: b.name } : {}),
+      ...(b.surfaces !== undefined ? { surfaces: b.surfaces as object } : {}),
+      ...(b.sampleData !== undefined ? { sampleData: b.sampleData as object } : {}),
+    });
+    return { widget: saved };
+  }, {
+    body: t.Object({
+      name: t.Optional(t.String({ minLength: 1, maxLength: 128 })),
+      surfaces: t.Optional(t.Any()),
+      sampleData: t.Optional(t.Any()),
+    }),
+  })
+  .post('/applications/:id/widget/publish', async ({ headers, cookie, params, set }) => {
+    const access = await requireAppAccess(headers, cookie as Record<string, { value?: unknown }>, params.id, set);
+    if ('error' in access) return access.error;
+    const config = await WidgetConfig.findByApplication(params.id);
+    if (!config) { set.status = 404; return { error: 'No widget to publish' }; }
+    const saved = await WidgetConfig.updateByApplication(params.id, {
+      status: 'published', publishedAt: new Date(), version: (config.version ?? 1) + 1,
+    });
+    return { widget: saved };
+  })
+  .post('/applications/:id/widget/unpublish', async ({ headers, cookie, params, set }) => {
+    const access = await requireAppAccess(headers, cookie as Record<string, { value?: unknown }>, params.id, set);
+    if ('error' in access) return access.error;
+    const saved = await WidgetConfig.updateByApplication(params.id, { status: 'draft' });
+    return { widget: saved };
+  })
+  .delete('/applications/:id/widget', async ({ headers, cookie, params, set }) => {
+    const access = await requireAppAccess(headers, cookie as Record<string, { value?: unknown }>, params.id, set);
+    if ('error' in access) return access.error;
+    await WidgetConfig.deleteByApplication(params.id);
+    return { success: true };
+  })
+  // ─── 1:1 list alias (List Application Widget Configs) ──────────────────────
+  .get('/applications/:id/widget-configs', async ({ headers, cookie, params, set }) => {
+    const access = await requireAppAccess(headers, cookie as Record<string, { value?: unknown }>, params.id, set);
+    if ('error' in access) return access.error;
+    const config = await WidgetConfig.findByApplication(params.id);
+    return { configs: config ? [{
+      application_id: config.applicationId,
+      config_id: config.id,
+      display_name: config.name,
+      surfaces: config.surfaces,
+      resolved_assets: config.resolvedAssets ?? [],
+      status: config.status,
+      published_at: config.publishedAt ?? null,
+      updated_at: config.updatedAt ?? null,
+    }] : [] };
+  });
+
 export const oauth2Routes = new Elysia({ prefix: '/oauth2' })
   .post('/token', async ({ body, set }) => {
     const formData = body as any;
@@ -1288,6 +1397,26 @@ export const oauth2Routes = new Elysia({ prefix: '/oauth2' })
     if (!clientId) {
       set.status = 400;
       return { error: 'Missing client_id' };
+    }
+
+    // Validate scopes
+    for (const scope of requestedScopes) {
+      if (!VALID_OAUTH_SCOPES.has(scope)) {
+        set.status = 400;
+        return { error: 'invalid_scope', message: `Unknown scope: ${scope}` };
+      }
+    }
+    // Check scope dependencies
+    for (const scope of requestedScopes) {
+      const deps = SCOPE_DEPENDENCIES[scope];
+      if (deps) {
+        for (const dep of deps) {
+          if (!requestedScopes.includes(dep)) {
+            set.status = 400;
+            return { error: 'invalid_scope', message: `Scope '${scope}' requires '${dep}'` };
+          }
+        }
+      }
     }
 
     const { Application, User, ServerMember, Server, Role, AuthorizedApp, Channel } = await import('@/lib/models');
@@ -1516,67 +1645,26 @@ export const oauth2Routes = new Elysia({ prefix: '/oauth2' })
     return { success: true, botAdded };
   })
 
-  // ─── Widget config (Social SDK widget editor backend) ──────────────────────
-  .get('/applications/:id/widget', async ({ headers, cookie, params, set }) => {
-    const access = await requireAppAccess(headers, cookie, params.id, set);
-    if ('error' in access) return access.error;
-    const config = await WidgetConfig.findByApplication(params.id);
-    return { widget: config ?? null };
-  })
-  .put('/applications/:id/widget', async ({ headers, cookie, params, body, set }) => {
-    const access = await requireAppAccess(headers, cookie, params.id, set);
-    if ('error' in access) return access.error;
-    const b = body as { name?: string; surfaces?: unknown; sampleData?: unknown };
-    const saved = await WidgetConfig.upsert(params.id, {
-      ...(b.name !== undefined ? { name: b.name } : {}),
-      ...(b.surfaces !== undefined ? { surfaces: b.surfaces as object } : {}),
-      ...(b.sampleData !== undefined ? { sampleData: b.sampleData as object } : {}),
-    });
-    return { widget: saved };
-  }, {
-    body: t.Object({
-      name: t.Optional(t.String({ minLength: 1, maxLength: 128 })),
-      surfaces: t.Optional(t.Any()),
-      sampleData: t.Optional(t.Any()),
-    }),
-  })
-  .post('/applications/:id/widget/publish', async ({ headers, cookie, params, set }) => {
-    const access = await requireAppAccess(headers, cookie, params.id, set);
-    if ('error' in access) return access.error;
-    const config = await WidgetConfig.findByApplication(params.id);
-    if (!config) { set.status = 404; return { error: 'No widget to publish' }; }
-    const saved = await WidgetConfig.updateByApplication(params.id, {
-      status: 'published', publishedAt: new Date(), version: (config.version ?? 1) + 1,
-    });
-    return { widget: saved };
-  })
-  .post('/applications/:id/widget/unpublish', async ({ headers, cookie, params, set }) => {
-    const access = await requireAppAccess(headers, cookie, params.id, set);
-    if ('error' in access) return access.error;
-    const saved = await WidgetConfig.updateByApplication(params.id, { status: 'draft' });
-    return { widget: saved };
-  })
-  .delete('/applications/:id/widget', async ({ headers, cookie, params, set }) => {
-    const access = await requireAppAccess(headers, cookie, params.id, set);
-    if ('error' in access) return access.error;
-    await WidgetConfig.deleteByApplication(params.id);
-    return { success: true };
-  })
-  // ─── 1:1 list alias (List Application Widget Configs) ──────────────────────
-  // SerikaCord keeps a single config per application; the list form returns it
-  // as an array to match the documented Discord shape.
-  .get('/applications/:id/widget-configs', async ({ headers, cookie, params, set }) => {
-    const access = await requireAppAccess(headers, cookie, params.id, set);
-    if ('error' in access) return access.error;
-    const config = await WidgetConfig.findByApplication(params.id);
-    return { configs: config ? [{
-      application_id: config.applicationId,
-      config_id: config.id,
-      display_name: config.name,
-      surfaces: config.surfaces,
-      resolved_assets: config.resolvedAssets ?? [],
-      status: config.status,
-      published_at: config.publishedAt ?? null,
-      updated_at: config.updatedAt ?? null,
-    }] : [] };
+  // ─── App Discovery (public bot listing) ────────────────────
+  .get('/discoverable-apps', async ({ query, set }) => {
+    const { db, schema } = await import('@/lib/db/postgres');
+    const { eq, and, ilike, or, sql } = await import('drizzle-orm');
+    const conditions = [eq(schema.applications.botPublic, true)];
+    if (query.search) {
+      conditions.push(ilike(schema.applications.name, `%${query.search}%`));
+    }
+    const rows = await db.select({
+      id: schema.applications.id,
+      name: schema.applications.name,
+      description: schema.applications.description,
+      icon: schema.applications.icon,
+      botId: schema.applications.botId,
+      tags: schema.applications.tags,
+      ownerId: schema.applications.ownerId,
+    })
+      .from(schema.applications)
+      .where(and(...conditions))
+      .limit(50);
+
+    return { apps: rows };
   });

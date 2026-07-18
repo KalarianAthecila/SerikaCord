@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useMemo } from "react";
-import { Plus, X, Search, Star, Gamepad2, RotateCw, Bookmark, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2 } from "lucide-react";
+import { Plus, X, Search, Star, Gamepad2, RotateCw, Bookmark, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Loader2, Trash2, Pencil, Tag } from "lucide-react";
 import { toast } from "sonner";
 import { cn, cdnImage } from "@/lib/utils";
 import { useGT } from "gt-next";
@@ -54,8 +54,8 @@ function useLibrary(userId: string) {
 }
 
 // ── Game cover card ──────────────────────────────────────────────────────────
-function GameCover({ game, size = "md" }: { game: LibraryGame; size?: "sm" | "md" | "lg" }) {
-  const dims = size === "lg" ? "w-16 h-16" : size === "sm" ? "w-12 h-12" : "w-full aspect-[3/4]";
+function GameCover({ game, size = "md" }: { game: LibraryGame; size?: "sm" | "md" | "lg" | "poster" }) {
+  const dims = size === "poster" ? "w-full aspect-[16/9]" : size === "lg" ? "w-16 h-16" : size === "sm" ? "w-12 h-12" : "w-full aspect-[3/4]";
   return game.coverUrl ? (
     // eslint-disable-next-line @next/next/no-img-element
     <img src={cdnImage(game.coverUrl)} alt={game.name} className={cn(dims, "rounded-lg object-cover transition-transform duration-200 group-hover:scale-[1.03]")} />
@@ -162,19 +162,18 @@ function AddGameDialog({
     return () => clearTimeout(handle);
   }, [query]);
 
-  const existingSet = useMemo(() => {
+  // Only dedup within the same category, not across all categories
+  const existingInCategory = useMemo(() => {
     const s = new Set<string | number>();
-    for (const cat of Object.values(allLibrary)) {
-      for (const g of cat) {
-        if (g.igdbId != null) s.add(g.igdbId);
-        s.add(g.name.toLowerCase());
-      }
+    for (const g of allLibrary[category]) {
+      if (g.igdbId != null) s.add(g.igdbId);
+      s.add(g.name.toLowerCase());
     }
     return s;
-  }, [allLibrary]);
+  }, [allLibrary, category]);
 
   const visibleResults = results
-    .filter((r) => !existingSet.has(r.id) && !existingSet.has(r.name.toLowerCase()))
+    .filter((r) => !existingInCategory.has(r.id) && !existingInCategory.has(r.name.toLowerCase()))
     .slice(0, 3);
 
   const selectedTags = [tags.skill, tags.rating, tags.lookingFor].filter(Boolean);
@@ -260,11 +259,17 @@ function AddGameDialog({
             className="w-full bg-white/[0.04] border border-white/[0.08] rounded-lg px-3 py-2 text-xs text-white placeholder:text-white/40 focus:outline-none focus:border-[#8B5CF6] resize-none"
           />
 
-          <div className="space-y-3">
-            <TagPicker label={gt("Skill level")} value={tags.skill} onChange={(v) => setTags((t) => ({ ...t, skill: v }))} options={options.skill} />
-            <TagPicker label={gt("Rating")} value={tags.rating} onChange={(v) => setTags((t) => ({ ...t, rating: v }))} options={options.rating} />
-            <TagPicker label={gt("Looking for")} value={tags.lookingFor} onChange={(v) => setTags((t) => ({ ...t, lookingFor: v }))} options={options.lookingFor} />
-          </div>
+          {/* Tags only for favorite and rotation categories */}
+          {(category === "favorite" || category === "rotation") && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-1.5 text-[10px] text-white/40 uppercase tracking-wide">
+                <Tag className="w-3 h-3" /> {gt("Tags")}
+              </div>
+              <TagPicker label={gt("Skill level")} value={tags.skill} onChange={(v) => setTags((t) => ({ ...t, skill: v }))} options={options.skill} />
+              <TagPicker label={gt("Rating")} value={tags.rating} onChange={(v) => setTags((t) => ({ ...t, rating: v }))} options={options.rating} />
+              <TagPicker label={gt("Looking for")} value={tags.lookingFor} onChange={(v) => setTags((t) => ({ ...t, lookingFor: v }))} options={options.lookingFor} />
+            </div>
+          )}
 
           <div className="min-h-[80px] space-y-1">
             {searching ? (
@@ -308,12 +313,13 @@ function AddGameDialog({
 }
 
 // ── Section shell ─────────────────────────────────────────────────────────────
-function SectionHeader({ icon: Icon, title, subtitle, onMoveUp, onMoveDown }: {
+function SectionHeader({ icon: Icon, title, subtitle, onMoveUp, onMoveDown, onRemove }: {
   icon: React.ComponentType<{ className?: string }>;
   title: string;
   subtitle?: string;
   onMoveUp?: () => void;
   onMoveDown?: () => void;
+  onRemove?: () => void;
 }) {
   return (
     <div className="flex items-center justify-between mb-2 group/hdr">
@@ -322,12 +328,11 @@ function SectionHeader({ icon: Icon, title, subtitle, onMoveUp, onMoveDown }: {
         <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide">{title}</h4>
         {subtitle && <span className="text-[10px] text-white/25">{subtitle}</span>}
       </div>
-      {(onMoveUp || onMoveDown) && (
-        <div className="flex items-center gap-0.5 opacity-0 group-hover/hdr:opacity-100 transition-opacity duration-200">
-          {onMoveUp && <button onClick={onMoveUp} className="p-1 rounded-md hover:bg-white/[0.08] text-white/40 hover:text-white transition-colors"><ChevronUp className="w-3 h-3" /></button>}
-          {onMoveDown && <button onClick={onMoveDown} className="p-1 rounded-md hover:bg-white/[0.08] text-white/40 hover:text-white transition-colors"><ChevronDown className="w-3 h-3" /></button>}
-        </div>
-      )}
+      <div className="flex items-center gap-0.5 opacity-0 group-hover/hdr:opacity-100 transition-opacity duration-200">
+        {onMoveUp && <button onClick={onMoveUp} className="p-1 rounded-md hover:bg-white/[0.08] text-white/40 hover:text-white transition-colors"><ChevronUp className="w-3 h-3" /></button>}
+        {onMoveDown && <button onClick={onMoveDown} className="p-1 rounded-md hover:bg-white/[0.08] text-white/40 hover:text-white transition-colors"><ChevronDown className="w-3 h-3" /></button>}
+        {onRemove && <button onClick={onRemove} className="p-1 rounded-md hover:bg-red-500/20 text-red-400 hover:text-red-300 transition-colors"><Trash2 className="w-3 h-3" /></button>}
+      </div>
     </div>
   );
 }
@@ -368,6 +373,23 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
       if (next < 0 || next >= prev.length) return prev;
       const arr = [...prev];
       [arr[idx], arr[next]] = [arr[next], arr[idx]];
+      try { localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(arr)); } catch {}
+      return arr;
+    });
+  };
+
+  const removeSection = async (cat: GameCategory) => {
+    // Remove all games in this category
+    const games = library[cat];
+    setLibrary((prev) => ({ ...prev, [cat]: [] }));
+    for (const game of games) {
+      try {
+        await fetch(`/api/users/@me/games/${game.id}`, { method: "DELETE" });
+      } catch {}
+    }
+    // Remove from section order
+    setSectionOrder((prev) => {
+      const arr = prev.filter((c) => c !== cat);
       try { localStorage.setItem(SECTION_STORAGE_KEY, JSON.stringify(arr)); } catch {}
       return arr;
     });
@@ -418,7 +440,7 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
       {ordered && (
         <button onClick={() => move(game, -1)} className="p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white transition-colors"><ChevronLeft className="w-3.5 h-3.5" /></button>
       )}
-      <button onClick={() => remove(game)} className="p-1.5 rounded-lg bg-red-500/80 hover:bg-red-500 text-white transition-colors"><X className="w-3.5 h-3.5" /></button>
+      <button onClick={() => remove(game)} className="p-1.5 rounded-lg bg-red-500/80 hover:bg-red-500 text-white transition-colors"><Trash2 className="w-3.5 h-3.5" /></button>
       {ordered && (
         <button onClick={() => move(game, 1)} className="p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white transition-colors"><ChevronRight className="w-3.5 h-3.5" /></button>
       )}
@@ -440,15 +462,16 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
             subtitle={`0/${limit}`}
             onMoveUp={() => moveSection(category, -1)}
             onMoveDown={() => moveSection(category, 1)}
+            onRemove={isSelf ? () => removeSection(category) : undefined}
           />
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid grid-cols-5 gap-1.5">
             <AddPosterButton onClick={() => setAddCategory(category)} />
           </div>
         </div>
       );
     }
-    const visible = showAll ? games : games.slice(0, 8);
-    const showAddPoster = isSelf && !isFull && (visible.length < 8 || showAll);
+    const visible = showAll ? games : games.slice(0, 10);
+    const showAddPoster = isSelf && !isFull && (visible.length < 10 || showAll);
     return (
       <div className="rounded-xl bg-gradient-to-b from-white/[0.03] to-white/[0.01] border border-white/[0.05] p-3 transition-colors duration-200 hover:border-white/[0.08]">
         <SectionHeader
@@ -457,32 +480,23 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
           subtitle={`${games.length}/${limit}`}
           onMoveUp={isSelf ? () => moveSection(category, -1) : undefined}
           onMoveDown={isSelf ? () => moveSection(category, 1) : undefined}
+          onRemove={isSelf ? () => removeSection(category) : undefined}
         />
-        <div className="grid grid-cols-4 gap-2">
+        <div className="grid grid-cols-5 gap-1.5">
           {visible.map((game) => (
             <div key={game.id} className="group relative" title={game.name}>
               <GameCover game={game} />
-              {game.tags.length > 0 && (
-                <div className="flex flex-wrap gap-0.5 mt-1">
-                  {game.tags.slice(0, 2).map((txt) => (
-                    <span key={txt} className="text-[8px] px-1 py-0.5 rounded bg-[#8B5CF6]/20 text-[#c4b5fd] truncate max-w-full">{txt}</span>
-                  ))}
-                  {game.tags.length > 2 && (
-                    <span className="text-[8px] px-1 py-0.5 rounded bg-white/[0.06] text-white/40">+{game.tags.length - 2}</span>
-                  )}
-                </div>
-              )}
               {editControls(game, true)}
             </div>
           ))}
           {showAddPoster && <AddPosterButton onClick={() => setAddCategory(category)} />}
         </div>
-        {games.length > 8 && (
+        {games.length > 10 && (
           <button onClick={() => setShowAll(!showAll)} className="mt-2 text-xs text-[#8B5CF6] hover:underline">
             {showAll ? gt("Show less") : gt("Show more")}
           </button>
         )}
-        {isSelf && !showAddPoster && games.length >= 8 && !showAll && !isFull && (
+        {isSelf && !showAddPoster && games.length >= 10 && !showAll && !isFull && (
           <button onClick={() => setAddCategory(category)} className="mt-2 w-full py-2 rounded-lg border border-dashed border-white/10 hover:border-[#8B5CF6]/50 text-xs text-white/40 hover:text-[#8B5CF6] transition-colors flex items-center justify-center gap-1.5">
             <Plus className="w-3.5 h-3.5" /> {gt("Add more")}
           </button>
@@ -504,23 +518,25 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
             subtitle={favorite ? `1/${CATEGORY_LIMITS.favorite}` : `0/${CATEGORY_LIMITS.favorite}`}
             onMoveUp={isSelf ? () => moveSection("favorite", -1) : undefined}
             onMoveDown={isSelf ? () => moveSection("favorite", 1) : undefined}
+            onRemove={isSelf ? () => removeSection("favorite") : undefined}
           />
           {favorite ? (
-            <div className="group relative flex gap-3 p-3 rounded-lg bg-white/[0.03] border border-white/[0.05] transition-colors duration-200 hover:border-white/[0.08]">
-              <GameCover game={favorite} size="lg" />
-              <div className="flex-1 min-w-0">
-                <p className="text-sm font-semibold text-white truncate">{favorite.name}</p>
-                {favorite.note && <p className="text-xs text-white/50 mt-0.5 line-clamp-2">{favorite.note}</p>}
+            <div className="group relative rounded-lg overflow-hidden border border-white/[0.05] transition-colors duration-200 hover:border-white/[0.08]">
+              <GameCover game={favorite} size="poster" />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
+              <div className="absolute bottom-0 left-0 right-0 p-3">
+                <p className="text-sm font-bold text-white truncate drop-shadow-md">{favorite.name}</p>
+                {favorite.note && <p className="text-xs text-white/70 mt-0.5 line-clamp-1">{favorite.note}</p>}
                 {favorite.tags.length > 0 && (
                   <div className="flex flex-wrap gap-1 mt-1.5">
                     {favorite.tags.map((txt) => (
-                      <span key={txt} className="text-[10px] px-1.5 py-0.5 rounded bg-[#8B5CF6]/20 text-[#c4b5fd]">{txt}</span>
+                      <span key={txt} className="text-[9px] px-1.5 py-0.5 rounded bg-[#8B5CF6]/30 text-[#c4b5fd] backdrop-blur-sm">{txt}</span>
                     ))}
                   </div>
                 )}
               </div>
               {isSelf && (
-                <button onClick={() => remove(favorite)} className="opacity-0 group-hover:opacity-100 self-start p-1 rounded hover:bg-white/10 text-white/50 hover:text-white transition"><X className="w-4 h-4" /></button>
+                <button onClick={() => remove(favorite)} className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 p-1.5 rounded-lg bg-black/70 hover:bg-red-500 text-white transition-all duration-200 backdrop-blur-sm"><Trash2 className="w-3.5 h-3.5" /></button>
               )}
             </div>
           ) : (
@@ -548,8 +564,9 @@ export function ProfileGameWidgets({ userId, isSelf, addCategory, setAddCategory
             subtitle={`${games.length}/${limit}`}
             onMoveUp={isSelf ? () => moveSection("rotation", -1) : undefined}
             onMoveDown={isSelf ? () => moveSection("rotation", 1) : undefined}
+            onRemove={isSelf ? () => removeSection("rotation") : undefined}
           />
-          <div className="grid grid-cols-5 gap-2">
+          <div className="grid grid-cols-5 gap-1.5">
             {games.map((game) => (
               <div key={game.id} className="group relative" title={game.name}>
                 <GameCover game={game} />

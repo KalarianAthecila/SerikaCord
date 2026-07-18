@@ -1,6 +1,86 @@
 # SerikaCord — Full Changelog
 
-**295 commits** · Jan 22 – Jul 17, 2026 · v0.0.1 → v1.2.0.
+**295 commits** · Jan 22 – Jul 18, 2026 · v0.0.1 → v1.2.4.
+
+---
+
+## v1.2.4 — 2026-07-18
+
+**Tag:** `v1.2.4` · **Build:** GitHub Actions (Tauri desktop + Android APK)
+
+### Release Notes
+
+Profile game widget enhancements, full OpenGraph/SEO for server pages, expanded OAuth2 scopes with validation, and developer docs improvements.
+
+### Features
+- **Game widget enhancements** — Favorite game now displays as a single rectangle poster with overlay text/tags. Grid posters use 5-column layout for smaller covers. Same game can be added to different categories (per-category dedup). Trash icon added to section headers and individual game edit controls for removal. Tags hidden for "Games I Like" and "Want to Play" categories. Tag picker icon added to AddGameDialog for favorite/rotation categories. `removeSection` function to clear entire widget sections.
+- **Widget default visibility** — `surfaceHasContent` now only counts `data`-type fields as real content, preventing widgets with static `custom_string` fallbacks from showing by default. Widgets stay hidden until user data is added.
+- **OpenGraph/SEO for server pages** — New `generateMetadata` layout at `/channels/[serverId]/` that fetches server name, description, icon, banner, and member count from the database for rich OpenGraph tags. Invite pages (`/[inviteCode]` and `/invite/[inviteCode]`) upgraded to dynamic `generateMetadata` with server info. Explore page gets dedicated SEO layout. `robots.ts` updated to allow indexing of `/channels/explore` and server pages. `sitemap.ts` now dynamically includes discoverable servers. `buildMetadata` enhanced with `max-image-preview`, `max-snippet`, theme-color, and msapplication metadata.
+- **Expanded OAuth2 scopes** — Added 13 new scopes: `rpc.notifications.read`, `rpc.voice.read`, `rpc.video.write`, `rpc.screenshare.write`, `applications.commands.permissions.update`, `applications.entitlements`, `applications.store.update`, `dm_channels.read`, `dm_channels.write`, `relationships.read`, `profile.read`, `profile.write`, `analytics.read`. Backend scope validation with `VALID_OAUTH_SCOPES` set and `SCOPE_DEPENDENCIES` map for hierarchical scope requirements.
+- **OAuth2 docs expansion** — Added Client Credentials Flow, Token Revocation, Error Codes, Rate Limits, and Scope Hierarchy sections. All new strings use `gt()` translation tags per AI-READ-THIS rules.
+
+### Bug Fixes
+- Fixed `removeSection` undefined error in `ProfileGameWidgets.tsx` by implementing the function.
+- Fixed widget visibility — widgets with only static config fields no longer appear on profiles by default.
+
+---
+
+## v1.2.3 — 2026-07-17
+
+**Tag:** `v1.2.3` · **Build:** GitHub Actions (Tauri desktop + Android APK)
+
+### Release Notes
+
+Server management enhancements: webhook creation, onboarding flow, app discovery, and discovery page state badges.
+
+### Features
+- **Channel webhook creation UI** — User-authenticated webhook CRUD endpoints (`/api/channels/:channelId/webhooks`) with permission checks (MANAGE_WEBHOOKS / server owner / creator). Channel settings dialog now has a proper webhook creation form with name input, loading state, and delete confirmation.
+- **Server onboarding flow** — After creating a server, users are guided through a 2-step onboarding: set a server description and choose a join mode (Invite Only / Apply to Join / Discoverable). Settings are saved via the server settings API.
+- **App Discovery tab** — New "App Discovery" tab in server settings for browsing public bots (`botPublic: true`). Includes search, app cards with icon/description/tags, and an "Add to server" button. New `/api/developers/discoverable-apps` endpoint.
+- **Discovery page state badges** — Server cards on the discovery page now show badges for "Invite Only" (lock icon) and "Apply" (mail icon) join modes.
+
+### Bug Fixes
+- **Widget editor dropdown styling** — Fixed white-on-white text in `<select>` dropdowns by adding `[color-scheme:dark]`.
+- **Widget auto-sample data** — Data fields configured in widget surfaces now auto-appear in the sample data section.
+- **App owner widget visibility** — App owners can now see their own draft (unpublished) widgets on their profile and in available-widgets without OAuth validation.
+
+### Changes
+- **AI-READ-THIS.md** — Added versioning rules: every push must bump the patch version.
+- **Version bumps** — All platforms to 1.2.3.
+
+---
+
+## v1.2.2 — 2026-07-17
+
+**Tag:** `v1.2.2` · **Build:** GitHub Actions (Tauri desktop + Android APK)
+
+### Release Notes
+
+Widget editor UX polish and app owner widget display fixes.
+
+### Bug Fixes
+- **Widget editor UX** — Improved empty state messages, added "Edit first field" quick-action button, and better sample data empty state guidance.
+- **Widget API 404 errors** — Fixed route mounting issues causing widget save/publish to return 404.
+
+### Changes
+- **Version bumps** — All platforms to 1.2.2.
+
+---
+
+## v1.2.1 — 2026-07-17
+
+**Tag:** `v1.2.1` · **Build:** GitHub Actions (Tauri desktop + Android APK)
+
+### Release Notes
+
+Widget system fixes and profile widget display improvements.
+
+### Bug Fixes
+- **Profile widget rendering** — Fixed profile widgets not displaying correctly for app owners without OAuth.
+- **Available widgets list** — Modified `/api/@me/available-widgets` to include app owner's draft widgets using OR condition.
+
+### Changes
+- **Version bumps** — All platforms to 1.2.1.
 
 ---
 
