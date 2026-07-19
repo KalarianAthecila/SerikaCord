@@ -370,6 +370,47 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       } catch {
         return;
       }
+
+      // Cross-device read receipt: another of this user's sessions read a
+      // channel. Advance our read marker + clear its badge locally — no re-POST
+      // (that device already persisted it), so devices converge without loops.
+      if (data.type === "read_state") {
+        const { channelId, lastReadAt } = data as { channelId?: string; lastReadAt?: string };
+        if (!channelId || !lastReadAt) return;
+        setLastRead((prev) => {
+          const localTs = prev[channelId] ? new Date(prev[channelId]).getTime() : 0;
+          if (new Date(lastReadAt).getTime() <= localTs) return prev;
+          const next = { ...prev, [channelId]: lastReadAt };
+          persistRead(next);
+          if (typeof localStorage !== "undefined") {
+            try { localStorage.setItem(`${LEGACY_READ_PREFIX}${channelId}`, String(new Date(lastReadAt).getTime())); } catch { /* ignore */ }
+          }
+          return next;
+        });
+        setMentionCounts((prev) => {
+          if (!prev[channelId]) return prev;
+          const next = { ...prev }; delete next[channelId]; return next;
+        });
+        return;
+      }
+
+      // Unread reset after a deletion: roll our activity marker back to the
+      // newest remaining message (or drop it if the channel is now empty), so a
+      // badge left by a since-deleted message clears.
+      if (data.type === "unread_reset") {
+        const { channelId, lastMessageAt } = data as { channelId?: string; lastMessageAt?: string | null };
+        if (!channelId) return;
+        setLastActivity((prev) => {
+          if (!(channelId in prev) && !lastMessageAt) return prev;
+          const next = { ...prev };
+          if (lastMessageAt) next[channelId] = lastMessageAt;
+          else delete next[channelId];
+          persistActivity(next);
+          return next;
+        });
+        return;
+      }
+
       if (data.type !== "channel_activity") return;
       const event = data as ActivityEvent;
       if (event.authorId === user.id) return; // own messages aren't unread
@@ -426,7 +467,7 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
     };
 
     return () => es.close();
-  }, [user, persistActivity]);
+  }, [user, persistActivity, persistRead]);
 
   const isChannelUnread = useCallback(
     (channelId: string) => {

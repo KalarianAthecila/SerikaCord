@@ -1094,6 +1094,18 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       messageId: params.messageId,
     });
 
+    // Clear stale unread on the recipient's other devices if the deleted message
+    // was the one that left this DM unread. Recompute newest remaining message
+    // time and broadcast a reset to both participants. Fire-and-forget.
+    void (async () => {
+      const [latest] = await Message.find({ channelId: channel.id, isDeleted: false, _limit: 1 });
+      const lastMessageAt = latest?.createdAt
+        ? (latest.createdAt instanceof Date ? latest.createdAt.toISOString() : String(latest.createdAt))
+        : null;
+      const { notifyUnreadReset } = await import('@/lib/api/activity');
+      notifyUnreadReset({ userIds: channel.recipientIds || [user.id, params.recipientId] }, channel.id, lastMessageAt);
+    })().catch(() => { /* best-effort */ });
+
     return { success: true };
   }, {
     params: t.Object({

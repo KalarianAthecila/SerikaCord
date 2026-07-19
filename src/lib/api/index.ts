@@ -897,11 +897,19 @@ const userRoutes = new Elysia({ prefix: '/users' })
       }
 
       const row = await ChannelReadState.ack(user.id, channelId, readMessageId, readAt);
+      const lastReadAtIso =
+        (row?.lastReadAt instanceof Date ? row.lastReadAt.toISOString() : row?.lastReadAt) ?? readAt.toISOString();
+
+      // Live cross-device sync: tell this user's OTHER open sessions the channel
+      // was read so their badges clear immediately (not just on next reload).
+      const { notifyReadState } = await import('@/lib/api/activity');
+      notifyReadState(user.id, channelId, lastReadAtIso);
+
       return {
         ok: true,
         channelId,
         lastReadMessageId: row?.lastReadMessageId ?? readMessageId,
-        lastReadAt: (row?.lastReadAt instanceof Date ? row.lastReadAt.toISOString() : row?.lastReadAt) ?? readAt.toISOString(),
+        lastReadAt: lastReadAtIso,
       };
     } catch (error) {
       console.error('Failed to ack read state:', error);
