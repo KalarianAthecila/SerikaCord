@@ -897,11 +897,19 @@ const userRoutes = new Elysia({ prefix: '/users' })
       }
 
       const row = await ChannelReadState.ack(user.id, channelId, readMessageId, readAt);
+      const lastReadAtIso =
+        (row?.lastReadAt instanceof Date ? row.lastReadAt.toISOString() : row?.lastReadAt) ?? readAt.toISOString();
+
+      // Live cross-device sync: tell this user's OTHER open sessions the channel
+      // was read so their badges clear immediately (not just on next reload).
+      const { notifyReadState } = await import('@/lib/api/activity');
+      notifyReadState(user.id, channelId, lastReadAtIso);
+
       return {
         ok: true,
         channelId,
         lastReadMessageId: row?.lastReadMessageId ?? readMessageId,
-        lastReadAt: (row?.lastReadAt instanceof Date ? row.lastReadAt.toISOString() : row?.lastReadAt) ?? readAt.toISOString(),
+        lastReadAt: lastReadAtIso,
       };
     } catch (error) {
       console.error('Failed to ack read state:', error);
@@ -1154,7 +1162,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
   }, {
     body: t.Object({
       displayName: t.Optional(t.String({ maxLength: 32 })),
-      bio: t.Optional(t.String({ maxLength: 500 })),
+      bio: t.Optional(t.String({ maxLength: 1000 })),
       pronouns: t.Optional(t.String({ maxLength: 32 })),
       timezone: t.Optional(t.Union([t.String(), t.Null()])),
       showTimezone: t.Optional(t.Boolean()),
@@ -3586,23 +3594,35 @@ export const api = new Elysia({ prefix: '/api' })
   .use(discordRoutes)
   .use(botApiRoutes);
 
+// Idempotency guard: once initializeAPI() has been called, subsequent calls
+// return the same promise instead of re-running DB connections and seeding.
+// This prevents duplicate connection pools / repeated "✅ API initialized" when
+// the custom server (server.ts) and the Next.js catch-all route both call it.
+let initPromise: Promise<void> | null = null;
+
 // Initialize database connection
 export async function initializeAPI() {
-  await connectDB();
-  await ensureSerikaBroadcastUser();
-  // Ensure system users exist
-  const { ensureSystemUsers } = await import('@/lib/services/systemUsers');
-  await ensureSystemUsers();
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    await connectDB();
+    await ensureSerikaBroadcastUser();
+    // Ensure system users exist
+    const { ensureSystemUsers } = await import('@/lib/services/systemUsers');
+    await ensureSystemUsers();
 
-  // Auto-provision bot users for existing applications
-  try {
-    const { ensureAllBotsProvisioned } = await import('@/lib/services/appIdentity');
-    await ensureAllBotsProvisioned();
-  } catch (err) {
-    console.error('Failed to auto-provision bots on startup:', err);
-  }
+    // Auto-provision bot users for existing applications
+    try {
+      const { ensureAllBotsProvisioned } = await import('@/lib/services/appIdentity');
+      await ensureAllBotsProvisioned();
+    } catch (err) {
+      console.error('Failed to auto-provision bots on startup:', err);
+    }
 
-  console.log('✅ API initialized');
+    console.log('✅ API initialized');
+  })();
+  // If init fails, clear the promise so a retry is possible.
+  initPromise.catch(() => { initPromise = null; });
+  return initPromise;
 }
 
 export type API = typeof api;

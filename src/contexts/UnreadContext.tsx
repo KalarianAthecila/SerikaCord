@@ -49,6 +49,8 @@ interface UnreadContextValue {
   isServerUnread: (serverId: string) => boolean;
   getServerMentionCount: (serverId: string) => number;
   markChannelRead: (channelId: string) => void;
+  /** Mark every channel in a server as read (clears unread pill + mention badges). */
+  markServerRead: (serverId: string) => void;
   /** Feed the sidebar's channel list so we know channel→server + last activity. */
   registerChannels: (channels: ChannelMeta[]) => void;
   /** Called when the user opens a channel — marks it read + preps preload. */
@@ -120,6 +122,14 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     lastActivityRef.current = lastActivity;
   }, [lastActivity]);
+  // Live mirror of lastRead so seedDmCounts can skip channels the user just
+  // marked read locally (the fire-and-forget POST may not have hit the DB yet
+  // when the next poll refetches DM counts — without this the stale server
+  // count re-introduces the badge the user just dismissed).
+  const lastReadRef = useRef(lastRead);
+  useEffect(() => {
+    lastReadRef.current = lastRead;
+  }, [lastRead]);
 
   const persistActivity = useCallback((next: Record<string, string>) => {
     saveMap(LS_ACTIVITY, next);
@@ -173,6 +183,16 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
     [persistRead]
   );
 
+  const markServerRead = useCallback(
+    (serverId: string) => {
+      if (!serverId) return;
+      for (const [channelId, meta] of Object.entries(channelMeta)) {
+        if (meta.serverId === serverId) markChannelRead(channelId);
+      }
+    },
+    [channelMeta, markChannelRead]
+  );
+
   const setActiveChannel = useCallback(
     (channelId: string | null) => {
       activeChannelRef.current = channelId;
@@ -190,6 +210,15 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       let changed = false;
       for (const [channelId, count] of Object.entries(counts)) {
         if (channelId === activeChannelRef.current) {
+          if (next[channelId]) { delete next[channelId]; changed = true; }
+          continue;
+        }
+        // Skip channels the user already marked read locally. The server's
+        // unreadCount may be stale because the fire-and-forget read-state POST
+        // hasn't landed yet — re-seeding would resurrect the badge.
+        const readTs = lastReadRef.current[channelId];
+        const actTs = lastActivityRef.current[channelId];
+        if (readTs && actTs && new Date(readTs).getTime() > new Date(actTs).getTime()) {
           if (next[channelId]) { delete next[channelId]; changed = true; }
           continue;
         }
@@ -370,6 +399,70 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       } catch {
         return;
       }
+
+      // Cross-device read receipt: another of this user's sessions read a
+      // channel. Advance our read marker + clear its badge locally — no re-POST
+      // (that device already persisted it), so devices converge without loops.
+      if (data.type === "read_state") {
+        const { channelId, lastReadAt } = data as { channelId?: string; lastReadAt?: string };
+        if (!channelId || !lastReadAt) return;
+        setLastRead((prev) => {
+          const localTs = prev[channelId] ? new Date(prev[channelId]).getTime() : 0;
+          if (new Date(lastReadAt).getTime() <= localTs) return prev;
+          const next = { ...prev, [channelId]: lastReadAt };
+          persistRead(next);
+          if (typeof localStorage !== "undefined") {
+            try { localStorage.setItem(`${LEGACY_READ_PREFIX}${channelId}`, String(new Date(lastReadAt).getTime())); } catch { /* ignore */ }
+          }
+          return next;
+        });
+        setMentionCounts((prev) => {
+          if (!prev[channelId]) return prev;
+          const next = { ...prev }; delete next[channelId]; return next;
+        });
+        return;
+      }
+
+      // Unread reset after a deletion: roll our activity marker back to the
+      // newest remaining message (or drop it if the channel is now empty), so a
+      // badge left by a since-deleted message clears.
+      if (data.type === "unread_reset") {
+        const { channelId, lastMessageAt } = data as { channelId?: string; lastMessageAt?: string | null };
+        if (!channelId) return;
+        setLastActivity((prev) => {
+          if (!(channelId in prev) && !lastMessageAt) return prev;
+          const next = { ...prev };
+          if (lastMessageAt) next[channelId] = lastMessageAt;
+          else delete next[channelId];
+          persistActivity(next);
+          return next;
+        });
+        return;
+      }
+
+      // DM activity: a DM message arrived while the user is not viewing the DM
+      // list. The DM SSE stream only fires while the DM list is open; this event
+      // comes through the always-connected activity stream so DM unread badges
+      // appear in realtime regardless of which view the user is in.
+      if (data.type === "dm_activity") {
+        const { channelId, authorId, createdAt } = data as { channelId?: string; authorId?: string; createdAt?: string };
+        if (!channelId || !authorId || authorId === user.id) return;
+        const ts = createdAt || new Date().toISOString();
+        setLastActivity((prev) => {
+          if (prev[channelId] === ts) return prev;
+          const next = { ...prev, [channelId]: ts };
+          persistActivity(next);
+          return next;
+        });
+        if (activeChannelRef.current === channelId) return;
+        setMentionCounts((prev) => {
+          const current = prev[channelId] || 0;
+          if (current >= MAX_UNREAD_BADGE) return prev;
+          return { ...prev, [channelId]: current + 1 };
+        });
+        return;
+      }
+
       if (data.type !== "channel_activity") return;
       const event = data as ActivityEvent;
       if (event.authorId === user.id) return; // own messages aren't unread
@@ -426,7 +519,7 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
     };
 
     return () => es.close();
-  }, [user, persistActivity]);
+  }, [user, persistActivity, persistRead]);
 
   const isChannelUnread = useCallback(
     (channelId: string) => {
@@ -479,6 +572,7 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       isServerUnread,
       getServerMentionCount,
       markChannelRead,
+      markServerRead,
       registerChannels,
       setActiveChannel,
       seedDmCounts,
@@ -490,6 +584,7 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       isServerUnread,
       getServerMentionCount,
       markChannelRead,
+      markServerRead,
       registerChannels,
       setActiveChannel,
       seedDmCounts,
@@ -509,6 +604,7 @@ const NOOP_UNREAD: UnreadContextValue = {
   isServerUnread: () => false,
   getServerMentionCount: () => 0,
   markChannelRead: () => {},
+  markServerRead: () => {},
   registerChannels: () => {},
   setActiveChannel: () => {},
   seedDmCounts: () => {},

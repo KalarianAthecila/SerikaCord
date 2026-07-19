@@ -36,6 +36,7 @@ import {
   Edit2,
   Trash2,
   Copy,
+  Check,
   Link as LinkIcon,
   BellOff,
   AlertTriangle,
@@ -111,7 +112,7 @@ export function ChannelSidebar({
   const canManageServer = can("MANAGE_SERVER");
   const canInvite = can("CREATE_INVITE");
   const canManageAny = canManageChannels || canManageServer || isAdmin;
-  const { isChannelUnread, getMentionCount, registerChannels, setActiveChannel, seedDmCounts, notifyDmActivity } = useUnread();
+  const { isChannelUnread, getMentionCount, registerChannels, setActiveChannel, seedDmCounts, notifyDmActivity, markChannelRead } = useUnread();
   const [activeVoiceChannelName, setActiveVoiceChannelName] = useState<string | undefined>(undefined);
   const [voiceParticipants, setVoiceParticipants] = useState<import("@/lib/services/voiceService").VoiceParticipant[]>([]);
 
@@ -182,15 +183,20 @@ export function ChannelSidebar({
 
   const closeContextMenu = () => setContextMenu(null);
 
+  // DM row context menu (separate from server channels — different item set).
+  const [dmContextMenu, setDmContextMenu] = useState<{ x: number; y: number; channel: DMChannel } | null>(null);
+  const closeDmContextMenu = () => setDmContextMenu(null);
+
   // Close context menu when clicking outside or pressing Escape
   useEffect(() => {
-    if (!contextMenu) return;
-    const handleClick = () => closeContextMenu();
+    if (!contextMenu && !dmContextMenu) return;
+    const handleClick = () => { closeContextMenu(); closeDmContextMenu(); };
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") {
         e.preventDefault();
         e.stopPropagation();
         closeContextMenu();
+        closeDmContextMenu();
       }
     };
     window.addEventListener('click', handleClick);
@@ -199,7 +205,7 @@ export function ChannelSidebar({
       window.removeEventListener('click', handleClick);
       window.removeEventListener("keydown", handleKeyDown, { capture: true } as EventListenerOptions);
     };
-  }, [contextMenu]);
+  }, [contextMenu, dmContextMenu]);
 
   const handleEditChannel = () => {
     if (contextMenu?.channel) {
@@ -1073,6 +1079,7 @@ export function ChannelSidebar({
                       key={channel.id}
                       href={`/dm/${recipient.id}`}
                       onMouseEnter={() => { void prefetchChannelMessages(`/api/dms/${recipient.id}`); }}
+                      onContextMenu={(e) => { e.preventDefault(); setDmContextMenu({ x: e.clientX, y: e.clientY, channel }); }}
                       className={cn(
                         "group relative flex items-center gap-2 px-2 py-[5px] rounded-md transition-colors min-w-0",
                         isActive
@@ -1140,6 +1147,32 @@ export function ChannelSidebar({
 
         {/* User Panel */}
         <UserPanel user={user} />
+
+        {/* DM row context menu */}
+        {dmContextMenu && (
+          <div
+            className="fixed z-50 min-w-[180px] bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1.5 animate-in fade-in-0 zoom-in-95"
+            style={{ left: dmContextMenu.x, top: dmContextMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              disabled={!isChannelUnread(dmContextMenu.channel.id) && getMentionCount(dmContextMenu.channel.id) === 0}
+              onClick={() => { markChannelRead(dmContextMenu.channel.id); closeDmContextMenu(); }}
+              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <Check className="w-4 h-4" />
+              {gt("Mark As Read")}
+            </button>
+            <div className="h-px bg-[var(--border-subtle)] my-1" />
+            <button
+              onClick={() => { navigator.clipboard.writeText(dmContextMenu.channel.recipients[0]?.id || ""); closeDmContextMenu(); }}
+              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+            >
+              <Copy className="w-4 h-4" />
+              {gt("Copy User ID")}
+            </button>
+          </div>
+        )}
       </div>
     );
   }

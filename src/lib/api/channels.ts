@@ -2489,6 +2489,18 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       messageId: params.messageId,
     });
 
+    // Clear stale unread: if this deletion removed the message that left the
+    // channel unread for other members, recompute the newest remaining message
+    // time and broadcast a reset so their badges roll back. Fire-and-forget.
+    void (async () => {
+      const [latest] = await Message.find({ channelId: params.channelId, isDeleted: false, _limit: 1 });
+      const lastMessageAt = latest?.createdAt
+        ? (latest.createdAt instanceof Date ? latest.createdAt.toISOString() : String(latest.createdAt))
+        : null;
+      const { notifyUnreadReset } = await import('@/lib/api/activity');
+      notifyUnreadReset({ serverId: channel.serverId || undefined }, params.channelId, lastMessageAt);
+    })().catch(() => { /* best-effort */ });
+
     void replicateToDiscord('delete', params.channelId, { id: params.messageId });
 
     return { success: true };

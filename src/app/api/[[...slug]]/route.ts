@@ -1,6 +1,7 @@
 import { api, initializeAPI } from '@/lib/api';
 
-// Initialize on first request
+// Initialize on first request. initializeAPI() is now idempotent (returns the
+// same cached promise), so concurrent requests won't trigger duplicate init.
 let initialized = false;
 let initError: Error | null = null;
 
