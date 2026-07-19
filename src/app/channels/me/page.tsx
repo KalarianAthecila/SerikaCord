@@ -221,52 +221,90 @@ export default function DirectMessagesPage() {
     }
   };
 
-  // Accept friend request
+  // Accept friend request — optimistically move the user from pending→friends
+  // so the UI updates instantly, then refetch to confirm.
   const handleAcceptRequest = async (userId: string) => {
     setActionLoading(userId);
+    // Optimistic: remove from incoming, add to friends list immediately.
+    const acceptedFriend = friendsData.pending.incoming.find((f) => f.id === userId);
+    if (acceptedFriend) {
+      setFriendsData((prev) => ({
+        ...prev,
+        friends: [...prev.friends, acceptedFriend],
+        pending: {
+          ...prev.pending,
+          incoming: prev.pending.incoming.filter((f) => f.id !== userId),
+        },
+      }));
+    }
     try {
       const response = await fetch(`/api/friends/accept/${userId}`, {
         method: "POST",
       });
       if (response.ok) {
         fetchFriends();
+        fetchActiveFriends();
+      } else {
+        // Revert on failure
+        fetchFriends();
       }
     } catch (error) {
       console.error("Failed to accept request:", error);
+      fetchFriends();
     } finally {
       setActionLoading(null);
     }
   };
 
-  // Decline friend request
+  // Decline friend request — optimistically remove from pending
   const handleDeclineRequest = async (userId: string) => {
     setActionLoading(userId);
+    setFriendsData((prev) => ({
+      ...prev,
+      pending: {
+        ...prev.pending,
+        incoming: prev.pending.incoming.filter((f) => f.id !== userId),
+      },
+    }));
     try {
       const response = await fetch(`/api/friends/decline/${userId}`, {
         method: "DELETE",
       });
       if (response.ok) {
         fetchFriends();
+      } else {
+        fetchFriends();
       }
     } catch (error) {
       console.error("Failed to decline request:", error);
+      fetchFriends();
     } finally {
       setActionLoading(null);
     }
   };
 
-  // Cancel outgoing request
+  // Cancel outgoing request — optimistically remove from pending
   const handleCancelRequest = async (userId: string) => {
     setActionLoading(userId);
+    setFriendsData((prev) => ({
+      ...prev,
+      pending: {
+        ...prev.pending,
+        outgoing: prev.pending.outgoing.filter((f) => f.id !== userId),
+      },
+    }));
     try {
       const response = await fetch(`/api/friends/cancel/${userId}`, {
         method: "DELETE",
       });
       if (response.ok) {
         fetchFriends();
+      } else {
+        fetchFriends();
       }
     } catch (error) {
       console.error("Failed to cancel request:", error);
+      fetchFriends();
     } finally {
       setActionLoading(null);
     }
