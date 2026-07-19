@@ -603,10 +603,13 @@ export const oembedRoutes = new Elysia({ prefix: '/oembed' })
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), fetchTimeout);
       
+      const isKlipy = /klipy\.(com|dev)/.test(url);
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'User-Agent': 'SerikaCord/1.0 (Link Preview Bot)',
+          'User-Agent': isKlipy
+            ? 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36'
+            : 'SerikaCord/1.0 (Link Preview Bot)',
           'Accept': 'text/html',
         },
         redirect: 'follow',
