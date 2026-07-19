@@ -95,7 +95,14 @@ export interface ParsedMarkdown {
 
 export function parseMarkdown(text: string): ParsedMarkdown[] {
   const blocks: ParsedMarkdown[] = [];
-  const lines = text.split("\n");
+  // Normalize CRLF / lone-CR line endings to LF first. A trailing "\r" on a
+  // line makes the heading branch regex (anchored with `$`, and `.` never
+  // matches `\r`) fail to match while the paragraph-loop guard (no `$`) still
+  // treats it as a heading — so neither consumes the line, `i` never advances,
+  // and the outer loop spins forever appending empty paragraphs. That runaway
+  // allocation hard-crashes the tab on any CRLF message containing a `#`/`-#`
+  // line (e.g. text pasted from Windows / some bots).
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
   let i = 0;
 
   while (i < lines.length) {

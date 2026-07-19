@@ -226,13 +226,28 @@ function SingleEmbed({ embed, onMediaClick }: { embed: MessageEmbed; onMediaClic
   );
 }
 
+const GIF_PROVIDER_RE = /(?:^|\b)(tenor\.com|giphy\.com|klipy\.com|klipy\.dev)(?:$|\b)/i;
+
+/** True if the embed is a GIF-provider auto-unfurl that LinkEmbed will render
+ *  as an inline GIF — skip it to avoid showing both a video embed and the GIF. */
+function isGifProviderEmbed(embed: MessageEmbed): boolean {
+  const url = embed.url || embed.video?.url || embed.image?.url || '';
+  if (GIF_PROVIDER_RE.test(url)) return true;
+  const provider = embed.provider?.name || '';
+  return /tenor|giphy|klipy/i.test(provider);
+}
+
 /** Renders bot-authored rich embeds (Discord embed format) below a message. */
 export const RichEmbed = memo(function RichEmbed({ embeds, onMediaClick }: RichEmbedProps) {
   if (!embeds || embeds.length === 0) return null;
+  // Filter out GIF-provider embeds — LinkEmbed renders those URLs as inline
+  // GIFs, so showing the raw video embed too would duplicate the media.
+  const filtered = embeds.filter((e) => !isGifProviderEmbed(e));
+  if (filtered.length === 0) return null;
   // Cap the number of rendered embeds to match Discord (max 10).
   return (
     <div className="flex flex-col">
-      {embeds.slice(0, 10).map((embed, i) => (
+      {filtered.slice(0, 10).map((embed, i) => (
         <SingleEmbed key={i} embed={embed} onMediaClick={onMediaClick} />
       ))}
     </div>
