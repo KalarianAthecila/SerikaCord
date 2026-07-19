@@ -79,6 +79,12 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
 const activeConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 const activeDmListConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
+// Shared codecs — instantiating TextEncoder/TextDecoder per event (and per
+// recipient) showed up as avoidable allocation churn on the message fan-out
+// hot path.
+const sseEncoder = new TextEncoder();
+const sseDecoder = new TextDecoder();
+
 // Cross-instance realtime: see channels.ts for the rationale. DMs use two Redis
 // buses — one keyed by DM channel (message events) and one keyed by user id (DM
 // list updates). `originId` prevents the publishing instance double-delivering.
@@ -87,7 +93,7 @@ const SSE_DM_BUS = 'sse:dm';
 const SSE_DMLIST_BUS = 'sse:dmlist';
 
 function deliverToLocalDmList(userIds: string[], payload: Record<string, unknown>) {
-  const data = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+  const data = sseEncoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
   userIds.forEach((userId) => {
     const streams = activeDmListConnections.get(userId);
     if (!streams) return;
@@ -117,14 +123,16 @@ export function emitDmListUpdate(userIds: string[], payload: Record<string, unkn
 function deliverToLocalDm(channelId: string, data: object) {
   const connections = activeConnections.get(channelId);
   if (connections) {
-    const encodedData = `data: ${JSON.stringify(data)}\n\n`;
+    // Encode once, deliver the same bytes to every connection.
+    const encoded = sseEncoder.encode(`data: ${JSON.stringify(data)}\n\n`);
     connections.forEach((controller) => {
       try {
-        controller.enqueue(new TextEncoder().encode(encodedData));
+        controller.enqueue(encoded);
       } catch {
         connections.delete(controller);
       }
     });
+    if (connections.size === 0) activeConnections.delete(channelId);
   }
 }
 
@@ -135,7 +143,7 @@ export function registerRawDmSSEConnection(
   write: (data: string) => void,
 ): () => void {
   const controller = {
-    enqueue: (data: Uint8Array) => { try { write(new TextDecoder().decode(data)); } catch { /* closed */ } },
+    enqueue: (data: Uint8Array) => { try { write(sseDecoder.decode(data)); } catch { /* closed */ } },
   } as unknown as ReadableStreamDefaultController;
 
   if (!activeConnections.has(channelId)) {
@@ -143,7 +151,14 @@ export function registerRawDmSSEConnection(
   }
   activeConnections.get(channelId)!.add(controller);
 
-  return () => { activeConnections.get(channelId)?.delete(controller); };
+  return () => {
+    const set = activeConnections.get(channelId);
+    if (!set) return;
+    set.delete(controller);
+    // Drop the DM channel's entry once its last stream closes — otherwise the
+    // map keeps one empty Set per DM ever streamed, forever.
+    if (set.size === 0) activeConnections.delete(channelId);
+  };
 }
 
 // Publish a DM event: local + cross-instance fan-out over Redis.
@@ -246,6 +261,22 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     const lastContentMap = new Map<string, string>();
     lastMsgsToDecrypt.forEach((m, i) => lastContentMap.set(m.id, decryptedLastContents[i]));
 
+    // Per-DM unread counts: pull the user's read markers, then count unread
+    // (non-own, non-deleted) messages for every channel in one grouped query.
+    // Powers the accent mention badges on DM rows (Discord shows a real count).
+    const { ChannelReadState } = await import('@/lib/models/ChannelReadState');
+    const readRows = await ChannelReadState.findByUser(user.id).catch(() => []);
+    const readMarkers = new Map<string, Date | null>(
+      readRows.map((r: { channelId: string; lastReadAt: Date | string | null }) => [
+        r.channelId,
+        r.lastReadAt ? new Date(r.lastReadAt) : null,
+      ]),
+    );
+    const unreadCounts = await Message.unreadCounts(
+      channels.map((c) => ({ channelId: c.id, after: readMarkers.get(c.id) ?? null })),
+      user.id,
+    ).catch(() => ({} as Record<string, number>));
+
     // Populate recipient info, deduplicating by recipient to avoid showing same user twice
     const seenRecipientIds = new Set<string>();
     const channelsWithRecipients = (
@@ -300,6 +331,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
             lastMessageId: channel.lastMessageId,
             lastMessage,
             updatedAt: channel.updatedAt,
+            unreadCount: unreadCounts[channel.id] || 0,
             _recipientKey: recipientIds.sort().join(','),
           };
         })
@@ -327,7 +359,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     if (!user) {
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
           controller.close();
         },
       });
@@ -345,20 +377,30 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           activeDmListConnections.set(userKey, new Set());
         }
         activeDmListConnections.get(userKey)!.add(controller);
-        controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
+        controller.enqueue(sseEncoder.encode('data: {"type":"connected"}\n\n'));
         pingInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
+            controller.enqueue(sseEncoder.encode('data: {"type":"ping"}\n\n'));
           } catch {
             if (pingInterval) clearInterval(pingInterval);
-            activeDmListConnections.get(userKey)?.delete(controller);
+            const set = activeDmListConnections.get(userKey);
+            if (set) {
+              set.delete(controller);
+              if (set.size === 0) activeDmListConnections.delete(userKey);
+            }
           }
         }, 30000);
       },
       cancel() {
         if (pingInterval) clearInterval(pingInterval);
         if (controllerRef) {
-          activeDmListConnections.get(userKey)?.delete(controllerRef);
+          const set = activeDmListConnections.get(userKey);
+          if (set) {
+            set.delete(controllerRef);
+            // Drop the user's entry entirely once their last DM-list stream
+            // closes — otherwise the map keeps one empty Set per user forever.
+            if (set.size === 0) activeDmListConnections.delete(userKey);
+          }
         }
       },
     });
@@ -690,9 +732,13 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       }
     }
 
-    // Parse and validate custom emojis
-    const emojiResult = await parseCustomEmojis(sanitizedContent, undefined, userServerIds);
-    
+    // Parse custom emojis and look up the reply target concurrently — they're
+    // independent, and each can cost a DB round-trip.
+    const [emojiResult, replyMsg] = await Promise.all([
+      parseCustomEmojis(sanitizedContent, undefined, userServerIds),
+      replyTo ? Message.findOne({ id: replyTo, channelId: channel.id, isDeleted: false }) : Promise.resolve(null),
+    ]);
+
     // Store parsed emoji data for the message response
     const customEmojis = emojiResult.emojis.map(e => ({
       id: e.id,
@@ -705,7 +751,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     let replyRef: string | undefined;
     let referencedMessage: { id: string; content: string; author?: { id: string; username: string; displayName: string; avatar?: string; isBot?: boolean; isVerified?: boolean }; createdAt?: string } | undefined;
     if (replyTo) {
-      const refMsg = await Message.findOne({ id: replyTo, channelId: channel.id, isDeleted: false });
+      const refMsg = replyMsg;
       if (refMsg) {
         replyRef = replyTo;
         const [refAuthor, refDecrypted] = await Promise.all([
@@ -739,8 +785,11 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       attachments: attachments || [],
     });
 
-    // Update channel's last message
-    await Channel.updateById(channel.id, { lastMessageId: message.id, updatedAt: new Date() });
+    // Update channel's last message — fire-and-forget so the sender's response
+    // (and thus their optimistic-confirm) isn't blocked on this bookkeeping
+    // write. Mirrors the server-channel send path.
+    void Channel.updateById(channel.id, { lastMessageId: message.id, updatedAt: new Date() })
+      .catch(() => { /* best-effort; next message retries the bump */ });
 
     const messageData = {
       id: message.id,
@@ -825,7 +874,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       // Return error as SSE event
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
           controller.close();
         },
       });
@@ -835,7 +884,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     if (!params.recipientId) {
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: 'Invalid recipient ID' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Invalid recipient ID' })}\n\n`));
           controller.close();
         },
       });
@@ -860,12 +909,12 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         activeConnections.get(channelKey)!.add(controller);
 
         // Send initial ping
-        controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
+        controller.enqueue(sseEncoder.encode('data: {"type":"connected"}\n\n'));
 
         // Keep-alive ping every 15 seconds
         pingInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
+            controller.enqueue(sseEncoder.encode('data: {"type":"ping"}\n\n'));
           } catch {
             if (pingInterval) {
               clearInterval(pingInterval);
@@ -879,7 +928,11 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           clearInterval(pingInterval);
         }
         if (controllerRef) {
-          activeConnections.get(channelKey)?.delete(controllerRef);
+          const set = activeConnections.get(channelKey);
+          if (set) {
+            set.delete(controllerRef);
+            if (set.size === 0) activeConnections.delete(channelKey);
+          }
         }
       },
     });

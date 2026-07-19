@@ -53,9 +53,28 @@ interface UnreadContextValue {
   registerChannels: (channels: ChannelMeta[]) => void;
   /** Called when the user opens a channel — marks it read + preps preload. */
   setActiveChannel: (channelId: string | null) => void;
+  /**
+   * Seed exact per-DM unread counts from the server (`/api/dms`). Unlike the
+   * live increment, this is authoritative — it replaces the count for each
+   * channel so a reload shows the real number, not a session-local tally.
+   */
+  seedDmCounts: (counts: Record<string, number>) => void;
+  /**
+   * Live-bump a DM's unread badge when a message arrives over the DM stream.
+   * DMs don't flow through the activity stream, so this is how their counts
+   * stay realtime. No-op while the DM is the active channel.
+   */
+  notifyDmActivity: (channelId: string, createdAt?: string) => void;
 }
 
 const UnreadContext = createContext<UnreadContextValue | undefined>(undefined);
+
+// Mirror of the server's MAX_UNREAD_BADGE (Message.ts). Kept as a local literal
+// so this client module doesn't pull the DB-backed model into the bundle. Past
+// this the UI shows "99+", so we never let a live count climb higher — a channel
+// spammed with 1000 messages stays a clean, cheap "99+" instead of re-rendering
+// on every increment up to 1000.
+const MAX_UNREAD_BADGE = 100;
 
 const LS_READ = "sc:unread:read";
 const LS_ACTIVITY = "sc:unread:activity";
@@ -162,6 +181,46 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
     [markChannelRead]
   );
 
+  // Authoritative per-DM unread counts from the server. Replace (not add) so a
+  // reload reflects the real number; never overwrite the count of the DM the
+  // user is currently reading (it should stay cleared).
+  const seedDmCounts = useCallback((counts: Record<string, number>) => {
+    setMentionCounts((prev) => {
+      const next = { ...prev };
+      let changed = false;
+      for (const [channelId, count] of Object.entries(counts)) {
+        if (channelId === activeChannelRef.current) {
+          if (next[channelId]) { delete next[channelId]; changed = true; }
+          continue;
+        }
+        const desired = count > 0 ? count : undefined;
+        if (next[channelId] !== desired) {
+          if (desired === undefined) delete next[channelId];
+          else next[channelId] = desired;
+          changed = true;
+        }
+      }
+      return changed ? next : prev;
+    });
+  }, []);
+
+  const notifyDmActivity = useCallback((channelId: string, createdAt?: string) => {
+    if (!channelId) return;
+    const ts = createdAt || new Date().toISOString();
+    setLastActivity((prev) => {
+      if (prev[channelId] === ts) return prev;
+      const next = { ...prev, [channelId]: ts };
+      persistActivity(next);
+      return next;
+    });
+    if (channelId === activeChannelRef.current) return; // reading it now
+    setMentionCounts((prev) => {
+      const current = prev[channelId] || 0;
+      if (current >= MAX_UNREAD_BADGE) return prev; // already at "99+", skip re-render
+      return { ...prev, [channelId]: current + 1 };
+    });
+  }, [persistActivity]);
+
   const registerChannels = useCallback((channels: ChannelMeta[]) => {
     setChannelMeta((prev) => {
       let metaChanged = false;
@@ -194,6 +253,38 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
     });
   }, [persistActivity]);
 
+  // Seed the channel→server map + last-activity for EVERY server the user is in
+  // (not just the open one) so the server-rail unread pill is correct on load.
+  // ChannelSidebar only registers the currently-open server's channels; without
+  // this, unread servers you haven't opened this session show nothing.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/users/@me/channel-activity");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          channels?: Array<{ channelId: string; serverId: string; lastMessageAt: string | null }>;
+        };
+        if (cancelled || !data.channels?.length) return;
+        registerChannels(
+          data.channels.map((c) => ({
+            id: c.channelId,
+            serverId: c.serverId,
+            type: "text",
+            lastMessageAt: c.lastMessageAt,
+          }))
+        );
+      } catch {
+        /* best-effort seed — live activity events fill in the rest */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, registerChannels]);
+
   // Seed mention counts once from the mentions API (accurate historical counts).
   useEffect(() => {
     if (!user) return;
@@ -208,7 +299,7 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
         for (const m of (data.mentions || []) as Array<{ channelId: string; createdAt: string }>) {
           const readTs = readMap[m.channelId] ? new Date(readMap[m.channelId]).getTime() : 0;
           if (new Date(m.createdAt).getTime() > readTs) {
-            counts[m.channelId] = (counts[m.channelId] || 0) + 1;
+            counts[m.channelId] = Math.min((counts[m.channelId] || 0) + 1, MAX_UNREAD_BADGE);
           }
         }
         if (!cancelled) setMentionCounts((prev) => ({ ...counts, ...prev }));
@@ -287,6 +378,20 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       const mentionsMe =
         event.mentionEveryone || (event.mentionedUserIds || []).includes(user.id);
 
+      // Keep the channel→server map current so per-server unread aggregation
+      // works for channels the sidebar hasn't registered (e.g. a server the
+      // user hasn't opened this session, or a brand-new channel).
+      if (event.serverId) {
+        setChannelMeta((prev) => {
+          const existing = prev[event.channelId];
+          if (existing && existing.serverId === event.serverId) return prev;
+          return {
+            ...prev,
+            [event.channelId]: { id: event.channelId, serverId: event.serverId, type: "text" },
+          };
+        });
+      }
+
       if (!isActive) {
         setLastActivity((prev) => {
           const next = { ...prev, [event.channelId]: event.createdAt };
@@ -295,10 +400,11 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
         });
 
         if (mentionsMe) {
-          setMentionCounts((prev) => ({
-            ...prev,
-            [event.channelId]: (prev[event.channelId] || 0) + 1,
-          }));
+          setMentionCounts((prev) => {
+            const current = prev[event.channelId] || 0;
+            if (current >= MAX_UNREAD_BADGE) return prev; // "99+" already; no re-render
+            return { ...prev, [event.channelId]: current + 1 };
+          });
           const label = event.channelName ? `#${event.channelName}` : "a channel";
           const who = event.authorName || "Someone";
           toast(`${who} mentioned you in ${label}`, {
@@ -375,6 +481,8 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       markChannelRead,
       registerChannels,
       setActiveChannel,
+      seedDmCounts,
+      notifyDmActivity,
     }),
     [
       isChannelUnread,
@@ -384,6 +492,8 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       markChannelRead,
       registerChannels,
       setActiveChannel,
+      seedDmCounts,
+      notifyDmActivity,
     ]
   );
 
@@ -401,6 +511,8 @@ const NOOP_UNREAD: UnreadContextValue = {
   markChannelRead: () => {},
   registerChannels: () => {},
   setActiveChannel: () => {},
+  seedDmCounts: () => {},
+  notifyDmActivity: () => {},
 };
 
 export function useUnread() {

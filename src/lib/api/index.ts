@@ -31,6 +31,8 @@ function compareIds(id1: string, id2: string): boolean {
   return normalizeId(id1) === normalizeId(id2);
 }
 
+const sseEncoder = new TextEncoder();
+
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
   const authHeader = headers.authorization ?? null;
@@ -209,7 +211,7 @@ function sortActivitiesByPriority<T extends { type?: string | null }>(activities
 const activeFriendStreamConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
 function emitFriendEvent(userIds: string[], payload: Record<string, unknown>) {
-  const encoded = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+  const encoded = sseEncoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
   for (const userId of userIds) {
     const streams = activeFriendStreamConnections.get(userId);
     if (!streams) continue;
@@ -840,6 +842,34 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { readStates: [] };
     }
   })
+  // Lightweight seed for the unread engine: every text channel the user can see,
+  // with its server id and last-activity time. Combined with /@me/read-states
+  // this lets the client compute per-server unread (the white rail pill) on load
+  // for ALL servers — not just the one currently open. One membership query +
+  // one channel query; no message joins (channel.updatedAt bumps on send).
+  .get('/@me/channel-activity', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+    try {
+      const memberships = await ServerMember.find({ userId: user.id });
+      const serverIds = memberships.map((m) => m.serverId);
+      if (serverIds.length === 0) return { channels: [] };
+      const channels = await Channel.find({ serverId: { in: serverIds }, type: 'text' });
+      return {
+        channels: channels.map((c) => ({
+          channelId: c.id,
+          serverId: c.serverId,
+          lastMessageAt: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : c.updatedAt,
+        })),
+      };
+    } catch (error) {
+      console.error('Failed to fetch channel activity:', error);
+      return { channels: [] };
+    }
+  })
   .post('/@me/read-states', async ({ headers, cookie, body, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user) {
@@ -903,7 +933,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
     if (!user) {
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
           controller.close();
         },
       });
@@ -2213,7 +2243,7 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
     if (!user) {
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
           controller.close();
         },
       });
@@ -2231,11 +2261,11 @@ const friendsRoutes = new Elysia({ prefix: '/friends' })
           activeFriendStreamConnections.set(userKey, new Set());
         }
         activeFriendStreamConnections.get(userKey)!.add(controller);
-        controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
+        controller.enqueue(sseEncoder.encode('data: {"type":"connected"}\n\n'));
 
         pingInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
+            controller.enqueue(sseEncoder.encode('data: {"type":"ping"}\n\n'));
           } catch {
             if (pingInterval) clearInterval(pingInterval);
             activeFriendStreamConnections.get(userKey)?.delete(controller);
