@@ -25,26 +25,43 @@ const nextConfig: NextConfig = {
 
   // Experimental optimizations
   experimental: {
-    optimizePackageImports: ['lucide-react', '@radix-ui/react-icons', 'date-fns', 'framer-motion', 'emoji-picker-react'],
+    // Parallel webpack compilation across worker threads — major build speedup.
+    webpackBuildWorker: true,
+    optimizePackageImports: [
+      'lucide-react',
+      '@radix-ui/react-icons',
+      'date-fns',
+      'framer-motion',
+      'emoji-picker-react',
+      '@dnd-kit/core',
+      '@dnd-kit/sortable',
+      '@icons-pack/react-simple-icons',
+      'react-virtuoso',
+      'sonner',
+    ],
   },
 
-  // Transpile serika-dev-player for proper CSS/ESM handling
-  // Also transpile CJS/native packages that Turbopack auto-externalizes with hashed
-  // symlinks (e.g. pg-587764f78a6c7a9c). Bun's module resolver cannot follow these
-  // symlinks, so we force Turbopack to bundle them instead. See:
-  // https://github.com/vercel/next.js/issues/86866
+  // Packages that only need transpilation for ESM/CSS handling. Keeping this
+  // list short lets webpack skip processing for everything else.
   transpilePackages: [
     'serika-dev-player',
-    // DB drivers
+  ],
+
+  // Server-only packages left as external requires — webpack skips bundling
+  // them entirely, and Bun resolves them from node_modules at runtime. This
+  // avoids webpack processing tens of thousands of lines of AWS SDK / drizzle
+  // / sanitize-html code that never runs in the browser.
+  serverExternalPackages: [
+    // DB drivers (native bindings — Bun resolves fine from node_modules)
     'pg',
     'ioredis',
     // Auth / crypto
     'bcryptjs',
     'jose',
-    // AWS SDK (auto-externalized by default)
+    // AWS SDK (huge — was the single biggest transpile cost)
     '@aws-sdk/client-s3',
     '@aws-sdk/lib-storage',
-    // Security / sanitization (postcss is pulled in by sanitize-html)
+    // Security / sanitization
     'sanitize-html',
     'postcss',
     'xss',

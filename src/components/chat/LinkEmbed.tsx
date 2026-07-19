@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, memo } from "react";
-import { ExternalLink, Play } from "lucide-react";
+import { ExternalLink, Play, X } from "lucide-react";
 import { useInView } from "@/hooks/useInView";
 import { InviteEmbed, parseInviteCode } from "@/components/chat/InviteEmbed";
 import { decodeHtmlEntities } from "@/lib/chat/messages";
@@ -17,6 +17,7 @@ interface LinkEmbedProps {
   content: string;
   /** Opens a GIF in the in-app image viewer instead of the provider website. */
   onMediaClick?: (src: string, alt?: string) => void;
+  onSuppress?: () => void;
 }
 
 /** Shared media/badge layout for provider GIF embeds (Giphy/Tenor/Klipy). */
@@ -74,7 +75,10 @@ const FIRST_PARTY_DOMAINS = [
 ];
 
 function extractUrls(text: string): string[] {
-  const urlRegex = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g;
+  // Skip URLs wrapped in <...> (Discord's no-embed syntax) via negative
+  // lookbehind for <, and exclude > from URL chars so the closing bracket
+  // doesn't get captured.
+  const urlRegex = /(?<!<)(https?:\/\/[^\s<>]+[^<.,:;"')\]\s>])/g;
   return text.match(urlRegex) || [];
 }
 
@@ -1050,9 +1054,11 @@ function TwitterEmbed({ url }: { url: string }) {
 function GenericEmbed({
   url,
   preview,
+  onSuppress,
 }: {
   url: string;
   preview?: OEmbedData;
+  onSuppress?: () => void;
 }) {
   let hostname = "link";
   let pathname = "";
@@ -1066,11 +1072,21 @@ function GenericEmbed({
   }
 
   return (
+    <div className="relative group/embed-card mt-2 max-w-[400px]">
+      {onSuppress && (
+        <button
+          onClick={(e) => { e.preventDefault(); e.stopPropagation(); onSuppress(); }}
+          className="absolute top-1 right-1 z-10 opacity-0 group-hover/embed-card:opacity-100 transition-opacity p-1 text-white/70 hover:text-white"
+          title="Remove embed"
+        >
+          <X className="w-3.5 h-3.5" />
+        </button>
+      )}
     <a
       href={url}
       target="_blank"
       rel="noopener noreferrer"
-      className="mt-2 block max-w-[400px] border-l-4 border-[#8B5CF6] bg-[#1a1a1a] rounded-r-lg overflow-hidden hover:bg-[#222222] transition-colors"
+      className="block border-l-4 border-[#8B5CF6] bg-[#1a1a1a] rounded-r-lg overflow-hidden hover:bg-[#222222] transition-colors"
     >
       {preview?.video ? (
         <video
@@ -1107,6 +1123,7 @@ function GenericEmbed({
         )}
       </div>
     </a>
+    </div>
   );
 }
 
@@ -1237,7 +1254,7 @@ function KlipyEmbed({ url, preview, onMediaClick }: { url: string; preview?: { t
 
 // Memoized: embeds fetch previews and must not re-run while unrelated chat
 // state (composer text, typing indicators) changes.
-export const LinkEmbed = memo(function LinkEmbed({ content, onMediaClick }: LinkEmbedProps) {
+export const LinkEmbed = memo(function LinkEmbed({ content, onMediaClick, onSuppress }: LinkEmbedProps) {
   // Decode entities (e.g. `&amp;` in query strings) so URLs resolve correctly.
   const urls = extractUrls(decodeHtmlEntities(content));
   const url = urls[0] || "";
@@ -1393,7 +1410,7 @@ export const LinkEmbed = memo(function LinkEmbed({ content, onMediaClick }: Link
   // once this generic card nears the viewport.
   return (
     <div ref={genericRef}>
-      <GenericEmbed url={url} preview={preview || undefined} />
+      <GenericEmbed url={url} preview={preview || undefined} onSuppress={onSuppress} />
     </div>
   );
 });

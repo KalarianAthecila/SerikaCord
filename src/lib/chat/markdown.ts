@@ -13,7 +13,7 @@ const ITALIC_RE = /(?<!\*)\*([^*]+)\*(?!\*)/;
 const UNDERLINE_RE = /__([^_]+)__/;
 const STRIKE_RE = /~~([^~]+)~~/;
 const SPOILER_RE = /\|\|([^|]+)\|\|/;
-const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/;
+const LINK_RE = /\[([^\]]+)\]\((?:<([^>]+)>|([^)]+))\)/;
 const TIMESTAMP_RE = /<t:(-?\d+)(?::([tTdDfFRC])((?:\[[^\]]*\])*))?>/;
 const CHANNEL_MENTION_RE = /<#([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/;
 
@@ -33,7 +33,7 @@ function parseInline(text: string): MarkdownNode[] {
       { regex: SPOILER_RE, type: "spoiler", build: (m) => ({ type: "spoiler", content: m[1], key: `sp-${key++}` } as MarkdownNode) },
       { regex: ITALIC_RE, type: "italic", build: (m) => ({ type: "italic", content: m[1], key: `i-${key++}` } as MarkdownNode) },
       { regex: LINK_RE, type: "link", build: (m) => {
-        const href = m[2];
+        const href = (m[2] || m[3] || '').trim();
         if (/serika\.cc/i.test(href)) {
           return { type: "text", content: m[1], key: `l-${key++}` } as MarkdownNode;
         }
