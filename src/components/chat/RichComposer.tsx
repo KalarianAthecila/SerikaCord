@@ -370,6 +370,17 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
     }, [emitChange]);
 
     const handlePaste = useCallback((e: React.ClipboardEvent) => {
+      // Check for pasted files (screenshots, copied images) FIRST. In Electron
+      // webviews, calling preventDefault() before the parent MessageBar's
+      // onPaste fires can consume clipboard items, so we must bail out early
+      // and let the parent handler deal with file attachments.
+      const dt = e.clipboardData;
+      if (dt) {
+        const hasFiles =
+          (dt.files && dt.files.length > 0) ||
+          (dt.items && Array.from(dt.items).some((item) => item.kind === "file"));
+        if (hasFiles) return; // let MessageBar's onPaste handle the files
+      }
       // Plain text only — no pasted markup
       e.preventDefault();
       const text = e.clipboardData.getData("text/plain");

@@ -3594,23 +3594,35 @@ export const api = new Elysia({ prefix: '/api' })
   .use(discordRoutes)
   .use(botApiRoutes);
 
+// Idempotency guard: once initializeAPI() has been called, subsequent calls
+// return the same promise instead of re-running DB connections and seeding.
+// This prevents duplicate connection pools / repeated "✅ API initialized" when
+// the custom server (server.ts) and the Next.js catch-all route both call it.
+let initPromise: Promise<void> | null = null;
+
 // Initialize database connection
 export async function initializeAPI() {
-  await connectDB();
-  await ensureSerikaBroadcastUser();
-  // Ensure system users exist
-  const { ensureSystemUsers } = await import('@/lib/services/systemUsers');
-  await ensureSystemUsers();
+  if (initPromise) return initPromise;
+  initPromise = (async () => {
+    await connectDB();
+    await ensureSerikaBroadcastUser();
+    // Ensure system users exist
+    const { ensureSystemUsers } = await import('@/lib/services/systemUsers');
+    await ensureSystemUsers();
 
-  // Auto-provision bot users for existing applications
-  try {
-    const { ensureAllBotsProvisioned } = await import('@/lib/services/appIdentity');
-    await ensureAllBotsProvisioned();
-  } catch (err) {
-    console.error('Failed to auto-provision bots on startup:', err);
-  }
+    // Auto-provision bot users for existing applications
+    try {
+      const { ensureAllBotsProvisioned } = await import('@/lib/services/appIdentity');
+      await ensureAllBotsProvisioned();
+    } catch (err) {
+      console.error('Failed to auto-provision bots on startup:', err);
+    }
 
-  console.log('✅ API initialized');
+    console.log('✅ API initialized');
+  })();
+  // If init fails, clear the promise so a retry is possible.
+  initPromise.catch(() => { initPromise = null; });
+  return initPromise;
 }
 
 export type API = typeof api;

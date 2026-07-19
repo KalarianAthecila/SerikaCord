@@ -122,6 +122,14 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     lastActivityRef.current = lastActivity;
   }, [lastActivity]);
+  // Live mirror of lastRead so seedDmCounts can skip channels the user just
+  // marked read locally (the fire-and-forget POST may not have hit the DB yet
+  // when the next poll refetches DM counts — without this the stale server
+  // count re-introduces the badge the user just dismissed).
+  const lastReadRef = useRef(lastRead);
+  useEffect(() => {
+    lastReadRef.current = lastRead;
+  }, [lastRead]);
 
   const persistActivity = useCallback((next: Record<string, string>) => {
     saveMap(LS_ACTIVITY, next);
@@ -202,6 +210,15 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       let changed = false;
       for (const [channelId, count] of Object.entries(counts)) {
         if (channelId === activeChannelRef.current) {
+          if (next[channelId]) { delete next[channelId]; changed = true; }
+          continue;
+        }
+        // Skip channels the user already marked read locally. The server's
+        // unreadCount may be stale because the fire-and-forget read-state POST
+        // hasn't landed yet — re-seeding would resurrect the badge.
+        const readTs = lastReadRef.current[channelId];
+        const actTs = lastActivityRef.current[channelId];
+        if (readTs && actTs && new Date(readTs).getTime() > new Date(actTs).getTime()) {
           if (next[channelId]) { delete next[channelId]; changed = true; }
           continue;
         }
@@ -419,6 +436,29 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
           else delete next[channelId];
           persistActivity(next);
           return next;
+        });
+        return;
+      }
+
+      // DM activity: a DM message arrived while the user is not viewing the DM
+      // list. The DM SSE stream only fires while the DM list is open; this event
+      // comes through the always-connected activity stream so DM unread badges
+      // appear in realtime regardless of which view the user is in.
+      if (data.type === "dm_activity") {
+        const { channelId, authorId, createdAt } = data as { channelId?: string; authorId?: string; createdAt?: string };
+        if (!channelId || !authorId || authorId === user.id) return;
+        const ts = createdAt || new Date().toISOString();
+        setLastActivity((prev) => {
+          if (prev[channelId] === ts) return prev;
+          const next = { ...prev, [channelId]: ts };
+          persistActivity(next);
+          return next;
+        });
+        if (activeChannelRef.current === channelId) return;
+        setMentionCounts((prev) => {
+          const current = prev[channelId] || 0;
+          if (current >= MAX_UNREAD_BADGE) return prev;
+          return { ...prev, [channelId]: current + 1 };
         });
         return;
       }

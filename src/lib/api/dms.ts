@@ -833,6 +833,27 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       }
     );
 
+    // Realtime unread signal: fan out a dm_activity event through the activity
+    // stream (always connected via /api/users/@me/activity) so the recipient
+    // gets an instant unread badge even when they're viewing a server, not the
+    // DM list. The DM SSE stream only fires while the DM list is open — without
+    // this, DM unread badges don't appear until the user navigates to the DM list.
+    void (async () => {
+      try {
+        const { fanoutToUsers } = await import('@/lib/api/activity');
+        const createdAtIso = message.createdAt instanceof Date ? message.createdAt.toISOString() : new Date(message.createdAt ?? Date.now()).toISOString();
+        fanoutToUsers(
+          { userIds: [params.recipientId] },
+          {
+            type: 'dm_activity',
+            channelId: channel.id,
+            authorId: user.id,
+            createdAt: createdAtIso,
+          },
+        );
+      } catch { /* best-effort */ }
+    })();
+
     // Deliver everywhere: local SSE + cross-instance Redis fan-out (non-blocking).
     publishToDm(channel.id, { type: 'message', message: messageData });
 

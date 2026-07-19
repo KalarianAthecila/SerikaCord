@@ -23,34 +23,80 @@ function colorToHex(color?: number): string {
   return `#${clamped.toString(16).padStart(6, "0")}`;
 }
 
-/** Very small, safe markdown-ish renderer for embed text (links + bold/italics). */
-function EmbedText({ text, className }: { text: string; className?: string }) {
-  const decoded = decodeHtmlEntities(text);
-  // Split on markdown links [label](url) and autolink bare URLs.
+/**
+ * Inline markdown renderer for embed text. Supports the subset Discord allows
+ * in embeds: bold (**), italics (* or _), strikethrough (~~), inline code (`),
+ * and markdown links [label](url) plus bare URL autolinking.
+ */
+function renderInlineMarkdown(text: string, keyPrefix: string): React.ReactNode[] {
+  // Token regex: captures all supported inline formats in one pass.
+  // Order matters: code first (so ** inside `` isn't parsed), then links,
+  // then bold, strikethrough, italics.
+  const tokenRegex = /(`[^`]+`)|\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+)|(\*\*[^*]+\*\*)|(~~[^~]+~~)|(\*[^*]+\*|_[^_]+_)/g;
   const parts: React.ReactNode[] = [];
-  const linkRegex = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)|(https?:\/\/[^\s]+)/g;
   let last = 0;
   let match: RegExpExecArray | null;
   let key = 0;
-  while ((match = linkRegex.exec(decoded)) !== null) {
-    if (match.index > last) parts.push(decoded.slice(last, match.index));
-    if (match[1] && match[2]) {
+  while ((match = tokenRegex.exec(text)) !== null) {
+    if (match.index > last) parts.push(text.slice(last, match.index));
+    const [full, code, linkLabel, linkUrl, bareUrl, bold, strike, italic] = match;
+    if (code) {
       parts.push(
-        <a key={key++} href={match[2]} target="_blank" rel="noopener noreferrer" className="text-[#8B5CF6] hover:underline">
-          {match[1]}
+        <code key={`${keyPrefix}-${key++}`} className="px-1 py-0.5 rounded bg-black/30 text-[#e0e0e0] text-[0.85em] font-mono">
+          {code.slice(1, -1)}
+        </code>,
+      );
+    } else if (linkLabel && linkUrl) {
+      parts.push(
+        <a key={`${keyPrefix}-${key++}`} href={linkUrl} target="_blank" rel="noopener noreferrer" className="text-[#8B5CF6] hover:underline">
+          {linkLabel}
         </a>,
       );
-    } else if (match[3]) {
+    } else if (bareUrl) {
       parts.push(
-        <a key={key++} href={match[3]} target="_blank" rel="noopener noreferrer" className="text-[#8B5CF6] hover:underline break-all">
-          {match[3]}
+        <a key={`${keyPrefix}-${key++}`} href={bareUrl} target="_blank" rel="noopener noreferrer" className="text-[#8B5CF6] hover:underline break-all">
+          {bareUrl}
         </a>,
+      );
+    } else if (bold) {
+      parts.push(
+        <strong key={`${keyPrefix}-${key++}`} className="font-bold text-white">
+          {bold.slice(2, -2)}
+        </strong>,
+      );
+    } else if (strike) {
+      parts.push(
+        <s key={`${keyPrefix}-${key++}`} className="opacity-70">
+          {strike.slice(2, -2)}
+        </s>,
+      );
+    } else if (italic) {
+      parts.push(
+        <em key={`${keyPrefix}-${key++}`} className="italic">
+          {italic.slice(1, -1)}
+        </em>,
       );
     }
-    last = linkRegex.lastIndex;
+    last = tokenRegex.lastIndex;
   }
-  if (last < decoded.length) parts.push(decoded.slice(last));
-  return <div className={className} style={{ whiteSpace: "pre-wrap" }}>{parts}</div>;
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
+function EmbedText({ text, className }: { text: string; className?: string }) {
+  const decoded = decodeHtmlEntities(text);
+  // Split into lines to preserve line breaks, render each with inline markdown.
+  const lines = decoded.split("\n");
+  return (
+    <div className={className} style={{ whiteSpace: "pre-wrap" }}>
+      {lines.map((line, i) => (
+        <span key={i}>
+          {i > 0 && "\n"}
+          {renderInlineMarkdown(line, `el-${i}`)}
+        </span>
+      ))}
+    </div>
+  );
 }
 
 function SingleEmbed({ embed, onMediaClick }: { embed: MessageEmbed; onMediaClick?: (src: string, alt?: string) => void }) {
@@ -79,7 +125,7 @@ function SingleEmbed({ embed, onMediaClick }: { embed: MessageEmbed; onMediaClic
 
   return (
     <div
-      className="mt-2 max-w-[520px] rounded-md overflow-hidden grid"
+      className="mt-2 max-w-[520px] rounded-md overflow-hidden flex flex-col"
       style={{ background: "var(--app-embed-bg, #1a1a1a)", borderLeft: `4px solid ${accent}` }}
     >
       <div className="grid gap-2 p-3" style={{ gridTemplateColumns: thumbUrl ? "minmax(0,1fr) auto" : "minmax(0,1fr)" }}>
@@ -115,7 +161,7 @@ function SingleEmbed({ embed, onMediaClick }: { embed: MessageEmbed; onMediaClic
           )}
 
           {embed.fields && embed.fields.length > 0 && (
-            <div className="mt-2 grid gap-2" style={{ gridTemplateColumns: "repeat(auto-fill, minmax(0, 1fr))" }}>
+            <div className="mt-2 flex flex-col gap-2">
               {(() => {
                 // Group inline fields into rows of up to 3; block fields span full width.
                 const rows: MessageEmbed["fields"][] = [];
@@ -167,7 +213,7 @@ function SingleEmbed({ embed, onMediaClick }: { embed: MessageEmbed; onMediaClic
       )}
 
       {(embed.footer?.text || embed.timestamp) && (
-        <div className="flex items-center gap-2 px-3 pb-3 -mt-1">
+        <div className="flex items-center gap-2 px-3 pb-3 mt-1">
           {footerIcon && <img src={footerIcon} alt="" className="w-4 h-4 rounded-full object-cover" loading="lazy" />}
           <span className="text-[#888] text-[11px]">
             {embed.footer?.text}
