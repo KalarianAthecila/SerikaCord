@@ -338,7 +338,7 @@ function MessageGroupInner<M extends ChatMessage>({
                     <RichEmbed
                       embeds={message.embeds}
                       onMediaClick={(src, alt) => onMediaClick(src, alt, message.id)}
-                      onSuppress={onSuppressEmbeds ? () => onSuppressEmbeds(message.id) : undefined}
+                      onSuppress={onSuppressEmbeds && (message.authorId === currentUserId || canModerate) ? () => onSuppressEmbeds(message.id) : undefined}
                     />
                     )}
 
@@ -346,7 +346,7 @@ function MessageGroupInner<M extends ChatMessage>({
                     <LinkEmbed
                       content={message.content}
                       onMediaClick={(src, alt) => onMediaClick(src, alt, message.id)}
-                      onSuppress={onSuppressEmbeds ? () => onSuppressEmbeds(message.id) : undefined}
+                      onSuppress={onSuppressEmbeds && (message.authorId === currentUserId || canModerate) ? () => onSuppressEmbeds(message.id) : undefined}
                     />
                     )}
 

@@ -2458,12 +2458,19 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
       return { error: 'Message not found' };
     }
 
-    // Only the author or someone with manage messages can suppress embeds
+    // Only the author or someone with MANAGE_MESSAGES can suppress embeds
     const isAuthor = compareIds(message.authorId, user.id);
     if (!isAuthor) {
-      // TODO: check manage messages permission
-      set.status = 403;
-      return { error: 'You can only suppress embeds on your own messages' };
+      if (channel.serverId) {
+        const canManage = await canManageMessagesInServer(channel.serverId, user.id);
+        if (!canManage) {
+          set.status = 403;
+          return { error: 'You do not have permission to suppress embeds on this message' };
+        }
+      } else {
+        set.status = 403;
+        return { error: 'You can only suppress embeds on your own messages' };
+      }
     }
 
     await Message.updateById(message.id, { suppressEmbeds: true });

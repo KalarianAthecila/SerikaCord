@@ -1400,7 +1400,7 @@ export const LinkEmbed = memo(function LinkEmbed({ content, onMediaClick, onSupp
       {onSuppress && (
         <button
           onClick={onSuppress}
-          className="absolute top-1 right-1 z-10 opacity-0 group-hover/embed:opacity-100 transition-opacity p-1 rounded bg-black/60 text-white hover:bg-black/80"
+          className="absolute -top-2 -right-2 z-10 opacity-0 group-hover/embed:opacity-100 transition-opacity p-0.5 text-[var(--app-muted)] hover:text-[var(--app-text)]"
           title="Remove embed"
         >
           <X className="w-3.5 h-3.5" />
