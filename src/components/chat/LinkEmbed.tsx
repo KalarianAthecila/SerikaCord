@@ -74,7 +74,10 @@ const FIRST_PARTY_DOMAINS = [
 ];
 
 function extractUrls(text: string): string[] {
-  const urlRegex = /(https?:\/\/[^\s<]+[^<.,:;"')\]\s])/g;
+  // Skip URLs wrapped in <...> (Discord's no-embed syntax) via negative
+  // lookbehind for <, and exclude > from URL chars so the closing bracket
+  // doesn't get captured.
+  const urlRegex = /(?<!<)(https?:\/\/[^\s<>]+[^<.,:;"')\]\s>])/g;
   return text.match(urlRegex) || [];
 }
 
