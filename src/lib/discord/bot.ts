@@ -210,13 +210,16 @@ async function getOrCreateDiscordUser(discordAuthor: any): Promise<{ id: string;
   }
 
   // 3. Fall back to creating/updating a DiscordUser entry (separate from User table)
+  // Bots can't press consent buttons or run slash commands, so auto-grant them.
+  const isBot = discordAuthor.bot || false;
   const newDisplayName = buildDisplayName(discordAuthor);
   const newAvatar = getAvatarUrl(discordAuthor);
   const discordUser = await DiscordUser.upsertByDiscordId(discordAuthor.id, {
     username: discordAuthor.username,
     displayName: newDisplayName,
     avatar: newAvatar,
-    isBot: discordAuthor.bot || false,
+    isBot,
+    ...(isBot ? { consentStatus: 'granted', consentUpdatedAt: new Date() } : {}),
   });
 
   return {
@@ -226,7 +229,7 @@ async function getOrCreateDiscordUser(discordAuthor: any): Promise<{ id: string;
     avatar: discordUser.avatar,
     isBot: discordUser.isBot || false,
     isLinked: false,
-    consentStatus: (discordUser.consentStatus as ConsentStatus) || 'pending',
+    consentStatus: isBot ? 'granted' : ((discordUser.consentStatus as ConsentStatus) || 'pending'),
     discordId: discordAuthor.id,
   };
 }

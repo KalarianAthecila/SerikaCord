@@ -842,6 +842,34 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { readStates: [] };
     }
   })
+  // Lightweight seed for the unread engine: every text channel the user can see,
+  // with its server id and last-activity time. Combined with /@me/read-states
+  // this lets the client compute per-server unread (the white rail pill) on load
+  // for ALL servers — not just the one currently open. One membership query +
+  // one channel query; no message joins (channel.updatedAt bumps on send).
+  .get('/@me/channel-activity', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+    try {
+      const memberships = await ServerMember.find({ userId: user.id });
+      const serverIds = memberships.map((m) => m.serverId);
+      if (serverIds.length === 0) return { channels: [] };
+      const channels = await Channel.find({ serverId: { in: serverIds }, type: 'text' });
+      return {
+        channels: channels.map((c) => ({
+          channelId: c.id,
+          serverId: c.serverId,
+          lastMessageAt: c.updatedAt instanceof Date ? c.updatedAt.toISOString() : c.updatedAt,
+        })),
+      };
+    } catch (error) {
+      console.error('Failed to fetch channel activity:', error);
+      return { channels: [] };
+    }
+  })
   .post('/@me/read-states', async ({ headers, cookie, body, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user) {

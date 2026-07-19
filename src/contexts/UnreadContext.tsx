@@ -242,6 +242,38 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
     });
   }, [persistActivity]);
 
+  // Seed the channel→server map + last-activity for EVERY server the user is in
+  // (not just the open one) so the server-rail unread pill is correct on load.
+  // ChannelSidebar only registers the currently-open server's channels; without
+  // this, unread servers you haven't opened this session show nothing.
+  useEffect(() => {
+    if (!user) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/users/@me/channel-activity");
+        if (!res.ok || cancelled) return;
+        const data = (await res.json()) as {
+          channels?: Array<{ channelId: string; serverId: string; lastMessageAt: string | null }>;
+        };
+        if (cancelled || !data.channels?.length) return;
+        registerChannels(
+          data.channels.map((c) => ({
+            id: c.channelId,
+            serverId: c.serverId,
+            type: "text",
+            lastMessageAt: c.lastMessageAt,
+          }))
+        );
+      } catch {
+        /* best-effort seed — live activity events fill in the rest */
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, registerChannels]);
+
   // Seed mention counts once from the mentions API (accurate historical counts).
   useEffect(() => {
     if (!user) return;
@@ -334,6 +366,20 @@ export function UnreadProvider({ children }: { children: ReactNode }) {
       const isActive = activeChannelRef.current === event.channelId;
       const mentionsMe =
         event.mentionEveryone || (event.mentionedUserIds || []).includes(user.id);
+
+      // Keep the channel→server map current so per-server unread aggregation
+      // works for channels the sidebar hasn't registered (e.g. a server the
+      // user hasn't opened this session, or a brand-new channel).
+      if (event.serverId) {
+        setChannelMeta((prev) => {
+          const existing = prev[event.channelId];
+          if (existing && existing.serverId === event.serverId) return prev;
+          return {
+            ...prev,
+            [event.channelId]: { id: event.channelId, serverId: event.serverId, type: "text" },
+          };
+        });
+      }
 
       if (!isActive) {
         setLastActivity((prev) => {
