@@ -1,170 +1,80 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 import crypto from 'crypto';
 
 export type InstanceType = 'host' | 'self_hosted';
 export type InstanceStatus = 'active' | 'suspended' | 'pending' | 'offline';
 
-// Official host domains
 export const HOST_DOMAINS = ['serika.chat', 'waifu.ws', 'serika.dev'];
 
-export interface IInstanceStats {
-  totalUsers: number;
-  activeUsers: number;
-  totalServers: number;
-  totalMessages: number;
-  lastSyncAt?: Date;
-}
+export type IInstance = typeof schema.instances.$inferSelect;
 
-export interface IInstance extends Document {
-  _id: Types.ObjectId;
-  
-  // Identification
-  name: string;
-  domain: string;
-  instanceId: string; // Unique instance identifier
-  
-  // Type & Status
-  type: InstanceType;
-  status: InstanceStatus;
-  
-  // Authentication
-  apiKey: string; // Hashed API key for instance auth
-  apiKeyPrefix: string; // First 8 chars for identification
-  secretKey: string; // For signing requests between instances
-  
-  // Owner (for self-hosted)
-  ownerId?: Types.ObjectId;
-  ownerEmail?: string;
-  
-  // Configuration
-  config: {
-    allowFederation: boolean; // Allow users to interact with other instances
-    allowExternalEmojis: boolean;
-    shareUserData: boolean; // Share basic user info for federation
-    maxUsers?: number;
-    maxServers?: number;
-  };
-  
-  // Stats
-  stats: IInstanceStats;
-  
-  // Security
-  allowedIps: string[]; // IP whitelist for this instance
-  lastSeenIp?: string;
-  lastSeenAt?: Date;
-  
-  // Audit
-  createdAt: Date;
-  updatedAt: Date;
-  approvedAt?: Date;
-  approvedBy?: Types.ObjectId;
-}
+export const Instance = {
+  table: schema.instances,
 
-const InstanceStatsSchema = new Schema({
-  totalUsers: { type: Number, default: 0 },
-  activeUsers: { type: Number, default: 0 },
-  totalServers: { type: Number, default: 0 },
-  totalMessages: { type: Number, default: 0 },
-  lastSyncAt: Date,
-}, { _id: false });
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.instances).where(eq(schema.instances.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
 
-const InstanceSchema = new Schema<IInstance>({
-  name: {
-    type: String,
-    required: true,
-    trim: true,
-    maxlength: 100,
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'domain': conditions.push(eq(schema.instances.domain, value as string)); break;
+        case 'instanceId': conditions.push(eq(schema.instances.instanceId, normalizeId(value as string))); break;
+        case 'apiKeyPrefix': conditions.push(eq(schema.instances.apiKeyPrefix, value as string)); break;
+        case 'type': conditions.push(eq(schema.instances.type, value as any)); break;
+        case 'status': conditions.push(eq(schema.instances.status, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.instances);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
   },
-  domain: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true,
-    lowercase: true,
-  },
-  instanceId: {
-    type: String,
-    required: true,
-    unique: true,
-    default: () => `inst_${crypto.randomBytes(16).toString('hex')}`,
-  },
-  type: {
-    type: String,
-    required: true,
-    enum: ['host', 'self_hosted'],
-    default: 'self_hosted',
-  },
-  status: {
-    type: String,
-    required: true,
-    enum: ['active', 'suspended', 'pending', 'offline'],
-    default: 'pending',
-  },
-  apiKey: {
-    type: String,
-    required: true,
-    select: false, // Don't return by default
-  },
-  apiKeyPrefix: {
-    type: String,
-    required: true,
-  },
-  secretKey: {
-    type: String,
-    required: true,
-    select: false,
-  },
-  ownerId: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-  },
-  ownerEmail: {
-    type: String,
-    trim: true,
-    lowercase: true,
-  },
-  config: {
-    allowFederation: { type: Boolean, default: true },
-    allowExternalEmojis: { type: Boolean, default: true },
-    shareUserData: { type: Boolean, default: false },
-    maxUsers: { type: Number },
-    maxServers: { type: Number },
-  },
-  stats: {
-    type: InstanceStatsSchema,
-    default: () => ({}),
-  },
-  allowedIps: [{
-    type: String,
-  }],
-  lastSeenIp: String,
-  lastSeenAt: Date,
-  approvedAt: Date,
-  approvedBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-  },
-}, {
-  timestamps: true,
-});
 
-// Indexes
-// Note: domain and instanceId already have unique:true which creates indexes
-InstanceSchema.index({ status: 1 });
-InstanceSchema.index({ type: 1 });
-InstanceSchema.index({ apiKeyPrefix: 1 });
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'domain': conditions.push(eq(schema.instances.domain, value as string)); break;
+        case 'instanceId': conditions.push(eq(schema.instances.instanceId, normalizeId(value as string))); break;
+        case 'apiKeyPrefix': conditions.push(eq(schema.instances.apiKeyPrefix, value as string)); break;
+        case 'type': conditions.push(eq(schema.instances.type, value as any)); break;
+        case 'status': conditions.push(eq(schema.instances.status, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.instances);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
 
-export const Instance = mongoose.models.Instance || mongoose.model<IInstance>('Instance', InstanceSchema);
+  async create(data: typeof schema.instances.$inferInsert) {
+    const [row] = await db.insert(schema.instances).values(data).returning();
+    return row;
+  },
 
-// Helper to check if domain is a host domain
+  async updateById(id: string, data: Partial<typeof schema.instances.$inferInsert>) {
+    const [row] = await db.update(schema.instances).set({ ...data, updatedAt: new Date() }).where(eq(schema.instances.id, normalizeId(id))).returning();
+    return row || null;
+  },
+};
+
 export function isHostDomain(domain: string): boolean {
   const normalizedDomain = domain.toLowerCase().replace(/^www\./, '');
-  return HOST_DOMAINS.some(host => 
+  return HOST_DOMAINS.some(host =>
     normalizedDomain === host || normalizedDomain.endsWith(`.${host}`)
   );
 }
 
-// Generate secure API key and hash it
 export function generateInstanceApiKey(): { key: string; hash: string; prefix: string } {
   const key = `sk_inst_${crypto.randomBytes(32).toString('hex')}`;
   const hash = crypto.createHash('sha256').update(key).digest('hex');
@@ -172,54 +82,45 @@ export function generateInstanceApiKey(): { key: string; hash: string; prefix: s
   return { key, hash, prefix };
 }
 
-// Generate secret key for signing
 export function generateSecretKey(): string {
   return crypto.randomBytes(64).toString('hex');
 }
 
-// Verify API key
 export async function verifyInstanceApiKey(apiKey: string): Promise<IInstance | null> {
   const hash = crypto.createHash('sha256').update(apiKey).digest('hex');
   const prefix = apiKey.substring(0, 16);
-  
-  const instance = await Instance.findOne({ 
-    apiKeyPrefix: prefix,
-    status: 'active',
-  }).select('+apiKey');
-  
+
+  const instance = await Instance.findOne({ apiKeyPrefix: prefix, status: 'active' });
+
   if (!instance || instance.apiKey !== hash) {
     return null;
   }
-  
-  // Update last seen
-  instance.lastSeenAt = new Date();
-  await instance.save();
-  
+
+  await Instance.updateById(instance.id, { lastSeenAt: new Date() });
+
   return instance;
 }
 
-// Get current instance info
 let cachedInstance: IInstance | null = null;
 
 export async function getCurrentInstance(): Promise<IInstance | null> {
   if (cachedInstance) {
     return cachedInstance;
   }
-  
+
   const domain = process.env.INSTANCE_DOMAIN || 'localhost';
-  
-  // Check if this is a host domain
+
   if (isHostDomain(domain)) {
-    // Create or get host instance
     let instance = await Instance.findOne({ domain, type: 'host' });
-    
+
     if (!instance) {
       const { key, hash, prefix } = generateInstanceApiKey();
       const secretKey = generateSecretKey();
-      
+
       instance = await Instance.create({
         name: 'SerikaCord Host',
         domain,
+        instanceId: crypto.randomUUID(),
         type: 'host',
         status: 'active',
         apiKey: hash,
@@ -231,16 +132,15 @@ export async function getCurrentInstance(): Promise<IInstance | null> {
           shareUserData: true,
         },
       });
-      
+
       console.log(`[Instance] Created host instance. API Key (save this!): ${key}`);
     }
-    
+
     cachedInstance = instance;
     return instance;
   }
-  
-  // Self-hosted instance
-  let instance = await Instance.findOne({ domain, type: 'self_hosted' });
+
+  const instance = await Instance.findOne({ domain, type: 'self_hosted' });
   cachedInstance = instance;
   return instance;
 }

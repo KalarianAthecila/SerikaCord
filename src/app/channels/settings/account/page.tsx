@@ -1,14 +1,17 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { cdnImage } from "@/lib/utils";
 import { ArrowLeft, User, Mail, Shield } from "lucide-react";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { ScrollArea } from "@/components/ui/scroll-area";
+import { useGT } from "gt-next";
 
 export default function AccountSettingsPage() {
     const router = useRouter();
     const { user } = useAuth();
+    const gt = useGT();
 
     return (
         <div className="flex flex-col h-full bg-[var(--bg-app)] text-[var(--text-primary)]">
@@ -20,7 +23,7 @@ export default function AccountSettingsPage() {
                 >
                     <ArrowLeft className="w-6 h-6" />
                 </button>
-                <h1 className="text-xl font-bold text-[var(--text-primary)]">My Account</h1>
+                <h1 className="text-xl font-bold text-[var(--text-primary)]">{gt("My Account")}</h1>
             </div>
 
             <ScrollArea className="flex-1">
@@ -33,7 +36,7 @@ export default function AccountSettingsPage() {
                         <div className="px-5 pb-5 relative">
                             <div className="absolute -top-10 left-5">
                                 <Avatar className="w-20 h-20 border-[6px] border-[var(--bg-card)]">
-                                    <AvatarImage src={user?.avatar} />
+                                    <AvatarImage src={cdnImage(user?.avatar)} />
                                     <AvatarFallback className="bg-[#8B5CF6] text-[var(--text-on-accent)] text-2xl font-bold">
                                         {(user?.displayName || user?.username || "U").charAt(0).toUpperCase()}
                                     </AvatarFallback>
@@ -49,33 +52,32 @@ export default function AccountSettingsPage() {
                     {/* Info Fields */}
                     <div className="space-y-4">
                         <div className="space-y-1">
-                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">Display Name</label>
+                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">{gt("Display Name")}</label>
                             <div className="p-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center justify-between">
                                 <span>{user?.displayName || user?.username}</span>
-                                <button onClick={() => router.push("/channels/settings/appearance")} className="text-sm font-medium text-[#8B5CF6]">Edit</button>
+                                <button onClick={() => router.push("/channels/settings/profiles")} className="text-sm font-medium text-[#8B5CF6]">{gt("Edit")}</button>
                             </div>
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">Username</label>
-                            <div className="p-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center justify-between">
+                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">{gt("Username")}</label>
+                            <div className="p-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)]">
                                 <span>{user?.username}</span>
-                                <button onClick={() => router.push("/channels/settings/account")} className="text-sm font-medium text-[#8B5CF6]">Edit</button>
                             </div>
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">Email</label>
-                            <div className="p-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] flex items-center justify-between">
-                                <span>{user?.email || "No email linked"}</span>
-                                <button onClick={() => router.push("/channels/settings/account")} className="text-sm font-medium text-[#8B5CF6]">Edit</button>
+                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">{gt("Email")}</label>
+                            <div className="p-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)]">
+                                <span>{user?.email || gt("No email linked")}</span>
                             </div>
                         </div>
 
                         <div className="space-y-1">
-                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">About Me</label>
-                            <div className="p-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] min-h-[100px]">
-                                {user?.bio || "No bio set."}
+                            <label className="text-xs font-bold text-[var(--text-muted)] uppercase">{gt("About Me")}</label>
+                            <div className="p-4 rounded-xl bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] min-h-[100px] flex items-start justify-between gap-3">
+                                <span className="flex-1">{user?.bio || gt("No bio set.")}</span>
+                                <button onClick={() => router.push("/channels/settings/profiles")} className="text-sm font-medium text-[#8B5CF6] shrink-0">{gt("Edit")}</button>
                             </div>
                         </div>
                     </div>

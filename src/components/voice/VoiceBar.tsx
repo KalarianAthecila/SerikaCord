@@ -7,6 +7,8 @@ import { cn } from "@/lib/utils";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
 import { useSpeakingUsers } from "@/hooks/useSpeakingUsers";
 import { VoiceParticipantAvatar } from "@/components/voice/VoiceParticipantAvatar";
+import { onHotkey } from "@/lib/keybinds";
+import { useGT } from "gt-next";
 
 interface VoiceBarProps {
   channelName?: string;
@@ -15,6 +17,7 @@ interface VoiceBarProps {
 }
 
 export function VoiceBar({ channelName, className }: VoiceBarProps) {
+  const gt = useGT();
   const [isConnected, setIsConnected] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
   const [isDeafened, setIsDeafened] = useState(false);
@@ -75,6 +78,24 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
     if (deafened) setIsMuted(true);
   }, []);
 
+  // Ctrl+Shift+M / Ctrl+Shift+D global toggles (only act while connected).
+  useEffect(() => {
+    const unsubs = [
+      onHotkey("toggle-mute", () => { if (voiceService.connected) handleMute(); }),
+      onHotkey("toggle-deafen", () => { if (voiceService.connected) handleDeafen(); }),
+      onHotkey("return-to-voice", () => {
+        if (voiceService.connected && currentChannel) {
+          // currentChannel is a roomId string like "serverId:channelId"
+          const parts = currentChannel.split(":");
+          if (parts.length >= 2) {
+            window.location.href = `/channels/${parts[0]}/${parts[1]}`;
+          }
+        }
+      }),
+    ];
+    return () => unsubs.forEach((u) => u());
+  }, [handleMute, handleDeafen]);
+
   const handleVideo = useCallback(async () => {
     const videoOn = await voiceService.toggleVideo();
     setIsVideoOn(videoOn);
@@ -115,7 +136,7 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
                 <span className="absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-60 animate-ping" />
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
               </span>
-              <span className="text-xs font-semibold text-green-400 flex-shrink-0">Voice Connected</span>
+              <span className="text-xs font-semibold text-green-400 flex-shrink-0">{gt("Voice Connected")}</span>
               {(channelName || currentChannel) && (
                 <span className="text-[11px] text-[#6b7387] truncate">
                   — {channelName || currentChannel}
@@ -123,7 +144,7 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
               )}
             </div>
             <span className="text-[10px] text-[#6b7387] flex-shrink-0">
-              {participants.length + 1} in call
+              {participants.length + 1} {gt("in call")}
             </span>
           </div>
 
@@ -133,16 +154,16 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
               <VoiceParticipantAvatar
                 participant={{
                   userId: voiceService.myId,
-                  username: "You",
-                  displayName: "You",
+                  username: gt("You"),
+                  displayName: gt("You"),
                   audio: !isMuted,
                 }}
                 speaking={speakingUsers.has(voiceService.myId)}
                 size="md"
               />
-              <span className="text-[10px] text-[#8d97ad] max-w-[56px] truncate">You</span>
+              <span className="text-[10px] text-[#8d97ad] max-w-[56px] truncate">{gt("You")}</span>
             </div>
-            {participants.map((p) => (
+            {participants.filter(p => p.userId !== voiceService.myId).map((p) => (
               <div key={p.userId} className="flex flex-col items-center gap-1">
                 <VoiceParticipantAvatar
                   participant={p}
@@ -160,7 +181,7 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
           <div className="flex items-center gap-1">
             <button
               onClick={handleMute}
-              title={isMuted ? "Unmute" : "Mute"}
+              title={isMuted ? gt("Unmute") : gt("Mute")}
               className={cn(
                 "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
                 isMuted
@@ -173,7 +194,7 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
 
             <button
               onClick={handleDeafen}
-              title={isDeafened ? "Undeafen" : "Deafen"}
+              title={isDeafened ? gt("Undeafen") : gt("Deafen")}
               className={cn(
                 "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
                 isDeafened
@@ -186,7 +207,7 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
 
             <button
               onClick={handleVideo}
-              title={isVideoOn ? "Turn Off Camera" : "Turn On Camera"}
+              title={isVideoOn ? gt("Turn Off Camera") : gt("Turn On Camera")}
               className={cn(
                 "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
                 isVideoOn
@@ -197,24 +218,26 @@ export function VoiceBar({ channelName, className }: VoiceBarProps) {
               {isVideoOn ? <Video className="w-4 h-4" /> : <VideoOff className="w-4 h-4" />}
             </button>
 
-            <button
-              onClick={handleScreenShare}
-              title={isScreenSharing ? "Stop Sharing" : "Share Screen"}
-              className={cn(
-                "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
-                isScreenSharing
-                  ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
-                  : "bg-[#1e2637] text-[#8d97ad] hover:bg-[#243044] hover:text-[#d5d9e8]"
-              )}
-            >
-              {isScreenSharing ? <MonitorOff className="w-4 h-4" /> : <Monitor className="w-4 h-4" />}
-            </button>
+            {/* Screen share — hidden on mobile (getDisplayMedia not supported) */}
+            {!isScreenSharing && null}
+            {isScreenSharing && (
+              <button
+                onClick={handleScreenShare}
+                title={gt("Stop Sharing")}
+                className={cn(
+                  "flex items-center justify-center w-8 h-8 rounded-lg transition-all active:scale-95",
+                  "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                )}
+              >
+                <MonitorOff className="w-4 h-4" />
+              </button>
+            )}
 
             <div className="flex-1" />
 
             <button
               onClick={handleDisconnect}
-              title="Disconnect"
+              title={gt("Disconnect")}
               className="flex items-center justify-center w-8 h-8 rounded-lg bg-[#ef4444]/15 text-[#ef4444] hover:bg-[#ef4444]/25 transition-all active:scale-95"
             >
               <PhoneOff className="w-4 h-4" />

@@ -1,4 +1,4 @@
-import { RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
+import { RateLimiterRedis, RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
 import sanitizeHtml from 'sanitize-html';
 import xss from 'xss';
 import crypto from 'crypto';
@@ -6,20 +6,35 @@ import { getRedis } from '../db/redis';
 import { config } from '../config';
 
 // Rate limiter configurations
-const rateLimiters: Map<string, RateLimiterRedis> = new Map();
+const rateLimiters: Map<string, RateLimiterRedis | RateLimiterMemory> = new Map();
 
 export function getRateLimiter(
   key: string,
   options: { points: number; duration: number; blockDuration?: number }
-): RateLimiterRedis {
-  if (!rateLimiters.has(key)) {
-    rateLimiters.set(key, new RateLimiterRedis({
-      storeClient: getRedis(),
-      keyPrefix: `rl:${key}`,
-      points: options.points,
-      duration: options.duration,
-      blockDuration: options.blockDuration || 0,
-    }));
+): RateLimiterRedis | RateLimiterMemory {
+  const redisClient = getRedis();
+  
+  if (redisClient) {
+    const existing = rateLimiters.get(key);
+    if (!existing || existing instanceof RateLimiterMemory) {
+      rateLimiters.set(key, new RateLimiterRedis({
+        storeClient: redisClient,
+        keyPrefix: `rl:${key}`,
+        points: options.points,
+        duration: options.duration,
+        blockDuration: options.blockDuration || 0,
+      }));
+    }
+  } else {
+    const existing = rateLimiters.get(key);
+    if (!existing || existing instanceof RateLimiterRedis) {
+      rateLimiters.set(key, new RateLimiterMemory({
+        keyPrefix: `rl:${key}`,
+        points: options.points,
+        duration: options.duration,
+        blockDuration: options.blockDuration || 0,
+      }));
+    }
   }
   return rateLimiters.get(key)!;
 }
@@ -48,6 +63,12 @@ export const rateLimiters_config = {
   
   // Friend requests
   friendRequest: { points: 20, duration: 86400 }, // 20 friend requests per day
+
+  // Admin API (stricter)
+  admin: { points: 60, duration: 60 }, // 60 admin requests per minute
+
+  // Bug reports
+  bugReport: { points: 5, duration: 600 }, // 5 bug reports / feedback every 10 minutes
 } as const;
 
 export async function checkRateLimit(
@@ -55,9 +76,9 @@ export async function checkRateLimit(
   identifier: string
 ): Promise<{ success: boolean; retryAfter?: number; remaining?: number }> {
   const limiterConfig = rateLimiters_config[limiterKey];
-  const limiter = getRateLimiter(limiterKey, limiterConfig);
   
   try {
+    const limiter = getRateLimiter(limiterKey, limiterConfig);
     const result = await limiter.consume(identifier);
     return { 
       success: true, 
@@ -71,7 +92,32 @@ export async function checkRateLimit(
         remaining: 0 
       };
     }
-    throw error;
+    
+    // Redis connection error or general Redis command timeout - failover to memory rate limiting
+    console.warn(`⚠️ Rate limiter Redis error, falling back to memory: ${error instanceof Error ? error.message : error}`);
+    try {
+      const fallbackLimiter = new RateLimiterMemory({
+        keyPrefix: `rl-fallback:${limiterKey}`,
+        points: limiterConfig.points,
+        duration: limiterConfig.duration,
+        blockDuration: (limiterConfig as { blockDuration?: number }).blockDuration || 0,
+      });
+      const result = await fallbackLimiter.consume(identifier);
+      return {
+        success: true,
+        remaining: result.remainingPoints
+      };
+    } catch (memError) {
+      if (memError instanceof RateLimiterRes) {
+        return {
+          success: false,
+          retryAfter: Math.ceil(memError.msBeforeNext / 1000),
+          remaining: 0
+        };
+      }
+      // If memory rate limiting fails, default to allowing the action
+      return { success: true, remaining: 1 };
+    }
   }
 }
 
@@ -128,19 +174,29 @@ export function validateMessageContent(content: string): { valid: boolean; error
     return { valid: false, error: `Message too long (max ${config.MAX_MESSAGE_LENGTH} characters)` };
   }
   
+  // Preserve Discord-style tokens (mentions, custom emojis, timestamps) before
+  // running spam heuristics, so valid tokens like the system user ID don't
+  // trigger the repeated-character check.
+  const TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#[0-9a-fA-F]{24}>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>|<t:[^>]+>/g;
+  const contentWithoutTokens = content.replace(TOKEN_REGEX, ' ');
+
   // Check for spam patterns
   const spamPatterns = [
     /(.)\1{20,}/, // Repeated characters
-    /(https?:\/\/[^\s]+\s*){10,}/, // Many URLs
     /(\s*\n){10,}/, // Many newlines
   ];
   
   for (const pattern of spamPatterns) {
-    if (pattern.test(content)) {
+    if (pattern.test(contentWithoutTokens)) {
       return { valid: false, error: 'Message contains spam-like content' };
     }
   }
-  
+
+  // Check for excessive URLs on the original content
+  if (/(https?:\/\/[^\s]+\s*){10,}/.test(content)) {
+    return { valid: false, error: 'Message contains spam-like content' };
+  }
+
   return { valid: true };
 }
 
@@ -247,9 +303,9 @@ export function getClientIP(request: Request): string {
   return 'unknown';
 }
 
-// Validate ObjectId format
+// Validate UUID format (PostgreSQL primary keys)
 export function isValidObjectId(id: string): boolean {
-  return /^[0-9a-fA-F]{24}$/.test(id);
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id);
 }
 
 // Generate secure random tokens
@@ -271,7 +327,7 @@ export function secureCompare(a: string, b: string): boolean {
 // Re-export encryption utilities
 export { encryptMessage, decryptMessage, encryptForStorage, decryptFromStorage, isEncrypted } from './encryption';
 
-// Route param names that must always be Mongo ObjectIds. Composite ids like
+// Route param names that must always be UUIDs. Composite ids like
 // voice roomIds ("channel-<id>", "dm:<id>") are intentionally excluded.
 const OBJECT_ID_PARAM_NAMES = new Set([
   'serverId', 'channelId', 'messageId', 'recipientId', 'userId',
@@ -279,9 +335,8 @@ const OBJECT_ID_PARAM_NAMES = new Set([
 ]);
 
 /**
- * Elysia beforeHandle guard: rejects requests whose ObjectId-typed route
- * params are malformed, so handlers never pass garbage to Mongoose (which
- * would throw a CastError and surface as an unhandled 500).
+ * Elysia beforeHandle guard: rejects requests whose UUID-typed route
+ * params are malformed, so handlers never pass garbage to the database.
  */
 export function rejectInvalidObjectIdParams({
   params,

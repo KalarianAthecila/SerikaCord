@@ -1,20 +1,21 @@
 import { Elysia, t } from 'elysia';
 import { Channel, Message, User, ServerMember, ServerSticker } from '@/lib/models';
 import { authenticateRequest } from '@/lib/services/auth';
-import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
+import { parseCustomEmojis, batchParseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
-import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage, rejectInvalidObjectIdParams } from '@/lib/security';
+import { checkRateLimit, getClientIP, sanitizeInput, validateMessageContent, encryptForStorage, decryptFromStorage, rejectInvalidObjectIdParams } from '@/lib/security';
+import { isSystemUser } from '@/lib/services/systemUsers';
+import { decodeHtmlEntities } from '@/lib/chat/messages';
 import { cache, getPublisher } from '@/lib/db';
-import { Types } from 'mongoose';
+import { config } from '@/lib/config';
+import { randomUUID } from 'crypto';
+import { normalizeId } from '@/lib/db/normalizeId';
 
-// Helper to safely compare IDs (handles both ObjectId and string)
-function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
-  const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
-  const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
-  return str1 === str2;
+function compareIds(id1: string, id2: string): boolean {
+  return normalizeId(id1) === normalizeId(id2);
 }
 
-const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-fA-F]{24}>|<@&[0-9a-fA-F]{24}>|<#(?:[0-9a-fA-F]{24})>|<a?:[a-zA-Z0-9_]+:[0-9a-fA-F]{24}>/g;
+const PRESERVED_MESSAGE_TOKEN_REGEX = /<@!?[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}>|<@&[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}>|<#(?:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})>|<a?:[a-zA-Z0-9_]+:[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}>|<t:-?\d{1,13}(?::[tTdDfFRC](?:\[[^\]]*\])?)?>|<t:-?\d{1,13}>/g;
 
 function sanitizeMessageContent(content: string): string {
   const preservedTokens = new Map<string, string>();
@@ -25,14 +26,37 @@ function sanitizeMessageContent(content: string): string {
     preservedTokens.set(key, token);
     return key;
   });
-  let sanitized = sanitizeInput(withPlaceholders);
+  // Escape stray '<' characters that aren't part of preserved tokens.
+  // The xss library (stripIgnoreTag) treats "< CPU" as a malformed tag and
+  // strips it entirely. Escaping to &lt; here preserves the literal character;
+  // decodeHtmlEntities() at the end restores it back to '<'.
+  const escaped = withPlaceholders.replace(/</g, '&lt;');
+
+  let sanitized = sanitizeInput(escaped);
   for (const [placeholder, token] of preservedTokens) {
     sanitized = sanitized.split(placeholder).join(token);
   }
-  return sanitized;
+  return decodeHtmlEntities(sanitized);
 }
 
-function getPublicPresenceStatus(user: { status?: string | null; presenceLastHeartbeatAt?: Date | string | number | null; isSystem?: boolean }) {
+// Normalize message text for duplicate-spam detection. Mirrors the channel
+// send guard: trivial variations (whitespace, punctuation, an extra character,
+// repeated letters) collapse to the same fingerprint.
+function normalizeForSpamCheck(content: string): string {
+  return content
+    .toLowerCase()
+    .normalize('NFKD')
+    .replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9]/g, '')
+    .replace(/(.)\1+/g, '$1')
+    .trim();
+}
+
+// How many identical (post-normalization) messages in a row before a send is
+// blocked as spam.
+const DUPLICATE_SPAM_THRESHOLD = 4;
+
+function getPublicPresenceStatus(user: { status?: string | null; presenceLastHeartbeatAt?: Date | string | number | null; isSystem?: boolean | null }) {
   return resolveEffectiveStatus({
     status: user.status,
     presenceLastHeartbeatAt: user.presenceLastHeartbeatAt ?? null,
@@ -55,8 +79,21 @@ async function getAuth(headers: Record<string, string | undefined>, cookie: Reco
 const activeConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 const activeDmListConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
-export function emitDmListUpdate(userIds: string[], payload: Record<string, unknown>) {
-  const data = new TextEncoder().encode(`data: ${JSON.stringify(payload)}\n\n`);
+// Shared codecs — instantiating TextEncoder/TextDecoder per event (and per
+// recipient) showed up as avoidable allocation churn on the message fan-out
+// hot path.
+const sseEncoder = new TextEncoder();
+const sseDecoder = new TextDecoder();
+
+// Cross-instance realtime: see channels.ts for the rationale. DMs use two Redis
+// buses — one keyed by DM channel (message events) and one keyed by user id (DM
+// list updates). `originId` prevents the publishing instance double-delivering.
+const INSTANCE_ID = randomUUID();
+const SSE_DM_BUS = 'sse:dm';
+const SSE_DMLIST_BUS = 'sse:dmlist';
+
+function deliverToLocalDmList(userIds: string[], payload: Record<string, unknown>) {
+  const data = sseEncoder.encode(`data: ${JSON.stringify(payload)}\n\n`);
   userIds.forEach((userId) => {
     const streams = activeDmListConnections.get(userId);
     if (!streams) return;
@@ -73,38 +110,111 @@ export function emitDmListUpdate(userIds: string[], payload: Record<string, unkn
   });
 }
 
-// Helper to publish events to DM SSE connections
-function publishToDm(channelId: string, data: object) {
+export function emitDmListUpdate(userIds: string[], payload: Record<string, unknown>) {
+  deliverToLocalDmList(userIds, payload);
+  const pub = getPublisher();
+  if (pub) {
+    pub
+      .publish(SSE_DMLIST_BUS, JSON.stringify({ originId: INSTANCE_ID, userIds, payload }))
+      .catch(() => {});
+  }
+}
+
+function deliverToLocalDm(channelId: string, data: object) {
   const connections = activeConnections.get(channelId);
   if (connections) {
-    const encodedData = `data: ${JSON.stringify(data)}\n\n`;
+    // Encode once, deliver the same bytes to every connection.
+    const encoded = sseEncoder.encode(`data: ${JSON.stringify(data)}\n\n`);
     connections.forEach((controller) => {
       try {
-        controller.enqueue(new TextEncoder().encode(encodedData));
+        controller.enqueue(encoded);
       } catch {
         connections.delete(controller);
       }
     });
+    if (connections.size === 0) activeConnections.delete(channelId);
   }
 }
 
-// Helper to get or create DM channel
-async function getOrCreateDMChannel(userId: string, recipientId: string) {
-  // Find existing DM channel between users
-  let channel = await Channel.findOne({
-    type: 'dm',
-    recipientIds: { $all: [userId, recipientId], $size: 2 },
+// Register a raw SSE write callback into the DM's active connection set.
+// Used by server.ts to bypass Next.js response buffering.
+export function registerRawDmSSEConnection(
+  channelId: string,
+  write: (data: string) => void,
+): () => void {
+  const controller = {
+    enqueue: (data: Uint8Array) => { try { write(sseDecoder.decode(data)); } catch { /* closed */ } },
+  } as unknown as ReadableStreamDefaultController;
+
+  if (!activeConnections.has(channelId)) {
+    activeConnections.set(channelId, new Set());
+  }
+  activeConnections.get(channelId)!.add(controller);
+
+  return () => {
+    const set = activeConnections.get(channelId);
+    if (!set) return;
+    set.delete(controller);
+    // Drop the DM channel's entry once its last stream closes — otherwise the
+    // map keeps one empty Set per DM ever streamed, forever.
+    if (set.size === 0) activeConnections.delete(channelId);
+  };
+}
+
+// Publish a DM event: local + cross-instance fan-out over Redis.
+export function publishToDm(channelId: string, data: object) {
+  deliverToLocalDm(channelId, data);
+  const pub = getPublisher();
+  if (pub) {
+    pub
+      .publish(SSE_DM_BUS, JSON.stringify({ originId: INSTANCE_ID, channelId, data }))
+      .catch(() => {});
+  }
+}
+
+// Subscribe this process to the DM SSE buses. Call once at startup with a
+// dedicated ioredis connection.
+export async function startDmSSEBridge(): Promise<() => void> {
+  const Redis = (await import('ioredis')).default;
+  const sub = new Redis(config.REDIS_URL, { lazyConnect: true, maxRetriesPerRequest: null });
+  sub.on('error', (err: Error) => console.error('DM SSE bridge Redis error:', err.message));
+  await sub.connect().catch((err: Error) => console.error('DM SSE bridge connect failed:', err.message));
+  await sub.subscribe(SSE_DM_BUS, SSE_DMLIST_BUS);
+  sub.on('message', (ch: string, payload: string) => {
+    try {
+      const parsed = JSON.parse(payload);
+      if (parsed.originId === INSTANCE_ID) return;
+      if (ch === SSE_DM_BUS) {
+        deliverToLocalDm(parsed.channelId, parsed.data);
+      } else if (ch === SSE_DMLIST_BUS) {
+        deliverToLocalDmList(parsed.userIds, parsed.payload);
+      }
+    } catch (err) {
+      console.error('DM SSE bridge: bad payload', err);
+    }
   });
+  console.log(`✅ DM SSE bridge subscribed to ${SSE_DM_BUS}, ${SSE_DMLIST_BUS}`);
+  return () => { void sub.quit().catch(() => {}); };
+}
+
+// Helper to get or create DM channel
+export async function getOrCreateDMChannel(userId: string, recipientId: string) {
+  // Find existing DM channel between users using array contains query
+  const channels = await Channel.find({ type: 'dm', recipientId: userId });
+  let channel = channels.find(c =>
+    c.recipientIds &&
+    c.recipientIds.length === 2 &&
+    c.recipientIds.includes(recipientId)
+  );
 
   if (!channel) {
     // Create new DM channel
-    channel = new Channel({
+    channel = await Channel.create({
       type: 'dm',
       name: 'Direct Message',
-      recipientIds: [new Types.ObjectId(userId), new Types.ObjectId(recipientId)],
+      recipientIds: [userId, recipientId],
       position: 0,
     });
-    await channel.save();
   }
 
   return channel;
@@ -120,28 +230,93 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    const channels = await Channel.find({
-      type: { $in: ['dm', 'group_dm'] },
-      recipientIds: user._id,
-    }).sort({ updatedAt: -1 });
+    // Fetch DM and group_dm channels in parallel
+    const [dmChannels, groupDmChannels] = await Promise.all([
+      Channel.find({ type: 'dm', recipientId: user.id }),
+      Channel.find({ type: 'group_dm', recipientId: user.id }),
+    ]);
+    const channels = [...dmChannels, ...groupDmChannels]
+      .sort((a, b) => new Date(b.updatedAt ?? 0).getTime() - new Date(a.updatedAt ?? 0).getTime());
+
+    // Batch fetch all recipient users in a single query
+    const allRecipientIds = [...new Set(
+      channels.flatMap(c => (c.recipientIds || []).filter((id: string) => id !== user.id))
+    )];
+    const allRecipients = allRecipientIds.length > 0 ? await User.find({ id: { in: allRecipientIds } }) : [];
+    const recipientMap = new Map(allRecipients.map(r => [r.id, r]));
+
+    // Batch fetch all last messages in a single query
+    const allLastMessageIds = channels.map(c => c.lastMessageId).filter(Boolean) as string[];
+    const allLastMessages = allLastMessageIds.length > 0 ? await Message.find({ id: { in: allLastMessageIds } }) : [];
+    const lastMessageMap = new Map(allLastMessages.map(m => [m.id, m]));
+
+    // Batch-decrypt all last messages in a single Promise.all (already parallel,
+    // but this avoids interleaving with the channel mapping loop)
+    const lastMsgsToDecrypt = channels
+      .map(c => c.lastMessageId ? lastMessageMap.get(c.lastMessageId) : null)
+      .filter(Boolean) as any[];
+    const decryptedLastContents = await Promise.all(
+      lastMsgsToDecrypt.map(m => decryptFromStorage(m.content || ''))
+    );
+    const lastContentMap = new Map<string, string>();
+    lastMsgsToDecrypt.forEach((m, i) => lastContentMap.set(m.id, decryptedLastContents[i]));
+
+    // Per-DM unread counts: pull the user's read markers, then count unread
+    // (non-own, non-deleted) messages for every channel in one grouped query.
+    // Powers the accent mention badges on DM rows (Discord shows a real count).
+    const { ChannelReadState } = await import('@/lib/models/ChannelReadState');
+    const readRows = await ChannelReadState.findByUser(user.id).catch(() => []);
+    const readMarkers = new Map<string, Date | null>(
+      readRows.map((r: { channelId: string; lastReadAt: Date | string | null }) => [
+        r.channelId,
+        r.lastReadAt ? new Date(r.lastReadAt) : null,
+      ]),
+    );
+    const unreadCounts = await Message.unreadCounts(
+      channels.map((c) => ({ channelId: c.id, after: readMarkers.get(c.id) ?? null })),
+      user.id,
+    ).catch(() => ({} as Record<string, number>));
 
     // Populate recipient info, deduplicating by recipient to avoid showing same user twice
     const seenRecipientIds = new Set<string>();
     const channelsWithRecipients = (
-      await Promise.all(
-        channels.map(async (channel) => {
-          const recipientIds = channel.recipientIds.filter(
-            (id: Types.ObjectId) => !id.equals(user._id)
+      channels.map((channel) => {
+          const recipientIds = (channel.recipientIds || []).filter(
+            (id: string) => id !== user.id
           );
-          const recipients = await User.find({ _id: { $in: recipientIds } }).select(
-            'username displayName avatar status customStatus isPremium isSystem presenceLastHeartbeatAt customization'
-          );
+          const recipients = recipientIds.map((id: string) => recipientMap.get(id)).filter(Boolean) as typeof allRecipients;
+
+          let lastMessage = null;
+          if (channel.lastMessageId) {
+            try {
+              const msg = lastMessageMap.get(channel.lastMessageId);
+              if (msg) {
+                const decryptedContent = lastContentMap.get(msg.id) || '';
+                let displayContent = decryptedContent;
+                if (!displayContent) {
+                  if (msg.attachments && (msg.attachments as any[]).length > 0) {
+                    displayContent = 'Sent an attachment';
+                  } else if (msg.sticker) {
+                    displayContent = 'Sent a sticker';
+                  }
+                }
+                lastMessage = {
+                  id: msg.id,
+                  content: displayContent,
+                  authorId: msg.authorId,
+                  createdAt: msg.createdAt,
+                };
+              }
+            } catch (err) {
+              console.error('Failed to populate lastMessage:', err);
+            }
+          }
 
           return {
-            id: channel._id,
+            id: channel.id,
             type: channel.type,
-            recipients: recipients.map((r) => ({
-              id: r._id,
+            recipients: recipients.map((r: any) => ({
+              id: r.id,
               username: r.username,
               displayName: r.displayName,
               avatar: r.avatar,
@@ -149,14 +324,17 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
               customStatus: r.customStatus,
               isPremium: r.isPremium,
               isSystem: r.isSystem || false,
+              isBot: Boolean(r.isBot),
+              isVerified: Boolean(r.isVerified),
               customization: r.customization || null,
             })),
             lastMessageId: channel.lastMessageId,
+            lastMessage,
             updatedAt: channel.updatedAt,
-            _recipientKey: recipientIds.map((id: Types.ObjectId) => id.toString()).sort().join(','),
+            unreadCount: unreadCounts[channel.id] || 0,
+            _recipientKey: recipientIds.sort().join(','),
           };
         })
-      )
     ).filter((ch) => {
       // For DMs: deduplicate by the other participant's ID (keep the first/most-recent)
       if (ch.type === 'dm') {
@@ -181,7 +359,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     if (!user) {
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
           controller.close();
         },
       });
@@ -190,7 +368,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
 
     let controllerRef: ReadableStreamDefaultController | null = null;
     let pingInterval: NodeJS.Timeout | null = null;
-    const userKey = user._id.toString();
+    const userKey = user.id;
 
     const stream = new ReadableStream({
       start(controller) {
@@ -199,20 +377,30 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           activeDmListConnections.set(userKey, new Set());
         }
         activeDmListConnections.get(userKey)!.add(controller);
-        controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
+        controller.enqueue(sseEncoder.encode('data: {"type":"connected"}\n\n'));
         pingInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
+            controller.enqueue(sseEncoder.encode('data: {"type":"ping"}\n\n'));
           } catch {
             if (pingInterval) clearInterval(pingInterval);
-            activeDmListConnections.get(userKey)?.delete(controller);
+            const set = activeDmListConnections.get(userKey);
+            if (set) {
+              set.delete(controller);
+              if (set.size === 0) activeDmListConnections.delete(userKey);
+            }
           }
         }, 30000);
       },
       cancel() {
         if (pingInterval) clearInterval(pingInterval);
         if (controllerRef) {
-          activeDmListConnections.get(userKey)?.delete(controllerRef);
+          const set = activeDmListConnections.get(userKey);
+          if (set) {
+            set.delete(controllerRef);
+            // Drop the user's entry entirely once their last DM-list stream
+            // closes — otherwise the map keeps one empty Set per user forever.
+            if (set.size === 0) activeDmListConnections.delete(userKey);
+          }
         }
       },
     });
@@ -227,7 +415,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId)) {
+    if (!params.recipientId) {
       set.status = 400;
       return { error: 'Invalid recipient ID' };
     }
@@ -240,96 +428,129 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     }
 
     // Check if friends or can DM (skip for system users)
-    const isFriend = user.friends.some((f: Types.ObjectId | string) => compareIds(f, recipient._id));
-    if (!isFriend && !recipient.isSystem && recipient.settings.privacy.directMessages !== 'everyone') {
-      set.status = 403;
-      return { error: 'You cannot message this user' };
+    // Also skip if a DM channel already exists (e.g. created by broadcast system)
+    const isFriend = (user.friends || []).some((f: string) => compareIds(f, recipient.id));
+    const recipientIsSystem = recipient.isSystem || isSystemUser(recipient.id);
+    if (!isFriend && !recipientIsSystem && (recipient.settings as any)?.privacy?.directMessages !== 'everyone') {
+      // Check if a DM channel already exists — if so, allow viewing messages
+      const existingChannels = await Channel.find({ type: 'dm', recipientId: user.id });
+      const hasExistingChannel = existingChannels.some(c =>
+        c.recipientIds &&
+        c.recipientIds.length === 2 &&
+        c.recipientIds.includes(recipient.id)
+      );
+      if (!hasExistingChannel) {
+        set.status = 403;
+        return { error: 'You cannot message this user' };
+      }
     }
 
     // Get or create DM channel
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
     const limit = Math.min(parseInt(query.limit as string) || 50, 100);
     const before = query.before as string | undefined;
+    const after = query.after as string | undefined;
+    const around = query.around as string | undefined;
 
-    const messageQuery: Record<string, unknown> = { channelId: channel._id };
-    if (before && isValidObjectId(before)) {
-      messageQuery._id = { $lt: new Types.ObjectId(before) };
+    // Build cursor-based DB query
+    const msgFilter: Record<string, unknown> = {
+      channelId: channel.id,
+      isDeleted: false,
+      _limit: limit,
+    };
+
+    if (before) {
+      const beforeMsg = await Message.findById(before);
+      if (beforeMsg) {
+        msgFilter.createdAtBefore = beforeMsg.createdAt;
+      }
+    } else if (after) {
+      // Delta fetch: only messages newer than the client's newest cached one,
+      // so re-opening a DM ships a tiny payload instead of the full last page.
+      const afterMsg = await Message.findById(after);
+      if (afterMsg) {
+        msgFilter.createdAtAfter = afterMsg.createdAt;
+      }
+    } else if (around) {
+      // Load a window ending at (and including) the target message so the client
+      // can scroll to a pinned/searched message that isn't in the live tail.
+      const aroundMsg = await Message.findById(around);
+      if (aroundMsg) {
+        msgFilter.createdAtBefore = new Date(new Date(aroundMsg.createdAt as string | number | Date).getTime() + 1);
+      }
     }
 
-    const messages = await Message.find(messageQuery)
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .populate('authorId', 'username displayName avatar status customStatus isPremium badges isSystem presenceLastHeartbeatAt customization')
-      .populate({
-        path: 'referencedMessageId',
-        select: '_id content authorId createdAt',
-        populate: {
-          path: 'authorId',
-          select: 'username displayName avatar customization',
-        },
-      });
+    const msgs = await Message.find(msgFilter);
+    msgs.reverse(); // oldest first for display
 
-    // Decrypt messages
-    const decryptedMessages = await Promise.all(messages.reverse().map(async (msg) => {
-      const author = msg.authorId as unknown as {
-        _id: Types.ObjectId;
-        username: string;
-        displayName?: string;
-        avatar?: string;
-        status?: string;
-        presenceLastHeartbeatAt?: Date;
-        customStatus?: string;
-        isPremium?: boolean;
-        badges?: string[];
-        isSystem?: boolean;
-        customization?: {
-          profileColor?: string;
-          profileAccentColor?: string;
-          profileGradient?: string[];
-          displayNameStyle?: {
-            font?: string;
-            effect?: string;
-            color?: string;
-            gradient?: string[];
-          };
-        } | null;
-      };
-      const decryptedContent = await decryptFromStorage(msg.content);
-      const emojiResult = await parseCustomEmojis(decryptedContent);
-      const customEmojis = emojiResult.emojis.map(e => ({
+    // Batch fetch authors
+    const authorIds = [...new Set(msgs.map(m => m.authorId).filter(Boolean))];
+    const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+    const authorMap = new Map(authors.map(a => [a.id, a]));
+
+    // Batch fetch referenced messages
+    const refIds = [...new Set(msgs.map(m => m.referencedMessageId).filter((id): id is string => typeof id === 'string' && id.length > 0))];
+    const refMsgs = refIds.length > 0 ? await Message.find({ id: { in: refIds } }) : [];
+    const refMap = new Map(refMsgs.map((m: any) => [m.id, m]));
+
+    // Decrypt messages — batch decrypt + batch emoji parse
+    const decryptedContents = await Promise.all(
+      msgs.map((msg: any) => decryptFromStorage(msg.content || ''))
+    );
+    const emojiResults = await batchParseCustomEmojis(decryptedContents);
+
+    // Batch decrypt referenced message contents
+    const refDecryptEntries = msgs
+      .filter((msg: any) => msg.referencedMessageId && refMap.get(msg.referencedMessageId))
+      .map((msg: any) => {
+        const refMsg = refMap.get(msg.referencedMessageId)!;
+        return { refId: msg.referencedMessageId, content: refMsg.content || '' };
+      });
+    const refDecrypted = await Promise.all(
+      refDecryptEntries.map((entry) => decryptFromStorage(entry.content))
+    );
+    const refContentMap = new Map<string, string>();
+    refDecryptEntries.forEach((entry, i) => refContentMap.set(entry.refId, refDecrypted[i]));
+
+    const decryptedMessages = msgs.map((msg: any, idx: number) => {
+      const author = authorMap.get(msg.authorId);
+      const decryptedContent = decryptedContents[idx];
+      const customEmojis = emojiResults[idx].emojis.map(e => ({
         id: e.id,
         name: e.name,
         animated: e.animated,
         url: e.url,
       }));
 
-      // Build referenced message data
-      let referencedMessage: { id: string; content: string; author?: { id: string; username: string; displayName: string; avatar?: string }; createdAt?: string } | undefined;
+      let referencedMessage: { id: string; content: string; author?: { id: string; username: string; displayName: string; avatar?: string; isBot?: boolean; isVerified?: boolean }; createdAt?: string } | undefined;
       const refRaw = msg.referencedMessageId;
-      if (refRaw && typeof refRaw === 'object' && '_id' in refRaw) {
-        const ref = refRaw as unknown as { _id: Types.ObjectId; content: string; authorId: unknown; createdAt: Date };
-        const refAuthor = ref.authorId as unknown as { _id: Types.ObjectId; username: string; displayName?: string; avatar?: string } | null;
-        const refDecrypted = ref.content ? await decryptFromStorage(ref.content) : '';
-        referencedMessage = {
-          id: ref._id.toString(),
-          content: refDecrypted,
-          author: refAuthor ? {
-            id: refAuthor._id.toString(),
-            username: refAuthor.username,
-            displayName: refAuthor.displayName || refAuthor.username,
-            avatar: refAuthor.avatar,
-          } : undefined,
-          createdAt: ref.createdAt instanceof Date ? ref.createdAt.toISOString() : ref.createdAt,
-        };
+      if (refRaw && typeof refRaw === 'string') {
+        const refMsg = refMap.get(refRaw);
+        if (refMsg) {
+          const refAuthor = refMsg.authorId ? authorMap.get(refMsg.authorId) : null;
+          referencedMessage = {
+            id: refMsg.id,
+            content: refContentMap.get(refRaw) || '',
+            author: refAuthor ? {
+              id: refAuthor.id,
+              username: refAuthor.username,
+              displayName: refAuthor.displayName || refAuthor.username,
+              avatar: refAuthor.avatar ?? undefined,
+              isBot: Boolean(refAuthor.isBot),
+              isVerified: Boolean(refAuthor.isVerified),
+            } : undefined,
+            createdAt: refMsg.createdAt instanceof Date ? refMsg.createdAt.toISOString() : (refMsg.createdAt ?? undefined),
+          };
+        }
       }
 
       return {
-        id: msg._id.toString(),
+        id: msg.id,
         content: decryptedContent,
-        authorId: author._id.toString(),
-        author: {
-          id: author._id.toString(),
+        authorId: msg.authorId,
+        author: author ? {
+          id: author.id,
           username: author.username,
           displayName: author.displayName,
           avatar: author.avatar,
@@ -338,9 +559,11 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           isPremium: author.isPremium,
           badges: author.badges || [],
           isSystem: author.isSystem || false,
+          isBot: Boolean(author.isBot),
+          isVerified: Boolean(author.isVerified),
           customization: author.customization || null,
-        },
-        channelId: msg.channelId.toString(),
+        } : null,
+        channelId: msg.channelId,
         attachments: msg.attachments,
         createdAt: msg.createdAt,
         updatedAt: msg.updatedAt,
@@ -348,17 +571,17 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         edited: msg.edited,
         pinned: msg.pinned,
         reactions: msg.reactions || [],
-        referencedMessageId: typeof msg.referencedMessageId === 'object' && msg.referencedMessageId && '_id' in msg.referencedMessageId
-          ? (msg.referencedMessageId as unknown as { _id: Types.ObjectId })._id.toString()
-          : msg.referencedMessageId?.toString?.(),
+        referencedMessageId: typeof msg.referencedMessageId === 'string' ? msg.referencedMessageId : undefined,
         referencedMessage,
         sticker: msg.sticker || undefined,
+        interaction: (msg as any).interaction ?? undefined,
+        suppressEmbeds: Boolean((msg as any).suppressEmbeds),
       };
-    }));
+    });
 
     return {
       messages: decryptedMessages,
-      channelId: channel._id,
+      channelId: channel.id,
     };
   }, {
     params: t.Object({
@@ -375,13 +598,13 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('message', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('message', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Too many messages', retryAfter: rateLimit.retryAfter };
     }
 
-    if (!isValidObjectId(params.recipientId)) {
+    if (!params.recipientId) {
       set.status = 400;
       return { error: 'Invalid recipient ID' };
     }
@@ -394,18 +617,19 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     }
 
     // Check if blocked
-    if (user.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, recipient._id))) {
+    if ((user.blockedUsers || []).some((b: string) => compareIds(b, recipient.id))) {
       set.status = 403;
       return { error: 'You have blocked this user' };
     }
-    if (recipient.blockedUsers.some((b: Types.ObjectId | string) => compareIds(b, user._id))) {
+    if ((recipient.blockedUsers || []).some((b: string) => compareIds(b, user.id))) {
       set.status = 403;
       return { error: 'You cannot message this user' };
     }
 
     // Check DM permissions (skip for system users)
-    const isFriend = user.friends.some((f: Types.ObjectId | string) => compareIds(f, recipient._id));
-    if (!isFriend && !recipient.isSystem && recipient.settings.privacy.directMessages !== 'everyone') {
+    const isFriend = (user.friends || []).some((f: string) => compareIds(f, recipient.id));
+    const recipientIsSystem = recipient.isSystem || isSystemUser(recipient.id);
+    if (!isFriend && !recipientIsSystem && (recipient.settings as any)?.privacy?.directMessages !== 'everyone') {
       set.status = 403;
       return { error: 'You cannot message this user' };
     }
@@ -417,22 +641,30 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     // Validate sticker if provided
     let stickerData: { id: string; name: string; imageUrl: string; serverId?: string; serverName?: string } | undefined;
     if (sticker?.id) {
-      if (!isValidObjectId(sticker.id)) {
-        set.status = 400;
-        return { error: 'Invalid sticker ID' };
-      }
-      const stickerDoc = await ServerSticker.findById(sticker.id).populate('serverId', 'name').lean();
+      const stickerDoc = await ServerSticker.findById(sticker.id);
       if (!stickerDoc || !stickerDoc.available) {
         set.status = 400;
         return { error: 'Sticker not found' };
       }
-      const populatedServer = stickerDoc.serverId as unknown as { _id: Types.ObjectId; name: string } | null;
+      let stickerServerName: string | undefined;
+      if (stickerDoc.serverId) {
+        const cacheKey = `server:name:${stickerDoc.serverId}`;
+        const cached = await cache.get<string>(cacheKey);
+        if (cached) {
+          stickerServerName = cached;
+        } else {
+          const { Server } = await import('@/lib/models/Server');
+          const stickerServer = await Server.findById(stickerDoc.serverId);
+          stickerServerName = stickerServer?.name;
+          if (stickerServerName) await cache.set(cacheKey, stickerServerName, 3600);
+        }
+      }
       stickerData = {
-        id: stickerDoc._id.toString(),
+        id: stickerDoc.id,
         name: stickerDoc.name,
         imageUrl: stickerDoc.imageUrl,
-        serverId: populatedServer?._id.toString(),
-        serverName: populatedServer?.name,
+        serverId: stickerDoc.serverId,
+        serverName: stickerServerName,
       };
     }
 
@@ -445,13 +677,69 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     // Normalize emoji format
     sanitizedContent = normalizeEmojiFormat(sanitizedContent);
 
-    // Get user's servers for emoji validation
-    const userServerMemberships = await ServerMember.find({ userId: user._id }).select('serverId');
-    const userServerIds = userServerMemberships.map(m => m.serverId);
+    // Get user's servers for emoji validation, create/get DM channel, and
+    // encrypt content — all three are independent and can run in parallel.
+    const [userServerMemberships, channel, encryptedContent] = await Promise.all([
+      ServerMember.find({ userId: user.id }),
+      getOrCreateDMChannel(user.id, params.recipientId),
+      encryptForStorage(sanitizedContent),
+    ]);
+    const userServerIds = userServerMemberships.map((m: any) => m.serverId);
 
-    // Parse and validate custom emojis
-    const emojiResult = await parseCustomEmojis(sanitizedContent, undefined, userServerIds);
-    
+    // Duplicate-spam guard: block sending the same text many times in a row.
+    // Only applies to plain text sends (attachments/stickers are exempt).
+    const spamFingerprint = normalizeForSpamCheck(sanitizedContent);
+    if (spamFingerprint && (!attachments || attachments.length === 0) && !stickerData) {
+      const recent = await Message.find({
+        channelId: channel.id,
+        authorId: user.id,
+        isDeleted: false,
+        _limit: DUPLICATE_SPAM_THRESHOLD,
+      });
+      if (recent.length >= DUPLICATE_SPAM_THRESHOLD) {
+        const recentContents = await Promise.all(
+          recent.map((m: any) => (m.content ? decryptFromStorage(m.content) : Promise.resolve('')))
+        );
+        const allDuplicate = recentContents.every(
+          (c) => normalizeForSpamCheck(c) === spamFingerprint
+        );
+        if (allDuplicate) {
+          set.status = 429;
+          return { error: 'Please stop sending the same message repeatedly.' };
+        }
+      }
+    }
+
+    // Bot (application) slash command in a DM with a bot: dispatch the interaction
+    // to that bot and DON'T persist the raw "/command" text. The bot's response
+    // (or an ephemeral reply) arrives over the DM SSE stream. Only plain-text
+    // sends can be commands (no attachments/sticker).
+    if (
+      recipient.isBot &&
+      content && content.trim().startsWith('/') &&
+      (!attachments || attachments.length === 0) && !stickerData
+    ) {
+      const { dispatchSlashCommand } = await import('@/lib/services/interactions');
+      const consumed = await dispatchSlashCommand({
+        content: content.trim(),
+        channelId: channel.id,
+        serverId: null,
+        author: { id: user.id, username: user.username ?? undefined, displayName: user.displayName ?? undefined },
+        restrictToBotId: recipient.id,
+      }).catch(() => false);
+      if (consumed) {
+        // Signals the client to drop its optimistic message without rendering it.
+        return { interaction: true };
+      }
+    }
+
+    // Parse custom emojis and look up the reply target concurrently — they're
+    // independent, and each can cost a DB round-trip.
+    const [emojiResult, replyMsg] = await Promise.all([
+      parseCustomEmojis(sanitizedContent, undefined, userServerIds),
+      replyTo ? Message.findOne({ id: replyTo, channelId: channel.id, isDeleted: false }) : Promise.resolve(null),
+    ]);
+
     // Store parsed emoji data for the message response
     const customEmojis = emojiResult.emojis.map(e => ({
       id: e.id,
@@ -460,60 +748,56 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       url: e.url,
     }));
 
-    // Get or create DM channel
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
-
-    // Encrypt content for storage
-    const encryptedContent = await encryptForStorage(sanitizedContent);
-
     // Validate reply target if provided
-    let replyRef: Types.ObjectId | undefined;
-    let referencedMessage: { id: string; content: string; author?: { id: string; username: string; displayName: string; avatar?: string }; createdAt?: string } | undefined;
-    if (replyTo && isValidObjectId(replyTo)) {
-      const refMsg = await Message.findOne({ _id: replyTo, channelId: channel._id, isDeleted: false })
-        .populate('authorId', 'username displayName avatar')
-        .lean();
+    let replyRef: string | undefined;
+    let referencedMessage: { id: string; content: string; author?: { id: string; username: string; displayName: string; avatar?: string; isBot?: boolean; isVerified?: boolean }; createdAt?: string } | undefined;
+    if (replyTo) {
+      const refMsg = replyMsg;
       if (refMsg) {
-        replyRef = new Types.ObjectId(replyTo);
-        const refAuthor = refMsg.authorId as unknown as { _id: Types.ObjectId; username: string; displayName?: string; avatar?: string } | null;
-        const refDecrypted = refMsg.content ? await decryptFromStorage(refMsg.content) : '';
+        replyRef = replyTo;
+        const [refAuthor, refDecrypted] = await Promise.all([
+          refMsg.authorId ? User.findById(refMsg.authorId) : Promise.resolve(null),
+          refMsg.content ? decryptFromStorage(refMsg.content) : Promise.resolve(''),
+        ]);
         referencedMessage = {
-          id: refMsg._id.toString(),
+          id: refMsg.id,
           content: refDecrypted,
           author: refAuthor ? {
-            id: refAuthor._id.toString(),
+            id: refAuthor.id,
             username: refAuthor.username,
             displayName: refAuthor.displayName || refAuthor.username,
-            avatar: refAuthor.avatar,
+            avatar: refAuthor.avatar ?? undefined,
+            isBot: Boolean(refAuthor.isBot),
+            isVerified: Boolean(refAuthor.isVerified),
           } : undefined,
-          createdAt: refMsg.createdAt,
+          createdAt: refMsg.createdAt instanceof Date ? refMsg.createdAt.toISOString() : (refMsg.createdAt ?? undefined),
         };
       }
     }
 
     // Create message
-    const message = new Message({
-      channelId: channel._id,
-      authorId: user._id,
+    const message = await Message.create({
+      channelId: channel.id,
+      authorId: user.id,
       content: encryptedContent,
       type: replyRef ? 'reply' : 'default',
       referencedMessageId: replyRef,
       sticker: stickerData,
       attachments: attachments || [],
     });
-    await message.save();
 
-    // Update channel's last message
-    channel.lastMessageId = message._id;
-    channel.updatedAt = new Date();
-    await channel.save();
+    // Update channel's last message — fire-and-forget so the sender's response
+    // (and thus their optimistic-confirm) isn't blocked on this bookkeeping
+    // write. Mirrors the server-channel send path.
+    void Channel.updateById(channel.id, { lastMessageId: message.id, updatedAt: new Date() })
+      .catch(() => { /* best-effort; next message retries the bump */ });
 
     const messageData = {
-      id: message._id.toString(),
-      content: sanitizedContent, // Return decrypted content
-      authorId: user._id.toString(),
+      id: message.id,
+      content: sanitizedContent,
+      authorId: user.id,
       author: {
-        id: user._id.toString(),
+        id: user.id,
         username: user.username,
         displayName: user.displayName,
         avatar: user.avatar,
@@ -522,58 +806,57 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         isPremium: user.isPremium,
         badges: user.badges || [],
         isSystem: user.isSystem || false,
+        isBot: Boolean(user.isBot),
+        isVerified: Boolean(user.isVerified),
         customization: user.customization || null,
       },
-      channelId: channel._id.toString(),
+      channelId: channel.id,
       createdAt: message.createdAt,
       attachments: message.attachments || undefined,
       customEmojis: customEmojis.length > 0 ? customEmojis : undefined,
       sticker: message.sticker || undefined,
-      referencedMessageId: replyRef?.toString(),
+      referencedMessageId: replyRef,
       referencedMessage,
     };
 
     emitDmListUpdate(
-      [user._id.toString(), params.recipientId],
+      [user.id, params.recipientId],
       {
         type: 'dm:list:update',
-        channelId: channel._id.toString(),
+        channelId: channel.id,
         recipientId: params.recipientId,
         message: {
-          id: message._id.toString(),
+          id: message.id,
           content: sanitizedContent.slice(0, 180),
-          authorId: user._id.toString(),
+          authorId: user.id,
           createdAt: message.createdAt,
         },
       }
     );
 
-    // Publish to Redis for real-time
-    try {
-      const publisher = getPublisher();
-      if (publisher) {
-        await publisher.publish(`dm:${channel._id}`, JSON.stringify({
-          type: 'message',
-          message: messageData,
-        }));
-      }
-    } catch (error) {
-      console.error('Failed to publish message:', error);
-    }
+    // Realtime unread signal: fan out a dm_activity event through the activity
+    // stream (always connected via /api/users/@me/activity) so the recipient
+    // gets an instant unread badge even when they're viewing a server, not the
+    // DM list. The DM SSE stream only fires while the DM list is open — without
+    // this, DM unread badges don't appear until the user navigates to the DM list.
+    void (async () => {
+      try {
+        const { fanoutToUsers } = await import('@/lib/api/activity');
+        const createdAtIso = message.createdAt instanceof Date ? message.createdAt.toISOString() : new Date(message.createdAt ?? Date.now()).toISOString();
+        fanoutToUsers(
+          { userIds: [params.recipientId] },
+          {
+            type: 'dm_activity',
+            channelId: channel.id,
+            authorId: user.id,
+            createdAt: createdAtIso,
+          },
+        );
+      } catch { /* best-effort */ }
+    })();
 
-    // Send to SSE connections
-    const channelKey = channel._id.toString();
-    const connections = activeConnections.get(channelKey);
-    if (connections) {
-      const data = `data: ${JSON.stringify({ type: 'message', message: messageData })}\n\n`;
-      connections.forEach((controller) => {
-        try {
-          controller.enqueue(new TextEncoder().encode(data));
-        } catch {
-          // Connection closed
-        }
-      });
-    }
+    // Deliver everywhere: local SSE + cross-instance Redis fan-out (non-blocking).
+    publishToDm(channel.id, { type: 'message', message: messageData });
 
     return messageData;
   }, {
@@ -613,17 +896,17 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       // Return error as SSE event
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: authError || 'Unauthorized' })}\n\n`));
           controller.close();
         },
       });
       return new Response(errorStream, { headers: sseHeaders });
     }
 
-    if (!isValidObjectId(params.recipientId)) {
+    if (!params.recipientId) {
       const errorStream = new ReadableStream({
         start(controller) {
-          controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ type: 'error', error: 'Invalid recipient ID' })}\n\n`));
+          controller.enqueue(sseEncoder.encode(`data: ${JSON.stringify({ type: 'error', error: 'Invalid recipient ID' })}\n\n`));
           controller.close();
         },
       });
@@ -631,8 +914,8 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     }
 
     // Get or create DM channel
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
-    const channelKey = channel._id.toString();
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
+    const channelKey = channel.id;
 
     // Create SSE stream
     let controllerRef: ReadableStreamDefaultController | null = null;
@@ -648,26 +931,30 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
         activeConnections.get(channelKey)!.add(controller);
 
         // Send initial ping
-        controller.enqueue(new TextEncoder().encode('data: {"type":"connected"}\n\n'));
+        controller.enqueue(sseEncoder.encode('data: {"type":"connected"}\n\n'));
 
-        // Keep-alive ping every 30 seconds
+        // Keep-alive ping every 15 seconds
         pingInterval = setInterval(() => {
           try {
-            controller.enqueue(new TextEncoder().encode('data: {"type":"ping"}\n\n'));
+            controller.enqueue(sseEncoder.encode('data: {"type":"ping"}\n\n'));
           } catch {
             if (pingInterval) {
               clearInterval(pingInterval);
             }
             activeConnections.get(channelKey)?.delete(controller);
           }
-        }, 30000);
+        }, 15000);
       },
       cancel() {
         if (pingInterval) {
           clearInterval(pingInterval);
         }
         if (controllerRef) {
-          activeConnections.get(channelKey)?.delete(controllerRef);
+          const set = activeConnections.get(channelKey);
+          if (set) {
+            set.delete(controllerRef);
+            if (set.size === 0) activeConnections.delete(channelKey);
+          }
         }
       },
     });
@@ -686,53 +973,29 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId)) {
+    if (!params.recipientId) {
       set.status = 400;
       return { error: 'Invalid recipient ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
     
     // Set typing in Redis
-    await cache.setTyping(channel._id.toString(), user._id.toString());
+    await cache.setTyping(channel.id, user.id);
 
-    // Publish typing event
-    try {
-      const publisher = getPublisher();
-      if (publisher) {
-        await publisher.publish(`dm:${channel._id}`, JSON.stringify({
-          type: 'typing',
-          userId: user._id,
-          username: user.username,
-        }));
-      }
-    } catch (error) {
-      console.error('Failed to publish typing:', error);
-    }
-
-    const channelKey = channel._id.toString();
-    const connections = activeConnections.get(channelKey);
-    if (connections) {
-      const data = `data: ${JSON.stringify({
-        type: 'typing',
-        userId: user._id,
-        username: user.username,
-      })}\n\n`;
-      connections.forEach((controller) => {
-        try {
-          controller.enqueue(new TextEncoder().encode(data));
-        } catch {
-          // Connection closed and cleaned up during next heartbeat/cancel.
-        }
-      });
-    }
+    // Publish typing event (local + cross-instance).
+    publishToDm(channel.id, {
+      type: 'typing',
+      userId: user.id,
+      username: user.username,
+    });
 
     emitDmListUpdate(
-      [user._id.toString(), params.recipientId],
+      [user.id, params.recipientId],
       {
         type: 'typing',
-        channelId: channel._id.toString(),
-        userId: user._id.toString(),
+        channelId: channel.id,
+        userId: user.id,
         username: user.username,
       }
     );
@@ -751,16 +1014,16 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId) || !isValidObjectId(params.messageId)) {
+    if (!params.recipientId || !params.messageId) {
       set.status = 400;
       return { error: 'Invalid ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
     const message = await Message.findOne({
-      _id: params.messageId,
-      channelId: channel._id,
+      id: params.messageId,
+      channelId: channel.id,
       isDeleted: false,
     });
 
@@ -769,7 +1032,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: 'Message not found' };
     }
 
-    if (!message.authorId.equals(user._id)) {
+    if (message.authorId !== user.id) {
       set.status = 403;
       return { error: 'You can only edit your own messages' };
     }
@@ -789,9 +1052,13 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       message.editedTimestamp = new Date();
     }
 
-    await message.save();
+    await Message.updateById(message.id, {
+      content: message.content,
+      edited: message.edited,
+      editedTimestamp: message.editedTimestamp,
+    });
 
-    publishToDm(channel._id.toString(), {
+    publishToDm(channel.id, {
       type: 'edit',
       messageId: params.messageId,
       content: sanitizedEditContent,
@@ -808,24 +1075,24 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       content: t.String({ maxLength: 4000 }),
     }),
   })
-  // Delete DM message
-  .delete('/:recipientId/messages/:messageId', async ({ headers, cookie, params, set }) => {
+  // Suppress embeds on DM message
+  .post('/:recipientId/messages/:messageId/suppress-embeds', async ({ headers, cookie, params, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user) {
       set.status = 401;
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId) || !isValidObjectId(params.messageId)) {
+    if (!params.recipientId || !params.messageId) {
       set.status = 400;
       return { error: 'Invalid ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
     const message = await Message.findOne({
-      _id: params.messageId,
-      channelId: channel._id,
+      id: params.messageId,
+      channelId: channel.id,
       isDeleted: false,
     });
 
@@ -834,19 +1101,77 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: 'Message not found' };
     }
 
-    if (!message.authorId.equals(user._id)) {
+    if (message.authorId !== user.id) {
+      set.status = 403;
+      return { error: 'You can only suppress embeds on your own messages' };
+    }
+
+    await Message.updateById(message.id, { suppressEmbeds: true });
+
+    publishToDm(channel.id, {
+      type: 'suppress_embeds',
+      messageId: params.messageId,
+    });
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      recipientId: t.String(),
+      messageId: t.String(),
+    }),
+  })
+  // Delete DM message
+  .delete('/:recipientId/messages/:messageId', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    if (!params.recipientId || !params.messageId) {
+      set.status = 400;
+      return { error: 'Invalid ID' };
+    }
+
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
+
+    const message = await Message.findOne({
+      id: params.messageId,
+      channelId: channel.id,
+      isDeleted: false,
+    });
+
+    if (!message) {
+      set.status = 404;
+      return { error: 'Message not found' };
+    }
+
+    if (message.authorId !== user.id) {
       set.status = 403;
       return { error: 'You can only delete your own messages' };
     }
 
-    message.isDeleted = true;
-    message.deletedAt = new Date();
-    await message.save();
+    await Message.updateById(message.id, {
+      isDeleted: true,
+      deletedAt: new Date(),
+    });
 
-    publishToDm(channel._id.toString(), {
+    publishToDm(channel.id, {
       type: 'delete',
       messageId: params.messageId,
     });
+
+    // Clear stale unread on the recipient's other devices if the deleted message
+    // was the one that left this DM unread. Recompute newest remaining message
+    // time and broadcast a reset to both participants. Fire-and-forget.
+    void (async () => {
+      const [latest] = await Message.find({ channelId: channel.id, isDeleted: false, _limit: 1 });
+      const lastMessageAt = latest?.createdAt
+        ? (latest.createdAt instanceof Date ? latest.createdAt.toISOString() : String(latest.createdAt))
+        : null;
+      const { notifyUnreadReset } = await import('@/lib/api/activity');
+      notifyUnreadReset({ userIds: channel.recipientIds || [user.id, params.recipientId] }, channel.id, lastMessageAt);
+    })().catch(() => { /* best-effort */ });
 
     return { success: true };
   }, {
@@ -863,16 +1188,16 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId) || !isValidObjectId(params.messageId)) {
+    if (!params.recipientId || !params.messageId) {
       set.status = 400;
       return { error: 'Invalid ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
     const message = await Message.findOne({
-      _id: params.messageId,
-      channelId: channel._id,
+      id: params.messageId,
+      channelId: channel.id,
       isDeleted: false,
     });
 
@@ -892,22 +1217,23 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: 'Invalid emoji' };
     }
 
-    const existingReaction = message.reactions.find(
-      (r: { emoji: { name: string; id?: string } }) =>
+    const reactions = (message.reactions || []) as Array<{ emoji: { name: string; id?: string; url?: string; animated?: boolean }; count: number; userIds: string[] }>;
+    const existingReaction = reactions.find(
+      (r) =>
         (emojiData.id && r.emoji.id === emojiData.id) ||
         (!emojiData.id && r.emoji.name === emojiData.name)
     );
 
     if (existingReaction) {
-      if (!existingReaction.userIds.some((id: Types.ObjectId | string) => compareIds(id, user._id))) {
-        existingReaction.userIds.push(user._id);
+      if (!existingReaction.userIds.some((id: string) => compareIds(id, user.id))) {
+        existingReaction.userIds.push(user.id);
         existingReaction.count++;
         if (emojiData.url) {
           existingReaction.emoji.url = emojiData.url;
         }
       }
     } else {
-      message.reactions.push({
+      reactions.push({
         emoji: {
           name: emojiData.name,
           id: emojiData.id,
@@ -915,17 +1241,17 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
           url: emojiData.url,
         },
         count: 1,
-        userIds: [user._id],
+        userIds: [user.id],
       });
     }
 
-    await message.save();
+    await Message.updateById(message.id, { reactions });
 
-    publishToDm(channel._id.toString(), {
+    publishToDm(channel.id, {
       type: 'reaction_add',
       messageId: params.messageId,
       emoji: decodedEmoji,
-      userId: user._id.toString(),
+      userId: user.id,
     });
 
     return { success: true };
@@ -946,16 +1272,16 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId) || !isValidObjectId(params.messageId)) {
+    if (!params.recipientId || !params.messageId) {
       set.status = 400;
       return { error: 'Invalid ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
     const message = await Message.findOne({
-      _id: params.messageId,
-      channelId: channel._id,
+      id: params.messageId,
+      channelId: channel.id,
       isDeleted: false,
     });
 
@@ -971,7 +1297,7 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
     }
     const emojiData = await getReactionEmoji(decodedEmoji);
 
-    const reactions = message.reactions as Array<{ emoji: { name: string; id?: string }; count: number; userIds: Types.ObjectId[] }>;
+    const reactions = (message.reactions || []) as Array<{ emoji: { name: string; id?: string }; count: number; userIds: string[] }>;
     const reactionIndex = reactions.findIndex(r =>
       (emojiData?.id && r.emoji.id === emojiData.id) ||
       (!emojiData?.id && r.emoji.name === (emojiData?.name || decodedEmoji))
@@ -979,21 +1305,21 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
 
     if (reactionIndex !== -1) {
       const reaction = reactions[reactionIndex];
-      reaction.userIds = reaction.userIds.filter((id: Types.ObjectId | string) => !compareIds(id, user._id));
+      reaction.userIds = reaction.userIds.filter((id: string) => !compareIds(id, user.id));
       reaction.count = reaction.userIds.length;
 
       if (reaction.count === 0) {
-        message.reactions.splice(reactionIndex, 1);
+        reactions.splice(reactionIndex, 1);
       }
 
-      await message.save();
+      await Message.updateById(message.id, { reactions });
     }
 
-    publishToDm(channel._id.toString(), {
+    publishToDm(channel.id, {
       type: 'reaction_remove',
       messageId: params.messageId,
       emoji: decodedEmoji,
-      userId: user._id.toString(),
+      userId: user.id,
     });
 
     return { success: true };
@@ -1014,45 +1340,44 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId)) {
+    if (!params.recipientId) {
       set.status = 400;
       return { error: 'Invalid recipient ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
-    const pinnedMessages = await Message.find({
-      channelId: channel._id,
-      pinned: true,
-      isDeleted: false,
-    })
-      .sort({ updatedAt: -1 })
-      .limit(50)
-      .populate('authorId', 'username displayName avatar status')
-      .lean();
+    const pinnedMsgs = await Message.find({ channelId: channel.id, pinned: true, isDeleted: false, _limit: 50 });
 
-    const messages = await Promise.all(
-      (pinnedMessages as Array<{ _id: Types.ObjectId; content: string; authorId: unknown; channelId: Types.ObjectId; createdAt: Date; updatedAt: Date; attachments: unknown[] }>).map(async (msg) => {
-        const author = msg.authorId as unknown as { _id: Types.ObjectId; username: string; displayName?: string; avatar?: string; status?: string } | null;
-        const decryptedContent = msg.content ? await decryptFromStorage(msg.content) : '';
-        return {
-          id: msg._id.toString(),
-          content: decryptedContent,
-          authorId: author?._id?.toString(),
-          author: author ? {
-            id: author._id.toString(),
-            username: author.username,
-            displayName: author.displayName || author.username,
-            avatar: author.avatar,
-          } : null,
-          channelId: msg.channelId.toString(),
-          createdAt: msg.createdAt,
-          updatedAt: msg.updatedAt,
-          pinned: true,
-          attachments: msg.attachments || [],
-        };
-      })
+    // Batch fetch authors
+    const authorIds = [...new Set(pinnedMsgs.map(m => m.authorId).filter(Boolean))];
+    const authors = authorIds.length > 0 ? await User.find({ id: { in: authorIds } }) : [];
+    const authorMap = new Map(authors.map(a => [a.id, a]));
+
+    // Batch-decrypt all pinned messages in parallel
+    const decryptedContents = await Promise.all(
+      pinnedMsgs.map((msg: any) => msg.content ? decryptFromStorage(msg.content) : Promise.resolve(''))
     );
+
+    const messages = pinnedMsgs.map((msg: any, idx: number) => {
+      const author = msg.authorId ? authorMap.get(msg.authorId) : null;
+      return {
+        id: msg.id,
+        content: decryptedContents[idx],
+        authorId: msg.authorId,
+        author: author ? {
+          id: author.id,
+          username: author.username,
+          displayName: author.displayName || author.username,
+          avatar: author.avatar,
+        } : null,
+        channelId: msg.channelId,
+        createdAt: msg.createdAt,
+        updatedAt: msg.updatedAt,
+        pinned: true,
+        attachments: msg.attachments || [],
+      };
+    });
 
     return { messages };
   }, {
@@ -1068,16 +1393,16 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId) || !isValidObjectId(params.messageId)) {
+    if (!params.recipientId || !params.messageId) {
       set.status = 400;
       return { error: 'Invalid ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
     const message = await Message.findOne({
-      _id: params.messageId,
-      channelId: channel._id,
+      id: params.messageId,
+      channelId: channel.id,
       isDeleted: false,
     });
 
@@ -1086,10 +1411,9 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: 'Message not found' };
     }
 
-    message.pinned = true;
-    await message.save();
+    await Message.updateById(message.id, { pinned: true });
 
-    publishToDm(channel._id.toString(), {
+    publishToDm(channel.id, {
       type: 'pin_update',
       messageId: params.messageId,
       pinned: true,
@@ -1110,16 +1434,16 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: authError || 'Unauthorized' };
     }
 
-    if (!isValidObjectId(params.recipientId) || !isValidObjectId(params.messageId)) {
+    if (!params.recipientId || !params.messageId) {
       set.status = 400;
       return { error: 'Invalid ID' };
     }
 
-    const channel = await getOrCreateDMChannel(user._id.toString(), params.recipientId);
+    const channel = await getOrCreateDMChannel(user.id, params.recipientId);
 
     const message = await Message.findOne({
-      _id: params.messageId,
-      channelId: channel._id,
+      id: params.messageId,
+      channelId: channel.id,
       isDeleted: false,
     });
 
@@ -1128,10 +1452,9 @@ export const dmRoutes = new Elysia({ prefix: '/dms' })
       return { error: 'Message not found' };
     }
 
-    message.pinned = false;
-    await message.save();
+    await Message.updateById(message.id, { pinned: false });
 
-    publishToDm(channel._id.toString(), {
+    publishToDm(channel.id, {
       type: 'pin_update',
       messageId: params.messageId,
       pinned: false,

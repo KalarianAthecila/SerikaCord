@@ -6,8 +6,8 @@
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --font-sans: var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -98,7 +98,7 @@
   --app-elev-1: 0 8px 30px rgba(0, 0, 0, 0.25);
   --chat-gutter: clamp(0.75rem, 1.2vw, 1rem);
   --chat-row-gap: clamp(0.5rem, 0.9vw, 0.875rem);
-  --chat-media-max-inline: clamp(280px, 58vw, 760px);
+  --chat-media-max-inline: clamp(220px, 40vw, 400px);
   --chat-line-height: 1.48;
   --chat-font-size-fluid: clamp(0.92rem, 0.86rem + 0.2vw, 1rem);
 
@@ -271,6 +271,9 @@ html.theme-midnight body {
       radial-gradient(900px circle at 95% 5%, rgba(46, 181, 203, 0.08), transparent 45%),
       var(--bg-app);
     color: var(--text-primary);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+    text-rendering: optimizeLegibility;
   }
 
   input[type="checkbox"],
@@ -278,6 +281,19 @@ html.theme-midnight body {
   input[type="range"] {
     accent-color: var(--app-accent);
   }
+}
+
+/* Text selection highlight — outside @layer base so it overrides Tailwind utilities */
+::selection {
+  background: color-mix(in srgb, var(--app-accent) 30%, transparent);
+  color: inherit;
+}
+
+input::selection,
+textarea::selection,
+[contenteditable]::selection {
+  background: color-mix(in srgb, var(--app-accent) 35%, transparent);
+  color: inherit;
 }
 
 .premium-panel {
@@ -306,7 +322,7 @@ html.theme-midnight body {
      Smooth scrolling is applied per-call via scrollTo({ behavior: 'smooth' }). */
   scroll-behavior: auto;
   /* Improve paint performance for long message lists. */
-  contain: strict;
+  contain: content;
 }
 
 /* Thin, unobtrusive scrollbar shared by chat + dialog scroll areas. */
@@ -332,16 +348,38 @@ html.theme-midnight body {
   background-clip: padding-box;
 }
 
+/* Fully invisible scrollbar for the narrow vertical server rail. The rail
+   remains scrollable but never shows a visible scrollbar track or thumb,
+   preventing layout shifts when hovering. */
+.server-rail-scroll {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.server-rail-scroll::-webkit-scrollbar {
+  display: none;
+}
+
 .chat-message-row {
   min-width: 0;
   max-width: 100%;
   padding-inline: var(--chat-gutter);
 }
 
+/* Ephemeral ("only you can see this") messages — a persistent blue translucent
+   container (not just a hover state) so it reads as a private, distinct block
+   in both DMs and server channels. */
+.chat-ephemeral {
+  background: color-mix(in srgb, #5865f2 12%, transparent);
+  box-shadow: inset 2px 0 0 0 color-mix(in srgb, #5865f2 60%, transparent);
+}
+.chat-ephemeral:hover {
+  background: color-mix(in srgb, #5865f2 18%, transparent) !important;
+}
+
 .chat-message-body {
   min-width: 0;
   max-width: 100%;
-  font-size: var(--chat-font-size-fluid);
+  font-size: var(--chat-font-size, var(--chat-font-size-fluid));
   line-height: var(--chat-line-height);
   overflow-wrap: anywhere;
   word-break: break-word;
@@ -352,9 +390,19 @@ html.theme-midnight body {
   width: auto;
   height: auto;
   max-width: min(100%, var(--chat-media-max-inline));
-  max-height: min(62vh, 34rem);
+  max-height: min(40vh, 18rem);
   object-fit: contain;
   border-radius: 0.5rem;
+}
+
+/* Wrapper for a GIF + its floating favorite button. A plain shrink-to-fit
+   wrapper sizes to the image's UNCONSTRAINED intrinsic width, leaving dead
+   space beside a max-width/height-capped image where the star would float.
+   Mirroring the media's max constraints here makes the wrapper hug the
+   rendered image so the button stays pinned to the corner. */
+.chat-gif-wrap {
+  max-width: min(100%, var(--chat-media-max-inline));
+  max-height: min(40vh, 18rem);
 }
 
 /* Twemoji styling */
@@ -366,13 +414,12 @@ html.theme-midnight body {
   margin: 0 0.05em;
 }
 
-/* Custom emoji styling */
-.twemoji img.custom-emoji,
-.twemoji-large img.custom-emoji {
+/* Custom emoji styling — sized to match unicode emojis exactly */
+.twemoji img.custom-emoji {
   display: inline-block;
-  width: 1.5em;
-  height: 1.5em;
-  vertical-align: -0.3em;
+  width: 1.2em;
+  height: 1.2em;
+  vertical-align: -0.2em;
   margin: 0 0.05em;
   object-fit: contain;
 }
@@ -380,16 +427,29 @@ html.theme-midnight body {
 /* Large emoji when message is only emojis */
 .twemoji-large img.emoji {
   display: inline-block;
-  width: 2.5em;
-  height: 2.5em;
+  width: 3em;
+  height: 3em;
   vertical-align: -0.4em;
   margin: 0 0.1em;
 }
 
 .twemoji-large img.custom-emoji {
+  display: inline-block;
   width: 3em;
   height: 3em;
-  vertical-align: -0.5em;
+  vertical-align: -0.4em;
+  margin: 0 0.1em;
+  object-fit: contain;
+}
+
+/* Flash highlight when jumping to a message (pinned / search / link) */
+@keyframes message-jump-flash {
+  0% { background-color: color-mix(in srgb, var(--app-accent, #8B5CF6) 35%, transparent); }
+  100% { background-color: transparent; }
+}
+.message-jump-highlight {
+  animation: message-jump-flash 1.6s ease-out;
+  border-radius: 0.375rem;
 }
 
 /* Mobile safe area utilities */
@@ -491,7 +551,7 @@ html.theme-midnight body {
 }
 
 .safe-area-bottom {
-  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+  padding-bottom: max(0.25rem, env(safe-area-inset-bottom));
 }
 
 /* Mirror self-view video */
@@ -579,8 +639,80 @@ html.theme-midnight body {
 
 /* Render optimization: skip layout/paint for off-screen message groups */
 .msg-group-cv {
-  content-visibility: auto;
-  contain-intrinsic-size: auto 88px;
+  /* content-visibility: auto; */
+  /* contain-intrinsic-size: auto 88px; */
+  /* content-visibility forces paint containment, which clips anything drawn
+     outside the box — including the hover toolbar floated above the first row
+     (-top-3). Reserve headroom + a matching negative margin so the toolbar
+     stays inside the painted box without adding vertical gaps between groups. */
+  padding-top: 0.75rem;
+  margin-top: -0.75rem;
+}
+
+/* ─── Accessibility & Display CSS Classes ─── */
+
+/* High contrast: boost text contrast and border visibility */
+html.high-contrast {
+  --app-text: #ffffff;
+  --app-muted: #c0c8da;
+  --app-muted-2: #9aa4b8;
+  --app-border: #3a4458;
+  --border-subtle: #3a4458;
+  --border-strong: #4a5468;
+}
+html.high-contrast.theme-light {
+  --app-text: #000000;
+  --app-muted: #2a3a52;
+  --app-muted-2: #4a5a72;
+  --app-border: #8a96aa;
+  --border-subtle: #8a96aa;
+  --border-strong: #6a768a;
+}
+
+/* Dyslexic font: use a dyslexia-friendly font stack */
+html.dyslexic-font {
+  --font-sans: "OpenDyslexic", "Comic Sans MS", "Verdana", system-ui, -apple-system, sans-serif;
+}
+html.dyslexic-font body,
+html.dyslexic-font .chat-message-body {
+  font-family: "OpenDyslexic", "Comic Sans MS", "Verdana", system-ui, sans-serif;
+  letter-spacing: 0.02em;
+  word-spacing: 0.08em;
+}
+
+/* Message spacing: compact vs cozy */
+html.message-spacing-compact .chat-message-row {
+  padding-block: 0.1rem;
+}
+html.message-spacing-compact .msg-group-cv {
+  padding-top: 0.3rem;
+  margin-top: -0.3rem;
+}
+html.message-spacing-cozy .chat-message-row {
+  padding-block: 0.25rem;
+}
+
+/* Saturation filter applied to the whole app */
+html.saturation-filter body {
+  filter: saturate(var(--saturation, 100%));
+}
+
+/* Disable animated emojis: show only first frame */
+html.no-animated-emojis .twemoji img.emoji[src*=".gif"],
+html.no-animated-emojis img.custom-emoji[src*=".gif"] {
+  background-image: none;
+}
+html.no-animated-emojis img.custom-emoji[alt*="animated"],
+html.no-animated-emojis img.emoji[alt*="animated"] {
+  animation: none !important;
+}
+
+/* Disable animated avatars: show static poster frame */
+html.no-animated-avatars img[src*=".gif"] {
+  pointer-events: none;
+}
+html.no-animated-avatars .avatar-img[src*=".gif"] {
+  content-visibility: hidden;
 }
 
 /* Reduced motion: collapse animations/transitions for users who ask for it */
@@ -593,4 +725,157 @@ html.theme-midnight body {
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+}
+
+/* Holographic animated background keyframes */
+@keyframes holographic-animation {
+  0% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0% 50%;
+  }
+}
+
+.holographic-animation {
+  background-size: 400% 400% !important;
+  animation: holographic-animation 12s ease infinite !important;
+}
+
+/* Radix ScrollArea renders its viewport content as display:table, which grows to
+   the widest child instead of clamping to the container — causing the member
+   list rows to overflow and get clipped offscreen. Force block layout so rows
+   truncate to the sidebar width. */
+.member-scroll-area [data-slot="scroll-area-viewport"] > div,
+.profile-scroll-area [data-slot="scroll-area-viewport"] > div {
+  display: block !important;
+  min-width: 0 !important;
+  width: 100% !important;
+}
+
+/* ─── RTL Support ─── */
+
+/* ─── SerikaCord Loader ─── */
+@keyframes serika-loader-bob {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1.3px); }
+}
+
+@keyframes serika-loader-ear-left {
+  0%, 50%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(-7deg); }
+}
+
+@keyframes serika-loader-ear-right {
+  0%, 50%, 100% { transform: rotate(0deg); }
+  25% { transform: rotate(6deg); }
+}
+
+@keyframes serika-loader-blink {
+  0%, 88%, 100% { transform: scaleY(1); }
+  93%, 96% { transform: scaleY(0.1); }
+}
+
+@keyframes serika-loader-ring {
+  0%, 100% { opacity: 0.15; }
+  50% { opacity: 0.4; }
+}
+
+.serika-loader {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.serika-loader svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.2));
+}
+
+.serika-loader-cat {
+  transform-box: view-box;
+  transform-origin: 24px 27px;
+  animation: serika-loader-bob 2s ease-in-out infinite;
+}
+
+.serika-loader-ring {
+  animation: serika-loader-ring 2s ease-in-out infinite;
+}
+
+.serika-loader-ear-left {
+  transform-box: view-box;
+  transform-origin: 16.5px 16px;
+  animation: serika-loader-ear-left 2s ease-in-out infinite;
+}
+
+.serika-loader-ear-right {
+  transform-box: view-box;
+  transform-origin: 31px 16px;
+  animation: serika-loader-ear-right 2s ease-in-out infinite 0.25s;
+}
+
+.serika-loader-eyes {
+  transform-box: view-box;
+  transform-origin: 24px 31px;
+  animation: serika-loader-blink 3s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .serika-loader-cat,
+  .serika-loader-ring,
+  .serika-loader-ear-left,
+  .serika-loader-ear-right,
+  .serika-loader-eyes {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+}
+
+/* ─── RTL Support ─── */
+html.rtl {
+  --font-sans: var(--font-arabic), var(--font-inter), system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+html.rtl body {
+  font-family: var(--font-arabic), var(--font-inter), system-ui, sans-serif;
+}
+
+/* Flip flex directions in RTL */
+html.rtl .flex-row-reverse-rtl {
+  flex-direction: row-reverse;
+}
+
+/* Logical property helpers for RTL */
+html.rtl .rtl-flip-x {
+  transform: scaleX(-1);
+}
+
+/* In RTL, left becomes right and vice versa */
+html.rtl .rtl-left-auto {
+  left: auto;
+  right: 0;
+}
+
+html.rtl .rtl-right-auto {
+  right: auto;
+  left: 0;
+}
+
+/* Scrollbar position in RTL */
+html.rtl [data-radix-scroll-area-viewport] {
+  direction: rtl;
+}
+
+/* Text alignment defaults */
+html.rtl .text-left-rtl {
+  text-align: right;
+}
+
+html.rtl .text-right-rtl {
+  text-align: left;
 }

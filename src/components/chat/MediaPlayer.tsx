@@ -9,6 +9,7 @@ import {
   VolumeX,
   Download,
 } from "lucide-react";
+import { useGT } from "gt-next";
 
 // Dynamically import VideoPlayer with ssr: false to avoid "self is not defined" error
 // from hls.js/dashjs which reference browser-only globals
@@ -66,9 +67,16 @@ export function VideoMediaPlayer({
           width: 20px !important;
           height: 20px !important;
         }
-        /* Compact controls */
+        /* Auto-hide controls when not hovering or paused */
         .serika-chat-player .serika-video-player-controls {
           padding: 10px 8px 8px !important;
+          opacity: 0 !important;
+          transition: opacity 0.3s ease !important;
+          pointer-events: none !important;
+        }
+        .serika-chat-player:hover .serika-video-player-controls {
+          opacity: 1 !important;
+          pointer-events: auto !important;
         }
         .serika-chat-player .serika-video-player-controls-row {
           gap: 4px !important;
@@ -124,6 +132,7 @@ export function AudioMediaPlayer({
   filename,
   className,
 }: MediaPlayerProps) {
+  const gt = useGT();
   const audioRef = useRef<HTMLAudioElement>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentTime, setCurrentTime] = useState(0);
@@ -213,7 +222,7 @@ export function AudioMediaPlayer({
         <button
           onClick={togglePlay}
           className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-[#8B5CF6] to-[#7C3AED] flex items-center justify-center hover:from-[#7C3AED] hover:to-[#6D28D9] transition-all shadow-lg shadow-purple-500/20"
-          aria-label={isPlaying ? "Pause" : "Play"}
+          aria-label={isPlaying ? gt("Pause") : gt("Play")}
         >
           {isPlaying ? (
             <Pause className="w-5 h-5 text-white" fill="white" />
@@ -224,7 +233,7 @@ export function AudioMediaPlayer({
 
         <div className="flex-1 min-w-0">
           <div className="text-sm text-[var(--text-primary)] truncate mb-1">
-            {filename || "Audio file"}
+            {filename || gt("Audio file")}
           </div>
 
           <div
@@ -255,7 +264,7 @@ export function AudioMediaPlayer({
           <button
             onClick={toggleMute}
             className="text-[var(--app-muted)] hover:text-[var(--text-primary)] transition-colors"
-            aria-label={isMuted ? "Unmute" : "Mute"}
+            aria-label={isMuted ? gt("Unmute") : gt("Mute")}
           >
             {isMuted || volume === 0 ? (
               <VolumeX className="w-4 h-4" />
@@ -271,7 +280,7 @@ export function AudioMediaPlayer({
             value={isMuted ? 0 : volume}
             onChange={handleVolumeChange}
             className="w-16 h-1 accent-[#8B5CF6] cursor-pointer"
-            aria-label="Volume"
+            aria-label={gt("Volume")}
           />
           <a
             href={src}
@@ -279,7 +288,7 @@ export function AudioMediaPlayer({
             target="_blank"
             rel="noopener noreferrer"
             className="text-[var(--app-muted)] hover:text-[var(--text-primary)] transition-colors"
-            aria-label="Download"
+            aria-label={gt("Download")}
           >
             <Download className="w-4 h-4" />
           </a>

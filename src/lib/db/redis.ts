@@ -1,32 +1,45 @@
 import Redis from 'ioredis';
 import { config } from '../config';
 
-let redis: Redis | null = null;
-let subscriber: Redis | null = null;
-let publisher: Redis | null = null;
-let redisAvailable = false;
+// ── Global singleton ────────────────────────────────────────────────────────
+// Same pattern as postgres.ts: Next.js HMR creates new module instances on
+// every reload, which would create duplicate Redis connections (3 per reload:
+// main, publisher, subscriber). Storing on globalThis survives HMR.
+interface RedisGlobal {
+  __redis?: Redis;
+  __redisSubscriber?: Redis;
+  __redisPublisher?: Redis;
+  __redisAvailable?: boolean;
+}
+
+const g = globalThis as unknown as RedisGlobal;
 
 // Check if Redis is available
 export function isRedisAvailable(): boolean {
-  return redisAvailable;
+  return g.__redisAvailable ?? false;
 }
+
+// Track whether we've logged the Redis-down warning to avoid spamming.
+let redisDownWarned = false;
 
 export function getRedis(): Redis | null {
   if (!config.REDIS_URL) {
-    console.warn('⚠️ Redis URL not configured - caching disabled');
+    if (!redisDownWarned) {
+      console.warn('⚠️ Redis URL not configured — caching, sessions, rate limiting, and SSE fan-out are ALL disabled. This will cause severe performance degradation.');
+      redisDownWarned = true;
+    }
     return null;
   }
+  // Reset warning flag once Redis is configured so future disconnects can warn again.
+  redisDownWarned = false;
 
-  if (!redis) {
-    redis = new Redis(config.REDIS_URL, {
-      maxRetriesPerRequest: 1,
+  if (!g.__redis) {
+    g.__redis = new Redis(config.REDIS_URL, {
+      enableOfflineQueue: true,
+      maxRetriesPerRequest: 3,
       retryStrategy: (times) => {
-        if (times > 3) {
-          console.warn('⚠️ Redis connection failed - caching disabled');
-          redisAvailable = false;
-          return null; // Stop retrying
-        }
-        return Math.min(times * 200, 1000);
+        const delay = Math.min(times * 200, 2000);
+        return delay;
       },
       lazyConnect: true,
       enableReadyCheck: true,
@@ -37,60 +50,63 @@ export function getRedis(): Redis | null {
       },
     });
 
-    redis.on('connect', () => {
+    g.__redis.on('connect', () => {
       console.log('✅ Redis connected');
-      redisAvailable = true;
+      g.__redisAvailable = true;
     });
 
-    redis.on('error', (err) => {
+    g.__redis.on('error', (err) => {
       console.error('❌ Redis error:', err.message);
-      redisAvailable = false;
+      g.__redisAvailable = false;
     });
 
-    redis.on('close', () => {
-      console.log('⚠️ Redis connection closed');
-      redisAvailable = false;
+    g.__redis.on('close', () => {
+      console.log('⚠️ Redis connection closed — will retry automatically');
+      g.__redisAvailable = false;
     });
 
-    // Try to connect but don't block
-    redis.connect().catch((err) => {
+    g.__redis.connect().catch((err) => {
       console.warn('⚠️ Redis initial connection failed:', err.message);
-      redisAvailable = false;
+      g.__redisAvailable = false;
     });
   }
   
-  return redisAvailable ? redis : null;
+  return g.__redis;
 }
 
 // For pub/sub - need separate connections
 export function getPublisher(): Redis | null {
-  if (!config.REDIS_URL || !redisAvailable) return null;
+  if (!config.REDIS_URL || !g.__redisAvailable) return null;
 
-  if (!publisher) {
-    publisher = new Redis(config.REDIS_URL, {
-      maxRetriesPerRequest: 1,
+  if (!g.__redisPublisher) {
+    g.__redisPublisher = new Redis(config.REDIS_URL, {
+      enableOfflineQueue: true,
+      maxRetriesPerRequest: 3,
+      retryStrategy: (times) => Math.min(times * 200, 2000),
       lazyConnect: true,
       connectTimeout: 5000,
     });
-    publisher.on('error', (err) => console.error('❌ Redis publisher error:', err.message));
-    publisher.connect().catch(() => {});
+    g.__redisPublisher.on('error', (err) => console.error('❌ Redis publisher error:', err.message));
+    g.__redisPublisher.connect().catch(() => {});
   }
-  return publisher;
+  return g.__redisPublisher;
 }
 
 export function getSubscriber(): Redis | null {
-  if (!config.REDIS_URL || !redisAvailable) return null;
+  if (!config.REDIS_URL || !g.__redisAvailable) return null;
 
-  if (!subscriber) {
-    subscriber = new Redis(config.REDIS_URL, {
-      maxRetriesPerRequest: 1,
+  if (!g.__redisSubscriber) {
+    g.__redisSubscriber = new Redis(config.REDIS_URL, {
+      enableOfflineQueue: true,
+      maxRetriesPerRequest: 3,
+      retryStrategy: (times) => Math.min(times * 200, 2000),
       lazyConnect: true,
       connectTimeout: 5000,
     });
-    subscriber.on('error', (err) => console.error('❌ Redis subscriber error:', err.message));
-    subscriber.connect().catch(() => {});
+    g.__redisSubscriber.on('error', (err) => console.error('❌ Redis subscriber error:', err.message));
+    g.__redisSubscriber.connect().catch(() => {});
   }
-  return subscriber;
+  return g.__redisSubscriber;
 }
 
 // Cache utilities
@@ -138,12 +154,62 @@ export class CacheService {
   async delPattern(pattern: string): Promise<void> {
     if (!this.redis) return;
     try {
-      const keys = await this.redis.keys(pattern);
-      if (keys.length > 0) {
-        await this.redis.del(...keys);
-      }
+      // SCAN (cursor-based, non-blocking) instead of KEYS, which blocks the
+      // single-threaded Redis server for the whole keyspace scan and can stall
+      // every other command under load. Delete in batches as we go.
+      let cursor = '0';
+      do {
+        const [next, keys] = await this.redis.scan(cursor, 'MATCH', pattern, 'COUNT', 100);
+        cursor = next;
+        if (keys.length > 0) {
+          await this.redis.del(...keys);
+        }
+      } while (cursor !== '0');
     } catch (error) {
       console.error('Cache delete pattern error:', error);
+    }
+  }
+
+  // Session tracking — lets us revoke every session a user holds (e.g. on
+  // suspension) without scanning the whole keyspace. Sessions are keyed by a
+  // random id, so we keep a per-user index set of their live session ids.
+  async trackUserSession(userId: string, sessionId: string, ttl: number): Promise<void> {
+    if (!this.redis) return;
+    try {
+      const key = `user:sessions:${userId}`;
+      await this.redis.sadd(key, sessionId);
+      // Keep the index alive at least as long as the longest session.
+      await this.redis.expire(key, ttl);
+    } catch (error) {
+      console.error('Cache trackUserSession error:', error);
+    }
+  }
+
+  async untrackUserSession(userId: string, sessionId: string): Promise<void> {
+    if (!this.redis) return;
+    try {
+      await this.redis.srem(`user:sessions:${userId}`, sessionId);
+    } catch (error) {
+      console.error('Cache untrackUserSession error:', error);
+    }
+  }
+
+  /** Delete every session for a user + their cached record. Returns count killed. */
+  async revokeUserSessions(userId: string): Promise<number> {
+    if (!this.redis) return 0;
+    try {
+      const key = `user:sessions:${userId}`;
+      const sessionIds = await this.redis.smembers(key);
+      if (sessionIds.length > 0) {
+        await this.redis.del(...sessionIds.map((id) => `session:${id}`));
+      }
+      await this.redis.del(key);
+      // Force the next request to re-read the (now banned) user from the DB.
+      await this.redis.del(`user:${userId}`);
+      return sessionIds.length;
+    } catch (error) {
+      console.error('Cache revokeUserSessions error:', error);
+      return 0;
     }
   }
 
@@ -234,8 +300,8 @@ export class CacheService {
 export const cache = new CacheService();
 
 export async function disconnectRedis(): Promise<void> {
-  if (redis) await redis.quit();
-  if (subscriber) await subscriber.quit();
-  if (publisher) await publisher.quit();
+  if (g.__redis) await g.__redis.quit();
+  if (g.__redisSubscriber) await g.__redisSubscriber.quit();
+  if (g.__redisPublisher) await g.__redisPublisher.quit();
   console.log('🔌 Redis connections closed');
 }

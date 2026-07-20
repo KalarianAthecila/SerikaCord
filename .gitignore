@@ -61,3 +61,16 @@ docker-compose.override.yml
 .vscode/
 *.swp
 *.swo
+
+# Rust / Tauri
+/target/
+/desktop-tauri/src-tauri/target/
+
+# General Translation translated files (manually translated, tracked in git)
+# public/_gt/
+
+# Examples to test the API
+/examples
+
+# Code Libaries for the SerikaCord API
+/packages-api

@@ -1,11 +1,11 @@
-import { canManageRoles } from '@/lib/api/servers';
-import { config } from '@/lib/config';
-import { Server, ServerMember, User } from '@/lib/models';
-import { checkRateLimit, getClientIP } from '@/lib/security';
-import { accountsSyncProfile } from '@/lib/services/accountsClient';
+import { Elysia, t } from 'elysia';
 import { authenticateRequest } from '@/lib/services/auth';
 import { storage } from '@/lib/services/storage';
-import { Elysia, t } from 'elysia';
+import { checkRateLimit, getClientIP } from '@/lib/security';
+import { config } from '@/lib/config';
+import { Server, ServerMember, User } from '@/lib/models';
+import { accountsSyncProfile } from '@/lib/services/accountsClient';
+import { getPlatformSettings, type IAllowedFileType } from '@/lib/models/PlatformSettings';
 
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -23,8 +23,16 @@ function isValidImageType(type: string): type is "image/jpeg" | "image/png" | "i
   return config.ALLOWED_IMAGE_TYPES.includes(type as typeof config.ALLOWED_IMAGE_TYPES[number]);
 }
 
-function isValidFileType(type: string): boolean {
-  return config.ALLOWED_FILE_TYPES.includes(type as typeof config.ALLOWED_FILE_TYPES[number]);
+function isValidFileType(type: string, customWhitelist?: IAllowedFileType[]): { allowed: boolean; warn: boolean } {
+  if (customWhitelist && customWhitelist.length > 0) {
+    const entry = customWhitelist.find((f) => f.type === type);
+    if (entry) {
+      return { allowed: true, warn: !entry.safe };
+    }
+    return { allowed: false, warn: false };
+  }
+  const allowed = config.ALLOWED_FILE_TYPES.includes(type as typeof config.ALLOWED_FILE_TYPES[number]);
+  return { allowed, warn: false };
 }
 
 export const uploadRoutes = new Elysia({ prefix: '/upload' })
@@ -36,8 +44,8 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch the actual Mongoose document
-    const userId = authUser._id || (authUser as unknown as { id: string }).id;
+    // Fetch the actual user document
+    const userId = (authUser as any).id || (authUser as any)._id;
     const user = await User.findById(userId);
     if (!user) {
       set.status = 404;
@@ -46,7 +54,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -83,13 +91,12 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
       // Upload new avatar
       const result = await storage.uploadFromFormData(file, 'avatars', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       // Update user, mirroring the change to the accounts service
-      user.avatar = result.url;
-      await user.save();
-      void accountsSyncProfile(user.email, { avatar: result.url });
+      await User.updateById(user.id, { avatar: result.url });
+      void accountsSyncProfile(user.email ?? '', { avatar: result.url });
 
       return {
         success: true,
@@ -114,8 +121,8 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: authError || 'Unauthorized' };
     }
 
-    // Fetch the actual Mongoose document
-    const userId = authUser._id || (authUser as unknown as { id: string }).id;
+    // Fetch the actual user document
+    const userId = (authUser as any).id || (authUser as any)._id;
     const user = await User.findById(userId);
     if (!user) {
       set.status = 404;
@@ -124,7 +131,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -143,10 +150,11 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
     }
 
-    // Validate file size
-    if (file.size > config.MAX_BANNER_SIZE) {
+    // Validate file size (GIFs get a higher limit to preserve animation)
+    const maxBannerSize = file.type === 'image/gif' ? 50 * 1024 * 1024 : config.MAX_BANNER_SIZE;
+    if (file.size > maxBannerSize) {
       set.status = 400;
-      return { error: `File too large. Maximum size is ${config.MAX_BANNER_SIZE / 1024 / 1024}MB.` };
+      return { error: `File too large. Maximum size is ${maxBannerSize / 1024 / 1024}MB.` };
     }
 
     try {
@@ -161,13 +169,12 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
       // Upload new banner
       const result = await storage.uploadFromFormData(file, 'banners', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       // Update user, mirroring the change to the accounts service
-      user.banner = result.url;
-      await user.save();
-      void accountsSyncProfile(user.email, { banner: result.url });
+      await User.updateById(user.id, { banner: result.url });
+      void accountsSyncProfile(user.email ?? '', { banner: result.url });
 
       return {
         success: true,
@@ -180,6 +187,148 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: message };
     }
   }, {
+    body: t.Object({
+      file: t.File(),
+    }),
+  })
+  // Upload server member avatar
+  .post('/server/:serverId/avatar', async ({ headers, cookie, params, body, request, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user.id });
+    if (!member) {
+      set.status = 404;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const ip = getClientIP(request);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
+    if (!rateLimit.success) {
+      set.status = 429;
+      return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
+    }
+
+    const { file } = body;
+    if (!file) {
+      set.status = 400;
+      return { error: 'No file provided' };
+    }
+
+    if (!isValidImageType(file.type)) {
+      set.status = 400;
+      return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
+    }
+
+    if (file.size > config.MAX_AVATAR_SIZE) {
+      set.status = 400;
+      return { error: `File too large. Maximum size is ${config.MAX_AVATAR_SIZE / 1024 / 1024}MB.` };
+    }
+
+    try {
+      if (member.avatar && member.avatar.includes(config.B2_BUCKET_NAME)) {
+        try {
+          await storage.deleteByUrl(member.avatar);
+        } catch (e) {
+          console.error('Failed to delete old server avatar:', e);
+        }
+      }
+
+      const result = await storage.uploadFromFormData(file, 'avatars', {
+        userId: user.id,
+        serverId: params.serverId,
+      });
+
+      await ServerMember.updateById(member.id, { avatar: result.url });
+
+      return {
+        success: true,
+        url: result.url,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to upload avatar';
+      set.status = 500;
+      return { error: message };
+    }
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
+    body: t.Object({
+      file: t.File(),
+    }),
+  })
+  // Upload server member banner
+  .post('/server/:serverId/banner', async ({ headers, cookie, params, body, request, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const member = await ServerMember.findOne({ serverId: params.serverId, userId: user.id });
+    if (!member) {
+      set.status = 404;
+      return { error: 'You are not a member of this server' };
+    }
+
+    const ip = getClientIP(request);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
+    if (!rateLimit.success) {
+      set.status = 429;
+      return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
+    }
+
+    const { file } = body;
+    if (!file) {
+      set.status = 400;
+      return { error: 'No file provided' };
+    }
+
+    if (!isValidImageType(file.type)) {
+      set.status = 400;
+      return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
+    }
+
+    // Validate file size (GIFs get a higher limit to preserve animation)
+    const maxMemberBannerSize = file.type === 'image/gif' ? 50 * 1024 * 1024 : config.MAX_BANNER_SIZE;
+    if (file.size > maxMemberBannerSize) {
+      set.status = 400;
+      return { error: `File too large. Maximum size is ${maxMemberBannerSize / 1024 / 1024}MB.` };
+    }
+
+    try {
+      if (member.banner && member.banner.includes(config.B2_BUCKET_NAME)) {
+        try {
+          await storage.deleteByUrl(member.banner);
+        } catch (e) {
+          console.error('Failed to delete old server banner:', e);
+        }
+      }
+
+      const result = await storage.uploadFromFormData(file, 'banners', {
+        userId: user.id,
+        serverId: params.serverId,
+      });
+
+      await ServerMember.updateById(member.id, { banner: result.url });
+
+      return {
+        success: true,
+        url: result.url,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to upload banner';
+      set.status = 500;
+      return { error: message };
+    }
+  }, {
+    params: t.Object({
+      serverId: t.String(),
+    }),
     body: t.Object({
       file: t.File(),
     }),
@@ -199,14 +348,14 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     }
 
     // Check if user is owner or has manage server permission
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to change the server icon' };
     }
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -247,8 +396,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       });
 
       // Update server
-      server.icon = result.url;
-      await server.save();
+      await Server.updateById(server.id, { icon: result.url });
 
       return {
         success: true,
@@ -282,14 +430,14 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Server not found' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'You do not have permission to change the server banner' };
     }
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -307,9 +455,11 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
     }
 
-    if (file.size > config.MAX_BANNER_SIZE) {
+    // Validate file size (GIFs get a higher limit to preserve animation)
+    const maxServerBannerSize = file.type === 'image/gif' ? 50 * 1024 * 1024 : config.MAX_BANNER_SIZE;
+    if (file.size > maxServerBannerSize) {
       set.status = 400;
-      return { error: `File too large. Maximum size is ${config.MAX_BANNER_SIZE / 1024 / 1024}MB.` };
+      return { error: `File too large. Maximum size is ${maxServerBannerSize / 1024 / 1024}MB.` };
     }
 
     try {
@@ -325,8 +475,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
         serverId: params.serverId,
       });
 
-      server.banner = result.url;
-      await server.save();
+      await Server.updateById(server.id, { banner: result.url });
 
       return {
         success: true,
@@ -346,82 +495,6 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       file: t.File(),
     }),
   })
-  // Upload server tag icon (same rules as emoji: 256KB, image only)
-  .post('/server/:serverId/tag-icon', async ({ headers, cookie, params, body, request, set }) => {
-    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
-    if (!user) {
-      set.status = 401;
-      return { error: authError || 'Unauthorized' };
-    }
-
-    const server = await Server.findById(params.serverId);
-    if (!server) {
-      set.status = 404;
-      return { error: 'Server not found' };
-    }
-
-    if (!server.ownerId.equals(user._id)) {
-      const ok = await canManageRoles(server as any, user._id);
-      if (!ok) {
-        set.status = 403;
-        return { error: 'You do not have permission to manage this server tag' };
-      }
-    }
-
-    const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
-    if (!rateLimit.success) {
-      set.status = 429;
-      return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
-    }
-
-    const { file } = body;
-    if (!file) {
-      set.status = 400;
-      return { error: 'No file provided' };
-    }
-
-    if (!isValidImageType(file.type)) {
-      set.status = 400;
-      return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
-    }
-
-    const MAX_TAG_ICON_SIZE = 256 * 1024; // 256 KB — same as emoji
-    if (file.size > MAX_TAG_ICON_SIZE) {
-      set.status = 400;
-      return { error: 'Tag icon must be less than 256KB.' };
-    }
-
-    try {
-      // Delete old tag icon if present
-      const serverLean = await Server.findById(params.serverId).lean() as any;
-      if (serverLean?.tagIcon) {
-        try { await storage.deleteByUrl(serverLean.tagIcon); } catch { /* best-effort */ }
-      }
-
-      const result = await storage.uploadFromFormData(file, 'emojis', {
-        serverId: params.serverId,
-        userId: user._id.toString(),
-      });
-
-      // Use findByIdAndUpdate + strict:false to bypass Mongoose schema caching
-      await (Server as any).findByIdAndUpdate(
-        params.serverId,
-        { $set: { tagIcon: result.url } },
-        { strict: false }
-      );
-
-      return { success: true, url: result.url };
-    } catch (error: unknown) {
-      const message = error instanceof Error ? error.message : 'Failed to upload tag icon';
-      console.error('Tag icon upload error:', error);
-      set.status = 500;
-      return { error: message };
-    }
-  }, {
-    params: t.Object({ serverId: t.String() }),
-    body: t.Object({ file: t.File() }),
-  })
   // Upload attachment
   .post('/attachment', async ({ headers, cookie, body, request, set }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -432,7 +505,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -445,11 +518,17 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'No file provided' };
     }
 
-    // Validate file type
-    if (!isValidFileType(file.type)) {
+    // Validate file type (use platform settings whitelist if configured)
+    const platformSettings = await getPlatformSettings();
+    const customWhitelist = platformSettings.allowedFileTypes as any[] | undefined;
+    const fileCheck = isValidFileType(file.type, customWhitelist);
+    if (!fileCheck.allowed) {
+      const shouldWarn = platformSettings.warnOnUnknownFileTypes !== false;
       set.status = 400;
-      return { error: 'File type not allowed' };
+      return { error: shouldWarn ? `File type "${file.type}" is not allowed. Only whitelisted file types can be uploaded.` : 'File type not allowed' };
     }
+    // File is allowed — if it's tagged as "bad" or unknown with warnings enabled, include a warning
+    const warning = fileCheck.warn ? 'Warning: This file type is flagged as potentially unsafe.' : undefined;
 
     // Validate file size — premium users get higher limit
     const maxSize = user.isPremium ? config.MAX_FILE_SIZE_PREMIUM : config.MAX_FILE_SIZE;
@@ -461,12 +540,13 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     try {
       const result = await storage.uploadFromFormData(file, 'attachments', {
-        userId: user._id.toString(),
+        userId: user.id,
         channelId,
       });
 
       return {
         success: true,
+        warning,
         attachment: {
           id: result.hash.slice(0, 16),
           filename: file.name,
@@ -502,21 +582,21 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     }
 
     const membership = await ServerMember.findOne({
-      serverId: server._id,
-      userId: user._id,
+      serverId: server.id,
+      userId: user.id,
     });
     if (!membership) {
       set.status = 403;
       return { error: 'You are not a member of this server' };
     }
 
-    if (!server.ownerId.equals(user._id)) {
+    if (server.ownerId !== user.id) {
       set.status = 403;
       return { error: 'Only the server owner can upload stickers' };
     }
 
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -534,16 +614,16 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Invalid file type. Stickers must be PNG/APNG/GIF/WebP.' };
     }
 
-    const MAX_STICKER_SIZE = 512 * 1024;
+    const MAX_STICKER_SIZE = 20 * 1024 * 1024;
     if (file.size > MAX_STICKER_SIZE) {
       set.status = 400;
-      return { error: 'Sticker must be less than 512KB.' };
+      return { error: 'Sticker must be less than 20MB.' };
     }
 
     try {
       const result = await storage.uploadFromFormData(file, 'stickers', {
         serverId: params.serverId,
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       return {
@@ -574,7 +654,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     // Rate limit
     const ip = getClientIP(request);
-    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    const rateLimit = await checkRateLimit('upload', `${user.id}:${ip}`);
     if (!rateLimit.success) {
       set.status = 429;
       return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
@@ -593,16 +673,16 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
       return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
     }
 
-    // Validate file size (256KB max for emoji)
-    const MAX_EMOJI_SIZE = 256 * 1024;
+    // Validate file size (20MB max for emoji)
+    const MAX_EMOJI_SIZE = 20 * 1024 * 1024;
     if (file.size > MAX_EMOJI_SIZE) {
       set.status = 400;
-      return { error: 'Emoji must be less than 256KB.' };
+      return { error: 'Emoji must be less than 20MB.' };
     }
 
     try {
       const result = await storage.uploadFromFormData(file, 'emojis', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       return {
@@ -642,7 +722,7 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
 
     try {
       const result = await storage.uploadFromFormData(file, 'audio', {
-        userId: user._id.toString(),
+        userId: user.id,
       });
 
       return {

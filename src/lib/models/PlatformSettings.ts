@@ -1,52 +1,24 @@
-import mongoose, { Schema } from 'mongoose';
+import { eq } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
+import { config } from '../config';
 
-export interface IPlatformSettings {
-  _id: string;
-  maintenanceMode: boolean;
-  allowRegistration: boolean;
-  globalAnnouncement?: string;
-  announcementUpdatedAt?: Date;
-  encryptionKey: string;
-  oembedWhitelist?: string[];
-  updatedAt: Date;
-}
+export type IAllowedFileType = {
+  type: string;
+  safe: boolean;
+};
 
-const PlatformSettingsSchema = new Schema<IPlatformSettings>({
-  _id: {
-    type: String,
-    default: 'settings',
-  },
-  maintenanceMode: {
-    type: Boolean,
-    default: false,
-  },
-  allowRegistration: {
-    type: Boolean,
-    default: true,
-  },
-  globalAnnouncement: {
-    type: String,
-    default: null,
-  },
-  announcementUpdatedAt: {
-    type: Date,
-  },
-  encryptionKey: {
-    type: String,
-    required: true,
-  },
-  oembedWhitelist: {
-    type: [String],
-    default: [],
-  },
-}, {
-  timestamps: { updatedAt: true, createdAt: false },
-});
+export type IPlatformSettings = typeof schema.platformSettings.$inferSelect;
 
-export const PlatformSettings = mongoose.models.PlatformSettings || 
-  mongoose.model<IPlatformSettings>('PlatformSettings', PlatformSettingsSchema);
+export const PlatformSettings = {
+  table: schema.platformSettings,
 
-// Generate a secure encryption key
+  async findById(id: string = 'settings') {
+    const [row] = await db.select().from(schema.platformSettings).where(eq(schema.platformSettings.id, normalizeId(id))).limit(1);
+    return row || null;
+  },
+};
+
 function generateEncryptionKey(): string {
   const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789!@#$%^&*';
   let key = '';
@@ -56,46 +28,55 @@ function generateEncryptionKey(): string {
   return key;
 }
 
-// Get or create platform settings (singleton)
+const DEFAULT_ALLOWED_FILE_TYPES: IAllowedFileType[] = [
+  ...config.ALLOWED_IMAGE_TYPES.map((type) => ({ type, safe: true })),
+  ...config.ALLOWED_FILE_TYPES
+    .filter((type) => !config.ALLOWED_IMAGE_TYPES.includes(type as typeof config.ALLOWED_IMAGE_TYPES[number]))
+    .map((type) => ({ type, safe: true })),
+];
+
 export async function getPlatformSettings(): Promise<IPlatformSettings> {
-  let settings = await PlatformSettings.findById('settings');
-  
+  let [settings] = await db.select().from(schema.platformSettings).where(eq(schema.platformSettings.id, 'settings')).limit(1);
+
   if (!settings) {
-    settings = await PlatformSettings.create({
-      _id: 'settings',
+    [settings] = await db.insert(schema.platformSettings).values({
+      id: 'settings',
       maintenanceMode: false,
       allowRegistration: true,
       encryptionKey: generateEncryptionKey(),
-    });
+      allowedFileTypes: DEFAULT_ALLOWED_FILE_TYPES,
+    }).returning();
   }
-  
-  return settings;
+
+  return settings!;
 }
 
-// Update platform settings
 export async function updatePlatformSettings(updates: Partial<IPlatformSettings>): Promise<IPlatformSettings> {
-  const settings = await PlatformSettings.findByIdAndUpdate(
-    'settings',
-    { $set: updates },
-    { new: true, upsert: true, setDefaultsOnInsert: true }
-  );
-  
+  const [settings] = await db.update(schema.platformSettings)
+    .set({ ...updates, updatedAt: new Date() })
+    .where(eq(schema.platformSettings.id, 'settings'))
+    .returning();
+
   if (!settings) {
-    throw new Error('Failed to update settings');
+    const [created] = await db.insert(schema.platformSettings).values({
+      id: 'settings',
+      ...updates,
+      encryptionKey: updates.encryptionKey || generateEncryptionKey(),
+    } as typeof schema.platformSettings.$inferInsert).returning();
+    return created;
   }
-  
+
   return settings;
 }
 
-// Get encryption key (cached for performance)
-let cachedEncryptionKey: string | null = null;
+let cachedEncryptionKey: string = '';
 
 export async function getEncryptionKey(): Promise<string> {
   if (cachedEncryptionKey) {
     return cachedEncryptionKey;
   }
-  
+
   const settings = await getPlatformSettings();
-  cachedEncryptionKey = settings.encryptionKey;
+  cachedEncryptionKey = settings.encryptionKey ?? generateEncryptionKey();
   return cachedEncryptionKey;
 }

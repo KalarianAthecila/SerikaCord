@@ -2,9 +2,16 @@ import { config } from '../config';
 import { User, type IUser } from '../models';
 import { cache } from '../db';
 import { accountsInternalVerify } from './accountsClient';
+import { BoundedMap } from '../utils/boundedMap';
 import * as jose from 'jose';
 import * as bcrypt from 'bcryptjs';
 import * as crypto from 'crypto';
+
+// Short-lived in-memory cache for accounts.serika.dev token verification.
+// Without this, every API call with an accounts token hits the accounts service.
+// Bounded: keyed by token hash, so unique keys accumulate as tokens rotate.
+const tokenVerifyCache = new BoundedMap<string, { result: any; expiresAt: number }>(5000);
+const TOKEN_VERIFY_CACHE_TTL_MS = 30_000;
 
 // Session interface
 interface Session {
@@ -116,7 +123,24 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
       payload: payload as unknown as JWTPayload,
     };
   } catch (localError) {
-    // Local verification failed - try accounts API fallback
+    // Local verification failed - try accounts API fallback.
+    // Two cache layers keep the slow (5–10s worst case) external verify off the
+    // hot path: L1 in-memory (per process) and L2 Redis (shared across all app
+    // instances under load balancing). Both use the same short TTL so the
+    // token-revocation window is unchanged.
+    const tokenHash = crypto.createHash('sha256').update(token).digest('hex').slice(0, 32);
+    const cached = tokenVerifyCache.get(tokenHash);
+    if (cached && cached.expiresAt > Date.now()) {
+      return cached.result;
+    }
+
+    const redisKey = `tokenverify:${tokenHash}`;
+    const l2 = await cache.get<{ valid: boolean; payload?: JWTPayload; accountsUser?: any }>(redisKey);
+    if (l2) {
+      tokenVerifyCache.set(tokenHash, { result: l2, expiresAt: Date.now() + TOKEN_VERIFY_CACHE_TTL_MS });
+      return l2;
+    }
+
     try {
       const { data } = await accountsInternalVerify(token);
 
@@ -133,7 +157,7 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
           }
         }
         
-        return {
+        const result = {
           valid: true,
           payload: {
             ...payload,
@@ -143,6 +167,10 @@ export async function verifyToken(token: string): Promise<{ valid: boolean; payl
           },
           accountsUser: data.user,
         };
+        tokenVerifyCache.set(tokenHash, { result, expiresAt: Date.now() + TOKEN_VERIFY_CACHE_TTL_MS });
+        // Share across instances (best-effort; TTL matches the in-memory window).
+        void cache.set(redisKey, result, Math.ceil(TOKEN_VERIFY_CACHE_TTL_MS / 1000));
+        return result;
       }
       
       return { valid: false, error: data.error || 'Token verification failed' };
@@ -176,7 +204,10 @@ export async function createSession(
   };
 
   // Store session in Redis
-  await cache.set(`session:${sessionId}`, session, 90 * 24 * 60 * 60);
+  const sessionTtl = 90 * 24 * 60 * 60;
+  await cache.set(`session:${sessionId}`, session, sessionTtl);
+  // Index the session under the user so it can be revoked on suspension.
+  await cache.trackUserSession(userId, sessionId, sessionTtl);
 
   // Create JWT tokens
   const tokens = await createTokenPair(userId, sessionId);
@@ -190,19 +221,30 @@ export async function getSession(sessionId: string): Promise<Session | null> {
 }
 
 // Delete session (logout)
-export async function deleteSession(sessionId: string): Promise<void> {
+export async function deleteSession(sessionId: string, userId?: string): Promise<void> {
   await cache.del(`session:${sessionId}`);
+  if (userId) await cache.untrackUserSession(userId, sessionId);
 }
 
 // Delete all sessions for user
 export async function deleteAllUserSessions(userId: string): Promise<void> {
-  // Note: This is a simplified implementation. In production, you'd want to track
-  // all session IDs per user in Redis for efficient deletion
-  const user = await User.findById(userId);
-  if (user) {
-    // Clear user cache
-    await cache.del(`user:${userId}`);
-  }
+  await revokeAllUserSessions(userId);
+}
+
+/**
+ * Immediately revoke every session for a user (e.g. on suspension/ban). Kills
+ * all Redis session records + the cached user, so the next authenticated
+ * request from any device fails auth and the client is signed out.
+ */
+export async function revokeAllUserSessions(userId: string): Promise<number> {
+  return cache.revokeUserSessions(userId);
+}
+
+// Convert MongoDB ObjectId (24 hex chars) to UUID format (36 chars with hyphens)
+function mongoIdToUUID(mongoId: string): string {
+  // Pad with zeros to 32 hex chars, then format as UUID
+  const padded = mongoId.padEnd(32, '0');
+  return `${padded.slice(0, 8)}-${padded.slice(8, 12)}-${padded.slice(12, 16)}-${padded.slice(16, 20)}-${padded.slice(20, 32)}`;
 }
 
 // Authenticate request and return user
@@ -231,12 +273,17 @@ export async function authenticateRequest(
   }
 
   // Support both local tokens (sub, sid) and accounts.serika.dev tokens (user.id, userId)
-  const userId = verification.payload.sub || verification.payload.user?.id || verification.payload.userId;
+  let userId = verification.payload.sub || verification.payload.user?.id || verification.payload.userId;
   const sessionId = verification.payload.sid;
   const type = verification.payload.type;
 
   if (!userId) {
     return { user: null, error: 'Invalid token: no user ID' };
+  }
+
+  // Convert MongoDB ObjectId to UUID if needed (24 hex chars = MongoDB ObjectId)
+  if (userId.length === 24 && /^[0-9a-f]{24}$/i.test(userId)) {
+    userId = mongoIdToUUID(userId);
   }
 
   // For local tokens, verify session exists
@@ -262,47 +309,45 @@ export async function authenticateRequest(
     if (!dbUser && verification.accountsUser) {
       const accountsUser = verification.accountsUser;
       
-      // Create user in local database - only set avatar/banner on initial creation
-      dbUser = await User.findOneAndUpdate(
-        { _id: userId },
-        {
-          $setOnInsert: {
-            _id: userId,
-            username: accountsUser.username,
-            email: accountsUser.email || `${accountsUser.username}@serika.dev`,
-            status: 'online',
-            avatar: accountsUser.avatar,
-            banner: accountsUser.banner,
-          },
-          $set: {
-            displayName: accountsUser.displayName || accountsUser.username,
-            isPremium: accountsUser.isPremium || false,
-            isVerified: accountsUser.isVerified || true,
-          },
-        },
-        { upsert: true, new: true }
-      );
-    } else if (dbUser && verification.accountsUser) {
-      // User exists locally - only update non-media fields from accounts API
-      const accountsUser = verification.accountsUser;
-      await User.updateOne(
-        { _id: userId },
-        {
-          $set: {
-            displayName: accountsUser.displayName || accountsUser.username,
-            isPremium: accountsUser.isPremium || false,
-            isVerified: accountsUser.isVerified || true,
-          },
+      // Check if username is already taken by a different user ID.
+      const existingByUsername = await User.findOne({ username: accountsUser.username });
+      if (existingByUsername) {
+        dbUser = existingByUsername;
+        const updateFields: Record<string, any> = {
+          isPremium: accountsUser.isPremium || false,
+          isVerified: accountsUser.isVerified || true,
+        };
+          if (accountsUser.email && !dbUser.email) {
+          updateFields.email = accountsUser.email;
         }
-      );
-      // Refresh dbUser after update
-      dbUser = await User.findById(userId);
+        dbUser = await User.updateById(dbUser.id, updateFields) || dbUser;
+      } else {
+        // Username is free — safe to create
+        dbUser = await User.create({
+          id: userId,
+          username: accountsUser.username,
+          email: accountsUser.email || `${accountsUser.username}@serika.dev`,
+          displayName: accountsUser.displayName || accountsUser.username,
+          status: 'online',
+          avatar: accountsUser.avatar,
+          banner: accountsUser.banner,
+          isPremium: accountsUser.isPremium || false,
+          isVerified: accountsUser.isVerified || true,
+        });
+      }
+    } else if (dbUser && verification.accountsUser) {
+      const accountsUser = verification.accountsUser;
+      const updateFields: Record<string, any> = {
+        isPremium: accountsUser.isPremium || false,
+        isVerified: accountsUser.isVerified || true,
+      };
+      dbUser = await User.updateById(userId, updateFields) || dbUser;
     }
     
     if (!dbUser) {
       return { user: null, error: 'User not found' };
     }
-    user = dbUser.toJSON() as IUser;
+    user = dbUser as IUser;
     // Cache for 5 minutes
     await cache.set(cacheKey, user, 300);
   }
@@ -318,6 +363,7 @@ export async function authenticateRequest(
   return { user: user as IUser, session: undefined };
 }
 
+
 // Refresh access token
 export async function refreshAccessToken(refreshToken: string): Promise<{ tokens?: TokenPair; error?: string }> {
   const verification = await verifyToken(refreshToken);
@@ -326,12 +372,17 @@ export async function refreshAccessToken(refreshToken: string): Promise<{ tokens
     return { error: verification.error || 'Invalid refresh token' };
   }
 
-  const userId = verification.payload.sub || verification.payload.user?.id || verification.payload.userId;
+  let userId = verification.payload.sub || verification.payload.user?.id || verification.payload.userId;
   const sessionId = verification.payload.sid;
   const type = verification.payload.type;
 
   if (!userId) {
     return { error: 'Invalid token: no user ID' };
+  }
+
+  // Convert MongoDB ObjectId to UUID if needed (24 hex chars = MongoDB ObjectId)
+  if (userId.length === 24 && /^[0-9a-f]{24}$/i.test(userId)) {
+    userId = mongoIdToUUID(userId);
   }
 
   // Only check type for local tokens
@@ -368,9 +419,7 @@ export async function registerUser(data: {
   }
 
   // Check if username already exists
-  const existingUsername = await User.findOne({ 
-    username: { $regex: new RegExp(`^${data.username}$`, 'i') } 
-  });
+  const existingUsername = await User.findOne({ username: data.username });
   if (existingUsername) {
     return { error: 'Username already taken' };
   }
@@ -383,7 +432,7 @@ export async function registerUser(data: {
   const verificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 hours
 
   // Create user
-  const user = new User({
+  const user = await User.create({
     email: data.email.toLowerCase(),
     username: data.username,
     displayName: data.displayName || data.username,
@@ -393,26 +442,22 @@ export async function registerUser(data: {
     isVerified: false,
   });
 
-  await user.save();
-
-  return { user: user.toJSON() as IUser };
+  return { user: user as IUser };
 }
 
 // Verify email
 export async function verifyEmail(token: string): Promise<{ success: boolean; error?: string }> {
-  const user = await User.findOne({
-    verificationToken: token,
-    verificationExpires: { $gt: new Date() },
-  });
+  const user = await User.findOne({ verificationToken: token });
 
-  if (!user) {
+  if (!user || (user.verificationExpires && new Date(user.verificationExpires) <= new Date())) {
     return { success: false, error: 'Invalid or expired verification token' };
   }
 
-  user.isVerified = true;
-  user.verificationToken = undefined;
-  user.verificationExpires = undefined;
-  await user.save();
+  await User.updateById(user.id, {
+    isVerified: true,
+    verificationToken: null,
+    verificationExpires: null,
+  });
 
   return { success: true };
 }
@@ -424,12 +469,10 @@ export async function login(
   options?: { userAgent?: string; ipAddress?: string }
 ): Promise<{ user?: IUser; tokens?: TokenPair; error?: string }> {
   // Find user by email or username
-  const user = await User.findOne({
-    $or: [
-      { email: emailOrUsername.toLowerCase() },
-      { username: { $regex: new RegExp(`^${emailOrUsername}$`, 'i') } },
-    ],
-  }).select('+passwordHash');
+  let user = await User.findOne({ email: emailOrUsername.toLowerCase() });
+  if (!user) {
+    user = await User.findOne({ username: emailOrUsername });
+  }
 
   if (!user) {
     return { error: 'Invalid credentials' };
@@ -451,12 +494,9 @@ export async function login(
   }
 
   // Create session
-  const { tokens } = await createSession(user._id.toString(), options);
+  const { tokens } = await createSession(user.id, options);
 
-  // Remove sensitive data
-  const userObj = user.toJSON() as IUser;
-
-  return { user: userObj, tokens };
+  return { user: user as IUser, tokens };
 }
 
 // Request password reset
@@ -471,31 +511,31 @@ export async function requestPasswordReset(email: string): Promise<{ success: bo
   const resetToken = generateToken();
   const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 hour
 
-  user.resetToken = resetToken;
-  user.resetExpires = resetExpires;
-  await user.save();
+  await User.updateById(user.id, {
+    resetToken,
+    resetExpires,
+  });
 
   return { success: true, token: resetToken };
 }
 
 // Reset password
 export async function resetPassword(token: string, newPassword: string): Promise<{ success: boolean; error?: string }> {
-  const user = await User.findOne({
-    resetToken: token,
-    resetExpires: { $gt: new Date() },
-  });
+  const user = await User.findOne({ resetToken: token });
 
-  if (!user) {
+  if (!user || (user.resetExpires && new Date(user.resetExpires) <= new Date())) {
     return { success: false, error: 'Invalid or expired reset token' };
   }
 
-  user.passwordHash = await hashPassword(newPassword);
-  user.resetToken = undefined;
-  user.resetExpires = undefined;
-  await user.save();
+  const passwordHash = await hashPassword(newPassword);
+  await User.updateById(user.id, {
+    passwordHash,
+    resetToken: null,
+    resetExpires: null,
+  });
 
   // Invalidate all sessions
-  await deleteAllUserSessions(user._id.toString());
+  await deleteAllUserSessions(user.id);
 
   return { success: true };
 }
@@ -516,15 +556,14 @@ export async function handleDiscordOAuth(discordUser: {
   let user = await User.findOne({ discordId: discordUser.id });
 
   if (user) {
-    // Update Discord info
-    user.discordUsername = discordUser.username;
-    if (discordUser.avatar && !user.avatar) {
-      user.avatar = `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png`;
-    }
-    await user.save();
+    // Only update discordUsername — NEVER set the user's avatar from Discord
+    const updateFields: Record<string, any> = {
+      discordUsername: discordUser.username,
+    };
+    user = await User.updateById(user.id, updateFields) || user;
 
-    const { tokens } = await createSession(user._id.toString(), options);
-    return { user: user.toJSON() as IUser, tokens, isNew: false };
+    const { tokens } = await createSession(user.id, options);
+    return { user: user as IUser, tokens, isNew: false };
   }
 
   // Check if email already exists
@@ -532,27 +571,26 @@ export async function handleDiscordOAuth(discordUser: {
     user = await User.findOne({ email: discordUser.email.toLowerCase() });
     if (user) {
       // Link Discord to existing account
-      user.discordId = discordUser.id;
-      user.discordUsername = discordUser.username;
-      await user.save();
+      user = await User.updateById(user.id, {
+        discordId: discordUser.id,
+        discordUsername: discordUser.username,
+      }) || user;
 
-      const { tokens } = await createSession(user._id.toString(), options);
-      return { user: user.toJSON() as IUser, tokens, isNew: false };
+      const { tokens } = await createSession(user.id, options);
+      return { user: user as IUser, tokens, isNew: false };
     }
   }
 
-  // Create new user
-  user = new User({
+  // Create new user — do NOT set avatar from Discord; it belongs only in the connection
+  user = await User.create({
     discordId: discordUser.id,
     discordUsername: discordUser.username,
     username: discordUser.username,
     displayName: discordUser.username,
     email: discordUser.email?.toLowerCase(),
-    avatar: discordUser.avatar ? `https://cdn.discordapp.com/avatars/${discordUser.id}/${discordUser.avatar}.png` : undefined,
-    isVerified: !!discordUser.email, // Auto-verify if Discord provides email
+    isVerified: !!discordUser.email,
   });
-  await user.save();
 
-  const { tokens } = await createSession(user._id.toString(), options);
-  return { user: user.toJSON() as IUser, tokens, isNew: true };
+  const { tokens } = await createSession(user.id, options);
+  return { user: user as IUser, tokens, isNew: true };
 }

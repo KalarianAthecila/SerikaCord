@@ -17,7 +17,8 @@ import {
   Check,
   Settings,
   Edit3,
-  Sparkles
+  Sparkles,
+  Clock,
 } from "lucide-react";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
@@ -32,8 +33,11 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { cn } from "@/lib/utils";
-import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
+import { cn, cdnImage } from "@/lib/utils";
+import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle, getProfileBannerStyle } from "@/lib/userDisplayNameStyle";
+import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
+import { useCurrentTime } from "@/hooks/useCurrentTime";
+import { useGT } from "gt-next";
 
 interface UserProfileProps {
   user: {
@@ -52,9 +56,13 @@ interface UserProfileProps {
     mutualServers?: { id: string; name: string; icon?: string }[];
     mutualFriends?: { id: string; username: string; avatar?: string }[];
     pronouns?: string;
+    timezone?: string;
+    showTimezone?: boolean;
     isStaff?: boolean;
     isPartnerOwner?: boolean;
     isPremium?: boolean;
+    isBot?: boolean;
+    isVerified?: boolean;
     customization?: {
       profileColor?: string;
       profileGradient?: string[];
@@ -64,6 +72,7 @@ interface UserProfileProps {
         color?: string;
         gradient?: string[];
       };
+      [key: string]: any;
     };
   };
   isOpen: boolean;
@@ -73,10 +82,10 @@ interface UserProfileProps {
 }
 
 const statusColors = {
-  online: '#57F287',
+  online: '#23A559',
   idle: '#F0B232',
-  dnd: '#ED4245',
-  offline: '#80848E',
+  dnd: '#EF4444',
+  offline: '#80848e',
 };
 
 const statusLabels = {
@@ -89,6 +98,7 @@ const statusLabels = {
 export function UserProfile({ user, isOpen, onClose, variant = 'popup', isCurrentUser = false }: UserProfileProps) {
   const [copiedId, setCopiedId] = useState(false);
   const router = useRouter();
+  const gt = useGT();
 
   const copyUserId = () => {
     navigator.clipboard.writeText(user.id);
@@ -103,7 +113,7 @@ export function UserProfile({ user, isOpen, onClose, variant = 'popup', isCurren
   };
 
   const formatDate = (date?: Date) => {
-    if (!date) return 'Unknown';
+    if (!date) return gt('Unknown');
     return new Intl.DateTimeFormat('en-US', {
       month: 'short',
       day: 'numeric',
@@ -148,7 +158,7 @@ export function UserProfile({ user, isOpen, onClose, variant = 'popup', isCurren
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.9, y: 20 }}
             transition={{ type: "spring", duration: 0.4 }}
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-[95vw] max-h-[80vh] bg-[#232428] rounded-2xl shadow-2xl overflow-hidden z-50 border border-[#1e1f22]"
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[600px] max-w-[95vw] max-h-[80vh] bg-[#232428] rounded-2xl shadow-2xl overflow-y-auto scrollbar-thin z-50 border border-[#1e1f22]"
           >
             <button
               onClick={onClose}
@@ -177,6 +187,11 @@ interface ProfileContentProps {
 
 function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expanded, isCurrentUser, openSettings }: ProfileContentProps) {
   const currentUser = useAuth().user;
+  const localTime = useCurrentTime(user.timezone);
+  const gt = useGT();
+  const bgStyle = getProfileBackgroundStyle(user.customization);
+  const hasBgOverride = Boolean(bgStyle.background || bgStyle.backgroundColor);
+  const isHolographic = user.customization?.profileCardEffect === 'holographic';
   return (
     <div className="relative">
       {/* Banner */}
@@ -188,7 +203,12 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
         style={{
           background: user.banner 
             ? `url(${user.banner}) center/cover`
-            : user.bannerColor || 'linear-gradient(135deg, #5865F2 0%, #EB459E 100%)',
+            : (user.customization?.profileGradient || user.customization?.profileColor)
+              ? undefined
+              : user.bannerColor || 'linear-gradient(135deg, #5865F2 0%, #EB459E 100%)',
+          ...(!user.banner && (user.customization?.profileGradient || user.customization?.profileColor)
+            ? getProfileBannerStyle(user.customization)
+            : {}),
         }}
       >
         {/* Gradient overlay */}
@@ -206,7 +226,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
               "border-[6px] border-[#232428]",
               expanded ? "w-[128px] h-[128px]" : "w-[92px] h-[92px]"
             )}>
-              <AvatarImage src={user.avatar} />
+              <AvatarImage src={cdnImage(user.avatar)} />
               <AvatarFallback className="bg-[#5865F2] text-white text-2xl">
                 {user.displayName.charAt(0).toUpperCase()}
               </AvatarFallback>
@@ -231,7 +251,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                   className="bg-[#5865F2] hover:bg-[#4752c4] text-white h-9 rounded-full px-4"
                 >
                   <Edit3 className="w-4 h-4 mr-1.5" />
-                  Edit Profile
+                  {gt('Edit Profile')}
                 </Button>
                 
                 <Button
@@ -250,7 +270,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                   className="bg-[#5865F2] hover:bg-[#4752c4] text-white h-9 rounded-full px-4"
                 >
                   <MessageCircle className="w-4 h-4 mr-1.5" />
-                  Message
+                  {gt('Message')}
                 </Button>
                 
                 <DropdownMenu>
@@ -266,29 +286,29 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                   <DropdownMenuContent align="end" className="bg-[#111214] border-[#1e1f22] text-[#b5bac1]">
                     <DropdownMenuItem className="hover:bg-[#5865F2] hover:text-white cursor-pointer">
                       <UserPlus className="w-4 h-4 mr-2" />
-                      Add Friend
+                      {gt('Add Friend')}
                     </DropdownMenuItem>
                     <DropdownMenuItem className="hover:bg-[#5865F2] hover:text-white cursor-pointer">
                       <Volume2 className="w-4 h-4 mr-2" />
-                      Call
+                      {gt('Call')}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-[#2b2d31]" />
                     <DropdownMenuItem onClick={copyUserId} className="hover:bg-[#5865F2] hover:text-white cursor-pointer">
                       {copiedId ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
-                      {copiedId ? 'Copied!' : 'Copy User ID'}
+                      {copiedId ? gt('Copied!') : gt('Copy User ID')}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-[#2b2d31]" />
                     <DropdownMenuItem className="hover:bg-[#ED4245] hover:text-white cursor-pointer text-[#ED4245]">
                       <VolumeX className="w-4 h-4 mr-2" />
-                      Mute
+                      {gt('Mute')}
                     </DropdownMenuItem>
                     <DropdownMenuItem className="hover:bg-[#ED4245] hover:text-white cursor-pointer text-[#ED4245]">
                       <Ban className="w-4 h-4 mr-2" />
-                      Block
+                      {gt('Block')}
                     </DropdownMenuItem>
                     <DropdownMenuItem className="hover:bg-[#ED4245] hover:text-white cursor-pointer text-[#ED4245]">
                       <Flag className="w-4 h-4 mr-2" />
-                      Report
+                      {gt('Report')}
                     </DropdownMenuItem>
                   </DropdownMenuContent>
                 </DropdownMenu>
@@ -300,7 +320,14 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
 
       {/* User Info Card */}
       <div className="px-4 pb-4">
-        <div className="bg-[#111214] rounded-xl p-4 mt-3" style={getProfileBackgroundStyle(user.customization)}>
+        <div 
+          className={cn(
+            "rounded-xl p-4 mt-3 transition-all duration-300",
+            !hasBgOverride && !isHolographic && "bg-[#111214] border border-white/[0.06]",
+            isHolographic && "holographic-animation"
+          )} 
+          style={bgStyle}
+        >
           {/* Name & Badges */}
           <div className="flex items-start justify-between mb-1">
             <div>
@@ -309,6 +336,17 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                 style={getDisplayNameStyleInline(user.customization?.displayNameStyle)}
               >
                 {user.displayName}
+                {user.isBot && (
+                  <span className={cn(
+                    "inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase",
+                    user.isVerified 
+                      ? "bg-[#5865F2] text-white" 
+                      : "bg-[#4f545c]/30 text-[#b9bbbe] border border-white/[0.04]"
+                  )}>
+                    {user.isVerified && <Check className="w-3 h-3 shrink-0 stroke-[3px]" />}
+                    {gt('Bot')}
+                  </span>
+                )}
                 {user.badges && user.badges.length > 0 && (
                   <BadgeList badges={user.badges} size="md" maxDisplay={user.badges.length} expandable={false} />
                 )}
@@ -331,7 +369,19 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
           {user.customStatus && (
             <div className="flex items-center gap-2 mt-3 text-sm text-[#b5bac1]">
               <span className="w-2 h-2 rounded-full" style={{ backgroundColor: statusColors[user.status || 'offline'] }} />
-              {user.customStatus}
+              <MarkdownRenderer content={user.customStatus} />
+            </div>
+          )}
+
+          {/* Current Time */}
+          {user.showTimezone && user.timezone && localTime && (
+            <div className="flex items-center gap-2 mt-3 text-sm text-[#b5bac1]">
+              <Clock className="w-4 h-4 text-[#949ba4]" />
+              <span>
+                {localTime}
+              </span>
+              <span className="text-[#4e5058]">•</span>
+              <span className="text-xs text-[#949ba4]">{user.timezone}</span>
             </div>
           )}
 
@@ -341,15 +391,15 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
             <Tabs defaultValue="about" className="w-full">
               <TabsList className="w-full bg-[#1e1f22] rounded-lg h-10">
                 <TabsTrigger value="about" className="flex-1 data-[state=active]:bg-[#5865F2] data-[state=active]:text-white rounded-md">
-                  About Me
+                  {gt('About Me')}
                 </TabsTrigger>
                 {!isCurrentUser && (
                   <>
                     <TabsTrigger value="servers" className="flex-1 data-[state=active]:bg-[#5865F2] data-[state=active]:text-white rounded-md">
-                      Mutual Servers
+                      {gt('Mutual Servers')}
                     </TabsTrigger>
                     <TabsTrigger value="friends" className="flex-1 data-[state=active]:bg-[#5865F2] data-[state=active]:text-white rounded-md">
-                      Mutual Friends
+                      {gt('Mutual Friends')}
                     </TabsTrigger>
                   </>
                 )}
@@ -359,10 +409,10 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                 {isCurrentUser ? (
                   <>
                     {user.bio ? (
-                      <p className="text-sm text-[#dbdee1] whitespace-pre-wrap">{user.bio}</p>
+                      <div className="text-sm text-[#dbdee1] whitespace-pre-wrap"><MarkdownRenderer content={user.bio} /></div>
                     ) : (
                       <div className="text-center py-4">
-                        <p className="text-sm text-[#6d6f78] mb-3">You haven't set a bio yet</p>
+                        <p className="text-sm text-[#6d6f78] mb-3">{gt("You haven't set a bio yet")}</p>
                         <Button
                           size="sm"
                           variant="ghost"
@@ -370,20 +420,20 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                           className="text-[#00A8FC] hover:text-[#00A8FC] hover:bg-[#00A8FC]/10"
                         >
                           <Edit3 className="w-4 h-4 mr-1.5" />
-                          Add Bio
+                          {gt('Add Bio')}
                         </Button>
                       </div>
                     )}
                     
                     <div className="mt-4 space-y-2">
                       <div>
-                        <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1">Member Since</h4>
+                        <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1">{gt('Member Since')}</h4>
                         <p className="text-sm text-[#dbdee1]">{formatDate(user.createdAt)}</p>
                       </div>
                       {user.premiumSince ? (
                         <div>
                           <h4 className="text-xs font-bold uppercase text-[#F0B232] mb-1 flex items-center gap-1">
-                            ✨ Serika+ Since
+                            ✨ {gt('Serika+ Since')}
                           </h4>
                           <p className="text-sm text-[#dbdee1]">{formatDate(user.premiumSince)}</p>
                         </div>
@@ -391,9 +441,9 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                         <div className="mt-4 p-3 rounded-lg bg-gradient-to-r from-[#F0B232]/10 to-[#8B5CF6]/10 border border-[#F0B232]/20">
                           <div className="flex items-center gap-2 mb-2">
                             <Sparkles className="w-4 h-4 text-[#F0B232]" />
-                            <span className="text-sm font-semibold text-[#F0B232]">Get Serika+</span>
+                            <span className="text-sm font-semibold text-[#F0B232]">{gt('Get Serika+')}</span>
                           </div>
-                          <p className="text-xs text-[#b5bac1]">Unlock custom profiles, animated avatars, and more!</p>
+                          <p className="text-xs text-[#b5bac1]">{gt('Unlock custom profiles, animated avatars, and more!')}</p>
                         </div>
                       )}
                     </div>
@@ -401,20 +451,20 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                 ) : (
                   <>
                     {user.bio ? (
-                      <p className="text-sm text-[#dbdee1] whitespace-pre-wrap">{user.bio}</p>
+                      <div className="text-sm text-[#dbdee1] whitespace-pre-wrap"><MarkdownRenderer content={user.bio} /></div>
                     ) : (
-                      <p className="text-sm text-[#6d6f78] italic">No bio yet</p>
+                      <p className="text-sm text-[#6d6f78] italic">{gt('No bio yet')}</p>
                     )}
                     
                     <div className="mt-4 space-y-2">
                       <div>
-                        <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1">Member Since</h4>
+                        <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1">{gt('Member Since')}</h4>
                         <p className="text-sm text-[#dbdee1]">{formatDate(user.createdAt)}</p>
                       </div>
                       {user.premiumSince && (
                         <div>
                           <h4 className="text-xs font-bold uppercase text-[#F0B232] mb-1 flex items-center gap-1">
-                            ✨ Serika+ Since
+                            ✨ {gt('Serika+ Since')}
                           </h4>
                           <p className="text-sm text-[#dbdee1]">{formatDate(user.premiumSince)}</p>
                         </div>
@@ -433,7 +483,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                           {user.mutualServers.map((server) => (
                             <div key={server.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1f22] transition-colors cursor-pointer">
                               <Avatar className="w-10 h-10">
-                                <AvatarImage src={server.icon} />
+                                <AvatarImage src={cdnImage(server.icon)} />
                                 <AvatarFallback className="bg-[#5865F2] text-white text-sm">
                                   {server.name.charAt(0)}
                                 </AvatarFallback>
@@ -443,7 +493,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-[#6d6f78] italic text-center py-8">No mutual servers</p>
+                        <p className="text-sm text-[#6d6f78] italic text-center py-8">{gt('No mutual servers')}</p>
                       )}
                     </ScrollArea>
                   </TabsContent>
@@ -455,7 +505,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                           {user.mutualFriends.map((friend) => (
                             <div key={friend.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1f22] transition-colors cursor-pointer">
                               <Avatar className="w-10 h-10">
-                                <AvatarImage src={friend.avatar} />
+                                <AvatarImage src={cdnImage(friend.avatar)} />
                                 <AvatarFallback className="bg-[#5865F2] text-white text-sm">
                                   {friend.username.charAt(0)}
                                 </AvatarFallback>
@@ -465,7 +515,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                           ))}
                         </div>
                       ) : (
-                        <p className="text-sm text-[#6d6f78] italic text-center py-8">No mutual friends</p>
+                        <p className="text-sm text-[#6d6f78] italic text-center py-8">{gt('No mutual friends')}</p>
                       )}
                     </ScrollArea>
                   </TabsContent>
@@ -477,14 +527,14 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
               {/* About Me */}
               {user.bio && (
                 <div className="mb-3">
-                  <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1.5">About Me</h4>
-                  <p className="text-sm text-[#dbdee1] line-clamp-3">{user.bio}</p>
+                  <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1.5">{gt('About Me')}</h4>
+                  <div className="text-sm text-[#dbdee1] whitespace-pre-wrap break-words line-clamp-3"><MarkdownRenderer content={user.bio} /></div>
                 </div>
               )}
 
               {/* Member Since */}
               <div>
-                <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1.5">Member Since</h4>
+                <h4 className="text-xs font-bold uppercase text-[#b5bac1] mb-1.5">{gt('Member Since')}</h4>
                 <p className="text-sm text-[#dbdee1]">{formatDate(user.createdAt)}</p>
               </div>
 
@@ -492,7 +542,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
               {user.premiumSince && (
                 <div className="mt-2">
                   <h4 className="text-xs font-bold uppercase text-[#F0B232] mb-1.5 flex items-center gap-1">
-                    ✨ Serika+ Since
+                    ✨ {gt('Serika+ Since')}
                   </h4>
                   <p className="text-sm text-[#dbdee1]">{formatDate(user.premiumSince)}</p>
                 </div>

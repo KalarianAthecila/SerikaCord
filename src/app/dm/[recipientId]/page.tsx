@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useParams, useRouter } from "next/navigation";
 import { useAuth } from "@/contexts/AuthContext";
 import { useServer } from "@/contexts/ServerContext";
+import { useUnread } from "@/contexts/UnreadContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Phone, Video, Pin, Users, Loader2, ArrowLeft, Shield, UserPlus, Clock } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Phone, Video, Pin, Users,  ArrowLeft, Shield, UserPlus, Clock } from "lucide-react";
+import { cn, cdnImage } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
 import Link from "next/link";
 import { MessageBar, type MessageBarHandle } from "@/components/chat/MessageBar";
@@ -24,15 +25,21 @@ import { DeleteMessageDialog } from "@/components/chat/DeleteMessageDialog";
 import { PinnedMessagesDialog } from "@/components/chat/PinnedMessagesDialog";
 import { TypingIndicator } from "@/components/chat/TypingIndicator";
 import { useChatSession } from "@/hooks/useChatSession";
+import { useComposerSuggestions } from "@/hooks/useComposerSuggestions";
+import { useSlashCommands } from "@/hooks/useSlashCommands";
+import { playTts } from "@/lib/chat/tts";
 import { useMediaLightbox } from "@/hooks/useMediaLightbox";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import type { ChatMessage, MessageAuthor } from "@/lib/chat/types";
+import { ProfileCard, type ProfileCardUser } from "@/components/user/ProfileCard";
+import { T, useGT } from "gt-next";
+import { Loader } from "@/components/ui/Loader";
 
 const statusColors = {
-  online: "#8B5CF6",
-  idle: "#A78BFA",
+  online: "#23A559",
+  idle: "#F0B232",
   dnd: "#EF4444",
-  offline: "#555555",
+  offline: "#80848e",
 };
 
 interface Recipient extends MessageAuthor {
@@ -41,13 +48,18 @@ interface Recipient extends MessageAuthor {
   createdAt?: string;
   isFriend?: boolean;
   friendRequestSent?: boolean;
+  timezone?: string | null;
+  showTimezone?: boolean;
+  banner?: string | null;
+  pronouns?: string;
 }
 
 export default function DMConversationPage() {
+  const gt = useGT();
   const params = useParams();
   const router = useRouter();
   const recipientId = params.recipientId as string;
-  const { user, isLoading: authLoading } = useAuth();
+  const { user, isLoading: authLoading, refresh } = useAuth();
   const { clearContext } = useServer();
   const isMobile = useIsMobile();
 
@@ -60,7 +72,7 @@ export default function DMConversationPage() {
   const messageListRef = useRef<MessageListHandle>(null);
 
   const [availableServerEmojis, setAvailableServerEmojis] = useState<
-    Array<{ id: string; name: string; url: string; serverId?: string; serverName?: string; animated?: boolean }>
+    Array<{ id: string; name: string; url: string; serverId?: string; serverName?: string; serverIcon?: string; animated?: boolean }>
   >([]);
   const [availableServerStickers, setAvailableServerStickers] = useState<
     Array<{ id: string; name: string; imageUrl: string; serverId?: string; serverName?: string }>
@@ -81,17 +93,110 @@ export default function DMConversationPage() {
         requestAnimationFrame(() => messageListRef.current?.scrollToBottom());
       }
     },
+    onIncomingMessage: (message) => {
+      // Auto TTS for DMs: speak when the listener has TTS enabled or the
+      // message carries the /tts prefix (so both parties hear a /tts message).
+      const ttsEnabled = user?.settings?.accessibility?.tts === true;
+      const hasTtsPrefix = typeof message.content === "string" && message.content.startsWith("/tts ");
+      if ((ttsEnabled || hasTtsPrefix) && message.content) {
+        const authorName = message.author?.displayName || message.author?.username || gt("Someone");
+        void playTts({
+          content: message.content,
+          authorName,
+          rate: user?.settings?.accessibility?.ttsRate,
+          voiceGender: user?.settings?.accessibility?.ttsVoice,
+        });
+      }
+    },
   });
+
+  const { setActiveChannel, markChannelRead } = useUnread();
+  // The DM's channel id isn't in the route (which uses recipientId), so derive
+  // it from loaded messages. Wire it into the unread engine so DM read state
+  // persists to the DB and syncs across devices.
+  const dmChannelId = useMemo(
+    () => chat.messages.find((m) => m.channelId)?.channelId ?? null,
+    [chat.messages]
+  );
+  const newestMessageId = chat.messages.length
+    ? chat.messages[chat.messages.length - 1]?.id
+    : null;
+  useEffect(() => {
+    if (!dmChannelId) return;
+    setActiveChannel(dmChannelId);
+    return () => setActiveChannel(null);
+  }, [dmChannelId, setActiveChannel]);
+  // Keep the read marker current as new messages arrive while the DM is open,
+  // so another device opening the same DM sees it as read.
+  useEffect(() => {
+    if (dmChannelId && newestMessageId && document.visibilityState === "visible") {
+      markChannelRead(dmChannelId);
+    }
+  }, [dmChannelId, newestMessageId, markChannelRead]);
+
+  const { executeCommand } = useSlashCommands({});
+
+  const handleSend = useCallback(async () => {
+    const composer = messageBarRef.current?.getComposer();
+    const rawContent = composer?.getText() ?? "";
+    const trimmed = rawContent.trim();
+
+    if (trimmed.startsWith("/")) {
+      const result = await executeCommand(trimmed);
+      if (result.handled) {
+        if (result.ttsText) {
+          composer?.clear();
+          void playTts({
+            content: result.ttsText,
+            rate: user?.settings?.accessibility?.ttsRate,
+            voiceGender: user?.settings?.accessibility?.ttsVoice,
+          });
+          await chat.sendMessage({ contentOverride: `/tts ${result.ttsText}` });
+        } else if (result.sendAsMessage) {
+          composer?.clear();
+          if (result.ephemeral) {
+            chat.resetTyping();
+            chat.addEphemeralMessage({
+              id: `eph-local-${Date.now()}`,
+              content: result.sendAsMessage,
+              authorId: user?.id,
+              author: user
+                ? {
+                    id: user.id,
+                    username: user.username,
+                    displayName: user.displayName || user.username,
+                    avatar: user.avatar,
+                  }
+                : null,
+              channelId: dmChannelId ?? undefined,
+              createdAt: new Date().toISOString(),
+              ephemeral: true,
+              type: "default",
+            });
+          } else {
+            await chat.sendMessage({ contentOverride: result.sendAsMessage });
+          }
+        } else {
+          composer?.clear();
+          chat.resetTyping();
+        }
+        return;
+      }
+    }
+
+    void chat.sendMessage();
+  }, [executeCommand, chat, user?.settings?.accessibility?.ttsRate, user?.settings?.accessibility?.ttsVoice]);
 
   const lightbox = useMediaLightbox(chat.mediaGallery);
 
   const mentionUsers = useMemo(() => {
-    const entries: Array<{ id: string; username: string; displayName: string }> = [];
+    const entries: Array<{ id: string; username: string; displayName: string; avatar?: string }> = [];
     if (user?.id) {
       entries.push({
         id: user.id,
         username: user.username || user.displayName || "you",
         displayName: user.displayName || user.username || "You",
+        avatar: user.avatar,
       });
     }
     if (recipient?.id) {
@@ -99,6 +204,7 @@ export default function DMConversationPage() {
         id: recipient.id,
         username: recipient.username,
         displayName: recipient.displayName || recipient.username,
+        avatar: recipient.avatar,
       });
     }
     return entries;
@@ -115,6 +221,19 @@ export default function DMConversationPage() {
     }
   }, [user?.id]);
 
+  // Auto-start a call when arriving from a "Call"/"Video Call" menu action
+  // (e.g. from the member list), via ?call=voice|video.
+  useEffect(() => {
+    if (!user?.id || !recipientId || typeof window === "undefined") return;
+    const call = new URLSearchParams(window.location.search).get("call");
+    if (call !== "voice" && call !== "video") return;
+    voiceService.setUserId(user.id);
+    void voiceService.joinChannel(`dm:${recipientId}`, call === "video");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("call");
+    window.history.replaceState(null, "", url.toString());
+  }, [user?.id, recipientId]);
+
   // Cross-server emojis/stickers for the DM pickers (best-effort)
   useEffect(() => {
     fetch("/api/users/@me/emojis")
@@ -127,12 +246,18 @@ export default function DMConversationPage() {
       .catch(() => {});
   }, []);
 
-  // Redirect if not authenticated
+  // Redirect if not authenticated (with recheck to prevent loops)
+  const dmRecheckRef = useRef(false);
   useEffect(() => {
     if (!authLoading && !user) {
+      if (!dmRecheckRef.current) {
+        dmRecheckRef.current = true;
+        void refresh();
+        return;
+      }
       router.push("/login");
     }
-  }, [user, authLoading, router]);
+  }, [user, authLoading, router, refresh]);
 
   // Fetch recipient info
   useEffect(() => {
@@ -147,10 +272,71 @@ export default function DMConversationPage() {
     messageBarRef.current?.getComposer()?.focus();
   }, []);
 
+  /** Begin editing the current user's most recent editable message. */
+  const editLastOwnMessage = () => {
+    if (!user) return false;
+    for (let i = chat.messages.length - 1; i >= 0; i--) {
+      const m = chat.messages[i];
+      if (m.author?.id !== user.id) continue;
+      if (m.pending || m.id.startsWith("temp-")) continue;
+      chat.actions.startEditing(m);
+      messageListRef.current?.scrollToMessage(m.id);
+      return true;
+    }
+    return false;
+  };
+
+  /** Jump to a message, loading the surrounding window first if it isn't in view. */
+  const jumpToMessage = useCallback(async (id: string) => {
+    if (!id) return;
+    const highlight = () => {
+      messageListRef.current?.scrollToMessage(id);
+      const el = document.getElementById(`message-${id}`);
+      if (el) {
+        el.classList.add("message-jump-highlight");
+        setTimeout(() => el.classList.remove("message-jump-highlight"), 1600);
+      }
+    };
+    if (document.getElementById(`message-${id}`)) { highlight(); return; }
+    const ok = await chat.jumpToMessage(id);
+    if (!ok) return;
+    requestAnimationFrame(() => requestAnimationFrame(highlight));
+  }, [chat]);
+
+  // Emoji `:` / slash `/` / `@user` autocomplete for the DM composer.
+  const composerSuggestions = useComposerSuggestions({
+    getComposer: () => messageBarRef.current?.getComposer() ?? null,
+    isServer: false,
+    customEmojis: availableServerEmojis,
+    recipient: recipientId ? { id: recipientId, username: recipient?.username || "", displayName: recipient?.displayName } : null,
+    onAfterInsert: (text) => chat.signalTyping(text),
+  });
+
   const handleKeyPress = (e: React.KeyboardEvent) => {
+    // Let the autocomplete claim arrow/enter/tab/escape while open.
+    if (composerSuggestions.handleKeyDown(e)) return;
+
+    const composer = messageBarRef.current?.getComposer();
+    const isComposerEmpty = (composer?.getText().trim().length ?? 0) === 0;
+
+    // ArrowUp on an empty composer edits your last message (Discord parity).
+    if (e.key === "ArrowUp" && isComposerEmpty && !e.shiftKey && !e.ctrlKey && !e.metaKey && !e.altKey) {
+      if (editLastOwnMessage()) {
+        e.preventDefault();
+        return;
+      }
+    }
+
+    // Escape clears the active reply.
+    if (e.key === "Escape" && chat.actions.replyToMessage) {
+      e.preventDefault();
+      chat.actions.setReplyToMessage(null);
+      return;
+    }
+
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
-      void chat.sendMessage();
+      void handleSend();
     }
   };
 
@@ -180,7 +366,7 @@ export default function DMConversationPage() {
   if (authLoading) {
     return (
       <div className="flex-1 flex items-center justify-center bg-[var(--bg-app)]">
-        <Loader2 className="w-8 h-8 text-[var(--accent-color)] animate-spin" />
+        <Loader size={32} />
       </div>
     );
   }
@@ -202,14 +388,14 @@ export default function DMConversationPage() {
       ) : (
         <>
           <Avatar className="w-20 h-20">
-            <AvatarImage src={recipient?.avatar} />
+            <AvatarImage src={cdnImage(recipient?.avatar)} />
             <AvatarFallback className="bg-[var(--accent-color)] text-white text-2xl">
               {(recipientName || "?").charAt(0).toUpperCase()}
             </AvatarFallback>
           </Avatar>
           <h2 className={cn("text-2xl font-bold text-[var(--text-primary)]", getDisplayNameStyleClasses(recipient?.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient?.customization?.displayNameStyle)}>{recipientName}</h2>
           <p className="text-[var(--text-secondary)]">
-            This is the beginning of your direct message history with{" "}
+            <T>This is the beginning of your direct message history with</T>{" "}
             <span className="font-semibold text-[var(--text-primary)]">{recipientName}</span>
           </p>
         </>
@@ -233,7 +419,7 @@ export default function DMConversationPage() {
 
             <div className="relative flex-shrink-0">
               <Avatar className="w-8 h-8">
-                <AvatarImage src={recipient?.avatar} />
+                <AvatarImage src={cdnImage(recipient?.avatar)} />
                 <AvatarFallback className="bg-[var(--accent-color)] text-white text-sm">
                   {(recipientName || "?").charAt(0).toUpperCase()}
                 </AvatarFallback>
@@ -246,7 +432,7 @@ export default function DMConversationPage() {
 
             <div className="flex items-center gap-2 min-w-0">
               <span className={cn("font-semibold text-[var(--text-primary)] truncate self-center", getDisplayNameStyleClasses(recipient?.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient?.customization?.displayNameStyle)}>
-                {recipientName || "Loading..."}
+                {recipientName || gt("Loading...")}
               </span>
               <SystemPill isSystem={recipient?.isSystem} />
               <StaffPill badges={recipient?.badges} />
@@ -257,21 +443,21 @@ export default function DMConversationPage() {
             <button
               onClick={() => void voiceService.joinChannel(`dm:${recipientId}`)}
               className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors rounded-md hover:bg-[var(--bg-hover)]"
-              title="Start Voice Call"
+              title={gt("Start Voice Call")}
             >
               <Phone className="w-5 h-5" />
             </button>
             <button
               onClick={() => void voiceService.joinChannel(`dm:${recipientId}`, true)}
               className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors rounded-md hover:bg-[var(--bg-hover)] hidden sm:block"
-              title="Start Video Call"
+              title={gt("Start Video Call")}
             >
               <Video className="w-5 h-5" />
             </button>
             <button
               onClick={() => setShowPins(true)}
               className="p-2 text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors rounded-md hover:bg-[var(--bg-hover)]"
-              title="Pinned Messages"
+              title={gt("Pinned Messages")}
             >
               <Pin className="w-5 h-5" />
             </button>
@@ -295,36 +481,45 @@ export default function DMConversationPage() {
           groups={chat.groupedMessages}
           isLoading={chat.isLoading}
           hasMoreOlder={chat.hasMoreOlder}
+          hasMoreNewer={chat.hasMoreNewer}
           isLoadingMore={chat.isLoadingMore}
           loadOlderMessages={chat.loadOlderMessages}
+          loadNewerMessages={chat.loadNewerMessages}
           actions={chat.actions}
           currentUserId={user.id}
+          canPin
           swipeEnabled={isMobile}
           mentionUsers={mentionUsers}
+          serverEmojis={availableServerEmojis}
           availableServerEmojis={availableServerEmojis}
           onMediaClick={lightbox.openMediaViewer}
+          onSuppressEmbeds={chat.actions.suppressEmbeds}
           onReplyFocus={focusComposer}
           welcomeHeader={welcomeHeader}
-          emptyText={`Say hi to ${recipientName || "your friend"}!`}
+          emptyText={`${gt("Say hi to")} ${recipientName || gt("your friend")}!`}
           resetKey={recipientId}
         />
 
         <TypingIndicator text={chat.typingStatusText} className="pb-1" />
 
         {/* Message input */}
-        <div className="p-2 sm:p-4 pt-0 safe-area-bottom">
+        <div className="pt-0">
           {recipient?.isSystem ? (
             <div className="flex items-center gap-2 px-4 py-3 bg-[var(--bg-card)]/50 border border-[var(--border-subtle)] rounded-md text-[var(--text-secondary)] text-sm">
               <Shield className="w-4 h-4 text-blue-400 flex-shrink-0" />
-              <span>This is an official Serika system account used to share important updates and announcements with the community.</span>
+              <span><T>This is an official Serika system account used to share important updates and announcements with the community.</T></span>
             </div>
           ) : (
             <MessageBar
               ref={messageBarRef}
-              placeholder={`Message @${recipientName || "..."}`}
-              ariaLabel={`Message @${recipientName || "..."}`}
-              onSend={() => void chat.sendMessage()}
+              placeholder={`${gt("Message")} @${recipientName || "..."}`}
+              ariaLabel={`${gt("Message")} @${recipientName || "..."}`}
+              onSend={() => void handleSend()}
               onChange={handleMessageInputChange}
+              onCaretMove={(text, caret) => composerSuggestions.onCaretMove(text, caret)}
+              mentionSuggestions={composerSuggestions.mentionSuggestions}
+              onMentionSelect={(s) => composerSuggestions.onMentionSelect(s as unknown as import("@/hooks/useComposerSuggestions").ComposerSuggestion)}
+              activeMentionIndex={composerSuggestions.activeMentionIndex}
               onKeyDown={handleKeyPress}
               onEmojiSelect={chat.handleEmojiSelect}
               onGifSelect={chat.handleGifSelect}
@@ -334,121 +529,32 @@ export default function DMConversationPage() {
               availableServerStickers={availableServerStickers}
               replyTo={chat.actions.replyToMessage}
               onCancelReply={() => chat.actions.setReplyToMessage(null)}
+              draftKey={recipientId ? `dm:${recipientId}` : undefined}
             />
           )}
 
           {/* Voice call UI for DM calls */}
           <VideoGrid />
-          <VoiceBar channelName={recipientName || "DM Call"} />
+          <VoiceBar channelName={recipientName || gt("DM Call")} />
         </div>
       </div>
 
       {/* User profile sidebar */}
       {showUserProfile && (
-        <div className="w-[340px] bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col animate-slide-in-right">
+        <div className="w-[340px] shrink-0 bg-[var(--bg-app)] border-l border-[var(--border-subtle)] hidden lg:flex flex-col h-full overflow-hidden">
           {recipientLoading ? (
             <UserProfileSkeleton />
           ) : recipient ? (
-            <>
-              <div className="h-[120px] relative" style={getProfileBackgroundStyle(recipient.customization) || { backgroundColor: 'var(--accent-color)' }}>
-                {recipient.isPremium && (
-                  <div className="absolute top-2 right-2 px-2 py-1 bg-black/40 rounded-full flex items-center gap-1">
-                    <span className="text-xs text-white font-medium">Serika+</span>
-                  </div>
-                )}
-              </div>
-
-              <div className="px-4 relative">
-                <div className="absolute -top-16">
-                  <div className="relative">
-                    <Avatar className="w-24 h-24 border-[6px] border-[var(--bg-app)]">
-                      <AvatarImage src={recipient.avatar} />
-                      <AvatarFallback className="bg-[var(--accent-color)] text-white text-2xl">
-                        {(recipient.displayName || recipient.username).charAt(0).toUpperCase()}
-                      </AvatarFallback>
-                    </Avatar>
-                    <div
-                      className="absolute bottom-1 right-1 w-6 h-6 rounded-full border-4 border-[var(--bg-app)] transition-colors duration-200"
-                      style={{ backgroundColor: statusColors[recipient.status || "offline"] }}
-                    />
-                  </div>
-                </div>
-              </div>
-
-              <div className="pt-12 px-4">
-                <div className="bg-[var(--bg-card)] rounded-lg p-4">
-                  <div className="flex items-center gap-2 mb-1">
-                    <h3 className={cn("text-xl font-bold text-[var(--text-primary)]", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
-                      {recipient.displayName || recipient.username}
-                    </h3>
-                    <InlineBadges badges={recipient.badges} size="sm" />
-                  </div>
-                  <p className="text-sm text-[var(--text-secondary)]">{recipient.username}</p>
-
-                  {recipient.customStatus && (
-                    <p className="text-sm text-[var(--text-secondary)] mt-2">{recipient.customStatus}</p>
-                  )}
-
-                  {!recipient.isSystem && !recipient.isFriend && (
-                    <div className="mt-3">
-                      {recipient.friendRequestSent ? (
-                        <button
-                          disabled
-                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--bg-hover)] text-[var(--text-secondary)] text-sm font-medium cursor-not-allowed"
-                        >
-                          <Clock className="w-4 h-4" />
-                          Pending
-                        </button>
-                      ) : (
-                        <button
-                          onClick={() => void handleAddFriend()}
-                          className="w-full flex items-center justify-center gap-1.5 px-3 py-2 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all"
-                        >
-                          <UserPlus className="w-4 h-4" />
-                          Add Friend
-                        </button>
-                      )}
-                    </div>
-                  )}
-
-                  <div className="h-px bg-[var(--border-subtle)] my-4" />
-
-                  {recipient.bio && (
-                    <>
-                      <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2">
-                        About Me
-                      </h4>
-                      <p className="text-sm text-[var(--text-primary)]">{recipient.bio}</p>
-                      <div className="h-px bg-[var(--border-subtle)] my-4" />
-                    </>
-                  )}
-
-                  <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2">
-                    SerikaCord Member Since
-                  </h4>
-                  <p className="text-sm text-[var(--text-primary)]">
-                    {recipient.createdAt
-                      ? new Date(recipient.createdAt).toLocaleDateString("en-US", {
-                          month: "short",
-                          day: "numeric",
-                          year: "numeric",
-                        })
-                      : "Unknown"}
-                  </p>
-                </div>
-              </div>
-
-              <div className="px-4 mt-4">
-                <div className="bg-[var(--bg-card)] rounded-lg p-4">
-                  <h4 className="text-xs font-semibold uppercase text-[var(--text-secondary)] mb-2">Note</h4>
-                  <textarea
-                    placeholder="Click to add a note"
-                    className="w-full bg-transparent text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] resize-none focus:outline-none transition-colors duration-150"
-                    rows={2}
-                  />
-                </div>
-              </div>
-            </>
+            <div className="flex-1 flex flex-col min-h-0 overflow-y-auto overflow-x-hidden">
+              <ProfileCard
+                user={recipient as ProfileCardUser}
+                isFriend={recipient.isFriend}
+                hideMessageButton
+                hideConnections
+                noRoundedCorners
+                className="w-full max-w-none flex-1 flex flex-col"
+              />
+            </div>
           ) : null}
         </div>
       )}
@@ -465,13 +571,14 @@ export default function DMConversationPage() {
         messages={chat.pinnedMessages}
         isLoading={chat.isLoadingPins}
         contextLabel={recipientName ? `@${recipientName}` : undefined}
-        onJumpToMessage={(id) => messageListRef.current?.scrollToMessage(id)}
+        onJumpToMessage={(id) => void jumpToMessage(id)}
         onUnpin={(message) => void chat.actions.togglePin(message)}
       />
 
       <MessageContextMenu
         menu={chat.actions.contextMenu}
         isOwn={(message) => message.authorId === user.id}
+        canPin
         onClose={() => chat.actions.setContextMenu(null)}
         onReply={(message) => {
           chat.actions.setReplyToMessage(message);
@@ -482,6 +589,7 @@ export default function DMConversationPage() {
         onPinToggle={(message) => void chat.actions.togglePin(message)}
         onEdit={chat.actions.startEditing}
         onDelete={chat.actions.setDeleteConfirmMessage}
+        onDeleteNow={(message) => void chat.actions.deleteMessageNow(message)}
       />
 
       <ImageLightbox

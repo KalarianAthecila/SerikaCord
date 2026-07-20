@@ -10,8 +10,10 @@ import {
 } from "@/components/ui/dialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { toast } from "sonner";
-import { Share2, Copy, Check, Loader2, User, Hash, ChevronLeft } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { Share2, Copy, Check,  User, Hash, ChevronLeft } from "lucide-react";
+import { cn, cdnImage } from "@/lib/utils";
+import { useGT } from "gt-next";
+import { Loader } from "@/components/ui/Loader";
 
 interface ShareInviteButtonProps {
   inviteCode: string;
@@ -57,6 +59,7 @@ export function ShareInviteButton({
   const [loadingFriends, setLoadingFriends] = useState(false);
   const [sending, setSending] = useState(false);
   const [recentMessages, setRecentMessages] = useState<Array<{ authorName: string; content: string }>>([]);
+  const gt = useGT();
 
   const inviteUrl = `https://serika.cc/${inviteCode}`;
 
@@ -115,7 +118,7 @@ export function ShareInviteButton({
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } catch {
-      toast.error("Failed to copy link");
+      toast.error(gt("Failed to copy link"));
     }
   };
 
@@ -129,16 +132,16 @@ export function ShareInviteButton({
       const textChannels = (data.channels || []).filter((c: ChannelOption) => c.type === "text");
       setChannels(textChannels);
     } catch (err) {
-      toast.error("Failed to load channels");
+      toast.error(gt("Failed to load channels"));
     } finally {
       setLoadingChannels(false);
     }
   };
 
   const buildMessage = () => {
-    let text = `Check out ${serverName}: ${inviteUrl}`;
+    let text = `${gt("Check out {name}", { name: serverName })}: ${inviteUrl}`;
     if (recentMessages.length > 0) {
-      text += "\n\nRecent messages:";
+      text += `\n\n${gt("Recent messages:")}`;
       recentMessages.forEach((m) => {
         text += `\n**${m.authorName}**: ${m.content}`;
       });
@@ -155,10 +158,10 @@ export function ShareInviteButton({
         body: JSON.stringify({ content: buildMessage() }),
       });
       if (!res.ok) throw new Error("Failed to send");
-      toast.success("Invite shared to channel");
+      toast.success(gt("Invite shared to channel"));
       setOpen(false);
     } catch {
-      toast.error("Failed to share invite");
+      toast.error(gt("Failed to share invite"));
     } finally {
       setSending(false);
     }
@@ -173,10 +176,10 @@ export function ShareInviteButton({
         body: JSON.stringify({ content: buildMessage() }),
       });
       if (!res.ok) throw new Error("Failed to send");
-      toast.success("Invite shared");
+      toast.success(gt("Invite shared"));
       setOpen(false);
     } catch {
-      toast.error("Failed to share invite");
+      toast.error(gt("Failed to share invite"));
     } finally {
       setSending(false);
     }
@@ -218,22 +221,22 @@ export function ShareInviteButton({
           )}
         >
           <Share2 className="w-4 h-4" />
-          Share
+          {gt("Share")}
         </button>
       </DialogTrigger>
       <DialogContent className="bg-[#111111] border border-[#222222] text-[#d5d9e8] max-w-sm p-0 rounded-xl overflow-hidden">
         <DialogHeader className="p-4 pb-0">
           <DialogTitle className="text-lg font-bold text-white flex items-center gap-2">
             <Share2 className="w-5 h-5 text-[var(--accent-color)]" />
-            Share Invite
+            {gt("Share Invite")}
           </DialogTitle>
         </DialogHeader>
 
         <div className="p-4">
           <div className="flex gap-2 mb-4">
-            <TabButton id="link" label="Link" icon={Copy} />
-            <TabButton id="channel" label="Channel" icon={Hash} />
-            <TabButton id="friend" label="Friend" icon={User} />
+            <TabButton id="link" label={gt("Link")} icon={Copy} />
+            <TabButton id="channel" label={gt("Channel")} icon={Hash} />
+            <TabButton id="friend" label={gt("Friend")} icon={User} />
           </div>
 
           {tab === "link" && (
@@ -259,7 +262,7 @@ export function ShareInviteButton({
                   }}
                   className="w-full py-2 rounded-lg bg-[#1a1a1a] hover:bg-[#252525] text-sm text-white transition-colors"
                 >
-                  Open device share sheet
+                  {gt("Open device share sheet")}
                 </button>
               )}
             </div>
@@ -273,14 +276,14 @@ export function ShareInviteButton({
                     onClick={() => setSelectedServer(null)}
                     className="text-xs text-[#b5bac1] hover:text-white flex items-center gap-1 mb-2"
                   >
-                    <ChevronLeft className="w-3 h-3" /> Back to servers
+                    <ChevronLeft className="w-3 h-3" /> {gt("Back to servers")}
                   </button>
                   {loadingChannels ? (
                     <div className="flex justify-center py-4">
-                      <Loader2 className="w-5 h-5 text-[var(--accent-color)] animate-spin" />
+                      <Loader size={20} />
                     </div>
                   ) : channels.length === 0 ? (
-                    <p className="text-sm text-[#6b7387]">No text channels available.</p>
+                    <p className="text-sm text-[#6b7387]">{gt("No text channels available.")}</p>
                   ) : (
                     channels.map((channel) => (
                       <button
@@ -291,7 +294,7 @@ export function ShareInviteButton({
                       >
                         <Hash className="w-4 h-4 text-[#6b7387]" />
                         <span className="text-sm text-[#dcddde] truncate">{channel.name}</span>
-                        {sending && <Loader2 className="w-3 h-3 ml-auto text-[var(--accent-color)] animate-spin" />}
+                        {sending && <Loader size={undefined} className="ml-auto" />}
                       </button>
                     ))
                   )}
@@ -300,10 +303,10 @@ export function ShareInviteButton({
                 <>
                   {loadingServers ? (
                     <div className="flex justify-center py-4">
-                      <Loader2 className="w-5 h-5 text-[var(--accent-color)] animate-spin" />
+                      <Loader size={20} />
                     </div>
                   ) : servers.length === 0 ? (
-                    <p className="text-sm text-[#6b7387]">You need to be in a server to share to a channel.</p>
+                    <p className="text-sm text-[#6b7387]">{gt("You need to be in a server to share to a channel.")}</p>
                   ) : (
                     servers.map((server) => (
                       <button
@@ -312,7 +315,7 @@ export function ShareInviteButton({
                         className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-[#0a0a0a] hover:bg-[#1a1a1a] text-left transition-colors"
                       >
                         <Avatar className="w-7 h-7">
-                          <AvatarImage src={server.icon} />
+                          <AvatarImage src={cdnImage(server.icon)} />
                           <AvatarFallback className="bg-[var(--accent-color)] text-white text-xs">
                             {server.name.charAt(0)}
                           </AvatarFallback>
@@ -330,10 +333,10 @@ export function ShareInviteButton({
             <div className="space-y-2">
               {loadingFriends ? (
                 <div className="flex justify-center py-4">
-                  <Loader2 className="w-5 h-5 text-[var(--accent-color)] animate-spin" />
+                  <Loader size={20} />
                 </div>
               ) : friends.length === 0 ? (
-                <p className="text-sm text-[#6b7387]">No friends available to share with.</p>
+                <p className="text-sm text-[#6b7387]">{gt("No friends available to share with.")}</p>
               ) : (
                 friends.map((friend) => (
                   <button
@@ -343,7 +346,7 @@ export function ShareInviteButton({
                     className="w-full flex items-center gap-3 px-3 py-2 rounded-lg bg-[#0a0a0a] hover:bg-[#1a1a1a] text-left transition-colors"
                   >
                     <Avatar className="w-7 h-7">
-                      <AvatarImage src={friend.avatar} />
+                      <AvatarImage src={cdnImage(friend.avatar)} />
                       <AvatarFallback className="bg-[var(--accent-color)] text-white text-xs">
                         {(friend.displayName || friend.username).charAt(0)}
                       </AvatarFallback>
@@ -351,7 +354,7 @@ export function ShareInviteButton({
                     <span className="text-sm text-[#dcddde] truncate">
                       {friend.displayName || friend.username}
                     </span>
-                    {sending && <Loader2 className="w-3 h-3 ml-auto text-[var(--accent-color)] animate-spin" />}
+                    {sending && <Loader size={undefined} className="ml-auto" />}
                   </button>
                 ))
               )}

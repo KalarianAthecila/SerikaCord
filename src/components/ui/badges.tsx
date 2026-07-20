@@ -29,6 +29,7 @@ import {
 } from "@/components/ui/dialog";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { cn } from "@/lib/utils";
+import { useGT } from "gt-next";
 
 // Badge definitions
 const BADGE_CONFIG = {
@@ -144,6 +145,33 @@ const BADGE_CONFIG = {
 
 export type BadgeId = keyof typeof BADGE_CONFIG;
 
+/** Public accessor for a badge's display metadata (name/description/color). */
+export function getBadgeMeta(id: BadgeId): { name: string; description: string; color: string } | null {
+  const config = BADGE_CONFIG[id];
+  if (!config) return null;
+  return { name: config.name, description: config.description, color: config.color };
+}
+
+export function badgeLabel(id: BadgeId, gt: ReturnType<typeof useGT>): { name: string; description: string } {
+  switch (id) {
+    case 'staff': return { name: gt('Serika Staff'), description: gt('Official Serika staff member') };
+    case 'admin': return { name: gt('Administrator'), description: gt('Platform administrator') };
+    case 'moderator': return { name: gt('Moderator'), description: gt('Platform moderator') };
+    case 'partner': return { name: gt('Partnered Server Owner'), description: gt('Owner of a partnered server') };
+    case 'serika_plus': return { name: gt('Serika+'), description: gt('Serika+ subscriber') };
+    case 'early_supporter': return { name: gt('Early Supporter'), description: gt('Supported Serika in its early days') };
+    case 'verified_bot_developer': return { name: gt('Verified Bot Developer'), description: gt('Developer of a verified bot') };
+    case 'bug_hunter': return { name: gt('Bug Hunter'), description: gt('Found and reported critical bugs') };
+    case 'bug_hunter_gold': return { name: gt('Bug Hunter (Gold)'), description: gt('Elite bug hunter') };
+    case 'server_owner': return { name: gt('Server Owner'), description: gt('Owns at least one server') };
+    case 'active_developer': return { name: gt('Active Developer'), description: gt('Active application developer') };
+    case 'serikacord_developer': return { name: gt('SerikaCord Developer'), description: gt('Core developer of SerikaCord') };
+    case 'serikacord_contributor': return { name: gt('SerikaCord Contributor'), description: gt('Contributed to SerikaCord') };
+    case 'serikacord_tester': return { name: gt('SerikaCord Tester'), description: gt('Helped test SerikaCord') };
+    default: return { name: id, description: '' };
+  }
+}
+
 interface BadgeProps {
   id: BadgeId;
   size?: 'xs' | 'sm' | 'md' | 'lg';
@@ -151,11 +179,11 @@ interface BadgeProps {
   className?: string;
 }
 
-const badgeIconSizes = { xs: 12, sm: 14, md: 18, lg: 22 };
+const badgeIconSizes = { xs: 16, sm: 20, md: 24, lg: 32 };
 
 function BadgeIcon({ icon: Icon, color, size = 'md' }: { icon: LucideIcon; color: string; size?: 'xs' | 'sm' | 'md' | 'lg' }) {
   const outer = badgeIconSizes[size];
-  const inner = Math.round(outer * 0.55);
+  const inner = Math.round(outer * 0.5);
   return (
     <div className="relative inline-flex items-center justify-center" style={{ width: outer, height: outer }}>
       <BadgeOutline className="absolute inset-0" width={outer} height={outer} color={color} strokeWidth={2} />
@@ -165,12 +193,15 @@ function BadgeIcon({ icon: Icon, color, size = 'md' }: { icon: LucideIcon; color
 }
 
 export function Badge({ id, size = 'md', showTooltip = true, className }: BadgeProps) {
+  const gt = useGT();
   const config = BADGE_CONFIG[id];
   
   if (!config) return null;
   
   const Icon = config.icon;
   
+  const labels = badgeLabel(id, gt);
+
   const badge = (
     <div 
       className={cn(
@@ -198,8 +229,8 @@ export function Badge({ id, size = 'md', showTooltip = true, className }: BadgeP
         side="top" 
         className="bg-[#0a0a0a] text-white border border-[#222222] px-3 py-2"
       >
-        <div className="text-sm font-semibold">{config.name}</div>
-        <div className="text-xs text-[#888888]">{config.description}</div>
+        <div className="text-sm font-semibold">{labels.name}</div>
+        <div className="text-xs text-[#888888]">{labels.description}</div>
       </TooltipContent>
     </Tooltip>
   );
@@ -214,13 +245,14 @@ interface BadgeListProps {
 }
 
 export function BadgeList({ badges, size = 'md', maxDisplay, className, expandable = false }: BadgeListProps) {
+  const gt = useGT();
   const [showAllBadges, setShowAllBadges] = useState(false);
   const displayBadges = badges.slice(0, maxDisplay ?? badges.length);
   const remaining = badges.length - (maxDisplay ?? badges.length);
   
   return (
     <TooltipProvider delayDuration={0}>
-      <div className={cn("flex items-center gap-1", className)}>
+      <div className={cn("flex items-center flex-wrap gap-1", className)}>
         {displayBadges.map((badgeId) => (
           <Badge key={badgeId} id={badgeId} size={size} />
         ))}
@@ -243,7 +275,7 @@ export function BadgeList({ badges, size = 'md', maxDisplay, className, expandab
               <Dialog open={showAllBadges} onOpenChange={setShowAllBadges}>
                 <DialogContent className="bg-[#111111] border-[#222222] max-w-md">
                   <DialogHeader>
-                    <DialogTitle className="text-white">All Badges ({badges.length})</DialogTitle>
+                    <DialogTitle className="text-white">{gt("All Badges")} ({badges.length})</DialogTitle>
                   </DialogHeader>
                   <ScrollArea className="max-h-[400px]">
                     <div className="grid grid-cols-1 gap-2 pr-4">
@@ -263,8 +295,8 @@ export function BadgeList({ badges, size = 'md', maxDisplay, className, expandab
                               <BadgeIcon icon={Icon} color={config.color} size="lg" />
                             </div>
                             <div className="min-w-0">
-                              <p className="font-semibold text-white text-sm">{config.name}</p>
-                              <p className="text-xs text-[#888888] truncate">{config.description}</p>
+                              <p className="font-semibold text-white text-sm">{badgeLabel(badgeId, gt).name}</p>
+                              <p className="text-xs text-[#888888] truncate">{badgeLabel(badgeId, gt).description}</p>
                             </div>
                           </div>
                         );
@@ -293,7 +325,7 @@ export function BadgeList({ badges, size = 'md', maxDisplay, className, expandab
                 className="bg-[#0a0a0a] text-white border border-[#222222] px-3 py-2"
               >
                 <div className="text-sm">
-                  {remaining} more badge{remaining > 1 ? 's' : ''}
+                  {gt("{count} more badges", { count: remaining })}
                 </div>
               </TooltipContent>
             </Tooltip>
@@ -329,7 +361,17 @@ const SERVER_BADGE_CONFIG = {
   },
 };
 
+function serverBadgeLabel(type: 'partnered' | 'verified' | 'discoverable', gt: ReturnType<typeof useGT>): string {
+  switch (type) {
+    case 'partnered': return gt('Partnered');
+    case 'verified': return gt('Verified');
+    case 'discoverable': return gt('Discoverable');
+    default: return type;
+  }
+}
+
 export function ServerBadge({ type, size = 'md', iconOnly = false }: ServerBadgeProps) {
+  const gt = useGT();
   const config = SERVER_BADGE_CONFIG[type];
   const Icon = config.innerIcon;
   const iconSize = size === 'sm' ? 'xs' : 'sm';
@@ -350,14 +392,14 @@ export function ServerBadge({ type, size = 'md', iconOnly = false }: ServerBadge
             }}
           >
             <BadgeIcon icon={Icon} color={config.color} size={iconSize} />
-            {!iconOnly && config.name}
+            {!iconOnly && serverBadgeLabel(type, gt)}
           </div>
         </TooltipTrigger>
         <TooltipContent 
           side="top" 
           className="bg-[#0a0a0a] text-white border border-[#222222]"
         >
-          {config.name} Server
+          {gt("{name} Server", { name: serverBadgeLabel(type, gt) })}
         </TooltipContent>
       </Tooltip>
     </TooltipProvider>

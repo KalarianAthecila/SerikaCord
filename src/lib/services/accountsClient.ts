@@ -8,7 +8,7 @@ import { config } from '../config';
  * being re-implemented per route.
  */
 
-const REQUEST_TIMEOUT_MS = 10_000;
+const REQUEST_TIMEOUT_MS = 5_000;
 
 export interface AccountsUser {
   id: string;
@@ -20,6 +20,10 @@ export interface AccountsUser {
   isPremium?: boolean;
   isVerified?: boolean;
   isBanned?: boolean;
+  discordId?: string;
+  discordUsername?: string;
+  serikaMoeId?: string;
+  serikaMoeUsername?: string;
 }
 
 export interface AccountsResult<T> {
@@ -164,13 +168,27 @@ export function accountsInternalVerify(token: string) {
   });
 }
 
-export function accountsInternalGetUser(userId: string) {
+export function accountsInternalGetUser(identifier: string) {
+  // The accounts service /internal/get-user accepts { id }, { email }, or { originalUserId }.
+  // Detect which one we're passing: if it contains '@', it's an email; otherwise treat as ID.
+  const body = identifier.includes('@')
+    ? { email: identifier.toLowerCase() }
+    : { id: identifier };
   return accountsFetch<{ user?: AccountsUser }>('/internal/get-user', {
     method: 'POST',
     internal: true,
-    body: JSON.stringify({ userId }),
+    body: JSON.stringify(body),
   });
 }
+
+export function accountsInternalGetUserByOriginalId(originalUserId: string) {
+  return accountsFetch<{ user?: AccountsUser }>('/internal/get-user', {
+    method: 'POST',
+    internal: true,
+    body: JSON.stringify({ originalUserId }),
+  });
+}
+
 
 /**
  * Push profile changes made in SerikaCord back to the accounts service so

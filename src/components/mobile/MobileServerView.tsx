@@ -3,6 +3,7 @@
 import { useState, useMemo, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
+import { useUnread } from "@/contexts/UnreadContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { 
   Hash, 
@@ -19,6 +20,8 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { voiceService } from "@/lib/services/voiceService";
+import { usePermissions } from "@/hooks/usePermissions";
+import { useGT } from "gt-next";
 
 interface MobileServerViewProps {
   onBack?: () => void;
@@ -38,7 +41,11 @@ interface ExtendedChannel {
 
 export function MobileServerView({ onBack }: MobileServerViewProps) {
   const router = useRouter();
+  const gt = useGT();
   const { currentServer, channels, setCurrentChannel } = useServer();
+  const { isChannelUnread, getMentionCount } = useUnread();
+  const { can, isAdmin } = usePermissions(currentServer?.id);
+  const canManageServer = can("MANAGE_SERVER") || isAdmin;
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
   const [searchQuery, setSearchQuery] = useState("");
   const [showSearch, setShowSearch] = useState(false);
@@ -157,21 +164,16 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
     }
   };
 
-  const handleChannelClick = async (channel: typeof channels[0]) => {
-    if (channel.type === "voice") {
-      if (voiceService.currentRoomId === channel.id) {
-        await voiceService.leaveChannel();
-      } else {
-        await voiceService.joinChannel(channel.id);
-      }
-      return;
-    }
+  const handleChannelClick = (channel: typeof channels[0]) => {
+    // Voice channels behave like text channels on mobile: tapping opens the
+    // channel's call view (participants + a Join button), rather than silently
+    // joining/leaving from the sidebar. Joining happens from the call screen.
     setCurrentChannel(channel);
     router.push(`/channels/${currentServer.id}/${channel.id}`);
   };
 
   return (
-    <div className="flex flex-col h-full bg-[#000000]">
+    <div className="flex flex-col h-full bg-[var(--bg-app)]">
       {/* Pull to refresh indicator */}
       <div 
         className={cn(
@@ -182,7 +184,7 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
       >
         <RefreshCw 
           className={cn(
-            "w-6 h-6 text-[#8B5CF6] transition-transform",
+            "w-6 h-6 text-[var(--app-accent)] transition-transform",
             isRefreshing && "animate-spin",
             pullDistance > 80 && "scale-110"
           )}
@@ -198,11 +200,11 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
             style={{ backgroundImage: `url(${server.banner})` }}
           />
         ) : (
-          <div className="h-32 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#6366F1]" />
+          <div className="h-32 bg-gradient-to-br from-[var(--app-accent)] via-[var(--app-accent)] to-[var(--app-accent)] opacity-80" />
         )}
         
         {/* Gradient overlay */}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#000000] via-black/60 to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[var(--bg-app)] via-black/60 to-transparent" />
         
         {/* Back button (for navigation) */}
         <button
@@ -222,60 +224,62 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
               <div className="flex items-center gap-3 mt-1">
                 <span className="flex items-center gap-1.5 text-sm text-neutral-300">
                   <Users className="w-4 h-4" />
-                  {server.memberCount || 0} members
+                  {server.memberCount || 0} {gt("members")}
                 </span>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <button
-                onClick={() => window.dispatchEvent(new CustomEvent("openServerSettings"))}
-                aria-label="Server settings"
-                className="p-2.5 rounded-xl bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors active:scale-95"
-              >
-                <Settings className="w-5 h-5 text-white" />
-              </button>
+              {canManageServer && (
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent("openServerSettings"))}
+                  aria-label={gt("Server settings")}
+                  className="p-2.5 rounded-xl bg-white/10 backdrop-blur-sm hover:bg-white/20 transition-colors active:scale-95"
+                >
+                  <Settings className="w-5 h-5 text-white" />
+                </button>
+              )}
             </div>
           </div>
         </div>
       </div>
 
       {/* Search & Actions Bar */}
-      <div className="flex items-center gap-2 px-4 py-3 flex-shrink-0 border-b border-white/5">
+      <div className="flex items-center gap-2 px-4 py-3 flex-shrink-0 border-b border-[var(--border-subtle)]">
         {showSearch ? (
           <div className="flex-1 flex items-center gap-2">
             <input
               type="text"
-              placeholder="Search channels..."
+              placeholder={gt("Search channels...")}
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
               autoFocus
-              className="flex-1 h-10 px-4 rounded-xl bg-[#1a1a1a] text-white placeholder:text-neutral-500 text-sm focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/50"
+              className="flex-1 h-10 px-4 rounded-xl bg-[var(--bg-card)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] text-sm focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/50"
             />
             <button 
               onClick={() => {
                 setShowSearch(false);
                 setSearchQuery("");
               }}
-              className="p-2.5 rounded-xl bg-[#1a1a1a] hover:bg-[#252525] transition-colors active:scale-95"
+              className="p-2.5 rounded-xl bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] transition-colors active:scale-95"
             >
-              <ChevronLeft className="w-5 h-5 text-neutral-400" />
+              <ChevronLeft className="w-5 h-5 text-[var(--text-muted)]" />
             </button>
           </div>
         ) : (
           <>
             <button 
               onClick={() => setShowSearch(true)}
-              className="flex-1 flex items-center gap-2 h-10 px-4 rounded-xl bg-[#1a1a1a] text-neutral-500 hover:bg-[#252525] transition-colors"
+              className="flex-1 flex items-center gap-2 h-10 px-4 rounded-xl bg-[var(--bg-card)] text-[var(--text-muted)] hover:bg-[var(--bg-hover)] transition-colors"
             >
               <Search className="w-4 h-4" />
-              <span className="text-sm">Search channels</span>
+              <span className="text-sm">{gt("Search channels")}</span>
             </button>
             <button
               onClick={() => window.dispatchEvent(new CustomEvent("openInviteDialog"))}
-              aria-label="Invite people"
-              className="p-2.5 rounded-xl bg-[#1a1a1a] hover:bg-[#252525] transition-colors active:scale-95"
+              aria-label={gt("Invite people")}
+              className="p-2.5 rounded-xl bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] transition-colors active:scale-95"
             >
-              <UserPlus className="w-5 h-5 text-neutral-400" />
+              <UserPlus className="w-5 h-5 text-[var(--text-muted)]" />
             </button>
           </>
         )}
@@ -292,12 +296,12 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
         <div className="px-2 py-2 pb-28">
           {filteredCategories.length === 0 && searchQuery ? (
             <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] flex items-center justify-center mb-4">
-                <Search className="w-8 h-8 text-neutral-500" />
+              <div className="w-16 h-16 rounded-2xl bg-[var(--bg-card)] flex items-center justify-center mb-4">
+                <Search className="w-8 h-8 text-[var(--text-muted)]" />
               </div>
-              <h3 className="text-lg font-semibold text-white mb-1">No channels found</h3>
-              <p className="text-neutral-500 text-sm">
-                Try a different search term
+              <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">{gt("No channels found")}</h3>
+              <p className="text-[var(--text-muted)] text-sm">
+                {gt("Try a different search term")}
               </p>
             </div>
           ) : (
@@ -306,7 +310,7 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
                 {/* Category Header */}
                 <button
                   onClick={() => toggleCategory(category.id || 'uncategorized')}
-                  className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase text-neutral-500 hover:text-neutral-300 transition-colors active:scale-[0.98]"
+                  className="w-full flex items-center gap-1.5 px-3 py-2 text-xs font-bold uppercase text-[var(--text-muted)] hover:text-[var(--text-secondary)] transition-colors active:scale-[0.98]"
                 >
                   <ChevronDown 
                     className={cn(
@@ -315,7 +319,7 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
                     )} 
                   />
                   <span className="tracking-wider">{category.name}</span>
-                  <span className="ml-auto text-[10px] text-neutral-600 font-medium">
+                  <span className="ml-auto text-[10px] text-[var(--text-muted)] font-medium">
                     {category.channels.length}
                   </span>
                 </button>
@@ -324,31 +328,40 @@ export function MobileServerView({ onBack }: MobileServerViewProps) {
                 {!collapsedCategories.has(category.id || 'uncategorized') && (
                   <div className="space-y-0.5 mt-1">
                     {category.channels.map((channel) => {
-                      const extChannel = channel as typeof channel & ExtendedChannel;
+                      const isVoice = channel.type === "voice";
+                      const unread = !isVoice && isChannelUnread(channel.id);
+                      const mentions = isVoice ? 0 : getMentionCount(channel.id);
                       return (
                         <button
                           key={channel.id}
                           onClick={() => handleChannelClick(channel)}
                           className={cn(
                             "w-full flex items-center gap-3 px-3 py-3 rounded-xl transition-all duration-150",
-                            "hover:bg-[#1a1a1a]/80 active:bg-[#1a1a1a] active:scale-[0.98]",
-                            channel.type === "voice" && voiceService.currentRoomId === channel.id
+                            "hover:bg-[var(--bg-hover)]/80 active:bg-[var(--bg-hover)] active:scale-[0.98]",
+                            isVoice && voiceService.currentRoomId === channel.id
                               ? "bg-green-500/10 text-green-400"
-                              : "text-neutral-400 hover:text-white"
+                              : unread
+                                ? "text-[var(--text-primary)] font-semibold"
+                                : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
                           )}
                         >
                           {getChannelIcon(channel.type)}
-                          <span className="flex-1 text-left truncate font-medium text-[15px]">
+                          <span className={cn(
+                            "flex-1 text-left truncate text-[15px]",
+                            unread ? "font-semibold" : "font-medium"
+                          )}>
                             {channel.name}
                           </span>
-                          {channel.type === "voice" && voiceService.currentRoomId === channel.id && (
+                          {isVoice && voiceService.currentRoomId === channel.id && (
                             <span className="inline-block w-2 h-2 rounded-full bg-green-500 animate-pulse" />
                           )}
-                          {extChannel.unreadCount != null && extChannel.unreadCount > 0 && channel.type !== "voice" && (
+                          {mentions > 0 ? (
                             <span className="min-w-[20px] h-5 px-1.5 flex items-center justify-center bg-[#ED4245] text-white text-xs font-bold rounded-full shadow-lg">
-                              {extChannel.unreadCount > 99 ? "99+" : extChannel.unreadCount}
+                              {mentions > 99 ? "99+" : mentions}
                             </span>
-                          )}
+                          ) : unread ? (
+                            <span className="w-2.5 h-2.5 flex-shrink-0 rounded-full bg-[var(--text-primary)]" />
+                          ) : null}
                         </button>
                       );
                     })}

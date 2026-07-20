@@ -1,9 +1,11 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Loader2, Play, Square, Scissors } from "lucide-react";
+import { Play, Pause, Scissors, Check, X } from "lucide-react";
 import { toast } from "sonner";
+import { useGT } from "gt-next";
 import { cn } from "@/lib/utils";
+import { Loader } from "@/components/ui/Loader";
 
 interface AudioTrimmerDialogProps {
   open: boolean;
@@ -85,22 +87,32 @@ export function AudioTrimmerDialog({
   maxDuration = 30,
   onTrimmed,
 }: AudioTrimmerDialogProps) {
+  const gt = useGT();
   const [audioBuffer, setAudioBuffer] = useState<AudioBuffer | null>(null);
   const [isDecoding, setIsDecoding] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
   const [selStart, setSelStart] = useState(0);
   const [selEnd, setSelEnd] = useState(maxDuration);
   const [isPlaying, setIsPlaying] = useState(false);
+  const [playbackPos, setPlaybackPos] = useState(0);
+  const [dragging, setDragging] = useState<"start" | "end" | "move" | null>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
-  const playbackRef = useRef<{ ctx: AudioContext; source: AudioBufferSourceNode } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const playbackRef = useRef<{ ctx: AudioContext; source: AudioBufferSourceNode; startTime: number } | null>(null);
   const stopTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const rafRef = useRef<ReturnType<typeof requestAnimationFrame> | null>(null);
 
   const duration = audioBuffer?.duration ?? 0;
+  const selectionLength = selEnd - selStart;
 
   const stopPreview = useCallback(() => {
     if (stopTimeoutRef.current) {
       clearTimeout(stopTimeoutRef.current);
       stopTimeoutRef.current = null;
+    }
+    if (rafRef.current) {
+      cancelAnimationFrame(rafRef.current);
+      rafRef.current = null;
     }
     if (playbackRef.current) {
       try { playbackRef.current.source.stop(); } catch { /* already stopped */ }
@@ -108,6 +120,7 @@ export function AudioTrimmerDialog({
       playbackRef.current = null;
     }
     setIsPlaying(false);
+    setPlaybackPos(0);
   }, []);
 
   // Decode when opened with a file
@@ -129,7 +142,7 @@ export function AudioTrimmerDialog({
         setSelEnd(Math.min(maxDuration, decoded.duration));
       } catch {
         if (!cancelled) {
-          toast.error("Could not decode this audio file");
+          toast.error(gt("Could not decode this audio file"));
           onOpenChange(false);
         }
       } finally {
@@ -149,7 +162,7 @@ export function AudioTrimmerDialog({
     if (!open) stopPreview();
   }, [open, stopPreview]);
 
-  // Draw waveform + selection overlay
+  // Draw waveform + selection overlay + playback progress
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas || !audioBuffer) return;
@@ -163,31 +176,60 @@ export function AudioTrimmerDialog({
     ctx.scale(dpr, dpr);
     ctx.clearRect(0, 0, width, height);
 
-    // Peaks
     const data = audioBuffer.getChannelData(0);
     const samplesPerPixel = Math.max(1, Math.floor(data.length / width));
-    ctx.fillStyle = "#3f3f5a";
+    const startX = (selStart / audioBuffer.duration) * width;
+    const endX = (selEnd / audioBuffer.duration) * width;
+    const progressX = isPlaying ? (playbackPos / audioBuffer.duration) * width : -1;
+
+    // Draw waveform bars
     for (let x = 0; x < width; x++) {
       let peak = 0;
-      const start = x * samplesPerPixel;
-      const end = Math.min(start + samplesPerPixel, data.length);
-      for (let i = start; i < end; i += 16) {
+      const s = x * samplesPerPixel;
+      const e = Math.min(s + samplesPerPixel, data.length);
+      for (let i = s; i < e; i += 16) {
         const v = Math.abs(data[i]);
         if (v > peak) peak = v;
       }
-      const barHeight = Math.max(1, peak * height * 0.9);
+      const barHeight = Math.max(1.5, peak * height * 0.85);
+      const inSelection = x >= startX && x <= endX;
+      const isPastProgress = progressX >= 0 && x <= progressX && x >= startX;
+
+      if (isPastProgress) {
+        // Played portion — bright purple/white
+        ctx.fillStyle = "#a78bfa";
+      } else if (inSelection) {
+        // Selected but not yet played — medium purple
+        ctx.fillStyle = "#8B5CF6";
+      } else {
+        // Outside selection — dark gray
+        ctx.fillStyle = "#2a2a3a";
+      }
       ctx.fillRect(x, (height - barHeight) / 2, 1, barHeight);
     }
 
-    // Selection highlight
-    const startX = (selStart / audioBuffer.duration) * width;
-    const endX = (selEnd / audioBuffer.duration) * width;
-    ctx.fillStyle = "rgba(139, 92, 246, 0.25)";
+    // Selection overlay glow
+    const gradient = ctx.createLinearGradient(startX, 0, endX, 0);
+    gradient.addColorStop(0, "rgba(139, 92, 246, 0.08)");
+    gradient.addColorStop(0.5, "rgba(139, 92, 246, 0.04)");
+    gradient.addColorStop(1, "rgba(139, 92, 246, 0.08)");
+    ctx.fillStyle = gradient;
     ctx.fillRect(startX, 0, endX - startX, height);
+
+    // Selection border lines
     ctx.fillStyle = "#8B5CF6";
-    ctx.fillRect(startX, 0, 2, height);
-    ctx.fillRect(endX - 2, 0, 2, height);
-  }, [audioBuffer, selStart, selEnd]);
+    ctx.fillRect(startX - 0.5, 0, 2, height);
+    ctx.fillRect(endX - 1.5, 0, 2, height);
+
+    // Playback progress line
+    if (progressX >= 0 && progressX >= startX && progressX <= endX) {
+      ctx.fillStyle = "#fff";
+      ctx.fillRect(progressX - 0.5, 0, 2, height);
+      // Glow effect
+      ctx.fillStyle = "rgba(255, 255, 255, 0.15)";
+      ctx.fillRect(progressX - 3, 0, 6, height);
+    }
+  }, [audioBuffer, selStart, selEnd, playbackPos, isPlaying]);
 
   const handleStartChange = (value: number) => {
     const next = Math.min(value, selEnd - 0.5);
@@ -217,10 +259,27 @@ export function AudioTrimmerDialog({
     const source = ctx.createBufferSource();
     source.buffer = audioBuffer;
     source.connect(ctx.destination);
+    const playStartOffset = selStart;
     source.start(0, selStart, selEnd - selStart);
-    playbackRef.current = { ctx, source };
+    const startTime = ctx.currentTime;
+    playbackRef.current = { ctx, source, startTime };
     setIsPlaying(true);
-    stopTimeoutRef.current = setTimeout(stopPreview, (selEnd - selStart) * 1000 + 100);
+
+    // Animate playback progress
+    const animate = () => {
+      if (!playbackRef.current) return;
+      const elapsed = playbackRef.current.ctx.currentTime - playbackRef.current.startTime;
+      const pos = playStartOffset + elapsed;
+      if (pos >= selEnd) {
+        stopPreview();
+        return;
+      }
+      setPlaybackPos(pos);
+      rafRef.current = requestAnimationFrame(animate);
+    };
+    rafRef.current = requestAnimationFrame(animate);
+
+    stopTimeoutRef.current = setTimeout(stopPreview, (selEnd - selStart) * 1000 + 200);
   };
 
   const handleConfirm = () => {
@@ -228,63 +287,199 @@ export function AudioTrimmerDialog({
     setIsExporting(true);
     try {
       const blob = encodeWav(audioBuffer, selStart, selEnd);
-      if (blob.size > 20 * 1024 * 1024) {
-        toast.error("Trimmed audio is still over 20MB — select a shorter clip");
-        return;
-      }
       stopPreview();
       onTrimmed(blob, file.name.replace(/\.[^/.]+$/, ""));
       onOpenChange(false);
     } catch {
-      toast.error("Failed to trim audio");
+      toast.error(gt("Failed to trim audio"));
     } finally {
       setIsExporting(false);
     }
   };
 
+  // Mouse interaction on waveform
+  const getPosFromMouse = (clientX: number): number => {
+    const canvas = canvasRef.current;
+    if (!canvas || !audioBuffer) return 0;
+    const rect = canvas.getBoundingClientRect();
+    const ratio = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    return ratio * audioBuffer.duration;
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (!audioBuffer) return;
+    const pos = getPosFromMouse(e.clientX);
+    const startX = (selStart / duration) * (canvasRef.current?.clientWidth || 1);
+    const endX = (selEnd / duration) * (canvasRef.current?.clientWidth || 1);
+    const mouseX = e.clientX - (canvasRef.current?.getBoundingClientRect().left || 0);
+
+    // Check if near a handle (within 8px)
+    if (Math.abs(mouseX - startX) < 12) {
+      setDragging("start");
+    } else if (Math.abs(mouseX - endX) < 12) {
+      setDragging("end");
+    } else if (pos >= selStart && pos <= selEnd) {
+      // Click inside selection — start moving
+      setDragging("move");
+    } else {
+      // Click outside — set start handle to this position
+      setDragging("start");
+      handleStartChange(pos);
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!dragging || !audioBuffer) return;
+    const pos = getPosFromMouse(e.clientX);
+
+    if (dragging === "start") {
+      handleStartChange(pos);
+    } else if (dragging === "end") {
+      handleEndChange(pos);
+    } else if (dragging === "move") {
+      const len = selectionLength;
+      const newStart = Math.max(0, Math.min(pos - len / 2, duration - len));
+      setSelStart(newStart);
+      setSelEnd(newStart + len);
+      stopPreview();
+    }
+  };
+
+  const handleMouseUp = () => {
+    setDragging(null);
+  };
+
+  // Global mouse up listener
+  useEffect(() => {
+    if (!dragging) return;
+    const handler = () => setDragging(null);
+    window.addEventListener("mouseup", handler);
+    return () => window.removeEventListener("mouseup", handler);
+  }, [dragging]);
+
+  // Handle escape key
+  useEffect(() => {
+    if (!open) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        onOpenChange(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => window.removeEventListener("keydown", handleKeyDown, { capture: true } as EventListenerOptions);
+  }, [open, onOpenChange]);
+
   if (!open) return null;
 
-  const selectionLength = selEnd - selStart;
+  const selPercent = duration > 0 ? (selectionLength / maxDuration) * 100 : 0;
+  const isOverMax = selectionLength > maxDuration;
 
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center">
-      <div className="absolute inset-0 bg-black/70" onClick={() => onOpenChange(false)} />
+      <div className="absolute inset-0 bg-black/80 backdrop-blur-sm" onClick={() => onOpenChange(false)} />
       <div
         role="dialog"
         aria-modal="true"
-        aria-label="Trim audio"
-        className="relative w-full max-w-lg mx-4 bg-[#111111] border border-[#222222] rounded-lg shadow-xl p-5"
+        aria-label={gt("Trim audio")}
+        className="relative w-full max-w-xl mx-4 bg-[#111114] border border-[#222230] rounded-2xl shadow-2xl p-6"
       >
-        <div className="flex items-center gap-2 mb-1">
-          <Scissors className="w-5 h-5 text-[#8B5CF6]" />
-          <h2 className="text-white font-semibold">Trim Sound</h2>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-1">
+          <div className="flex items-center gap-2.5">
+            <div className="size-8 rounded-lg bg-[#8B5CF6]/15 flex items-center justify-center">
+              <Scissors className="w-4.5 h-4.5 text-[#8B5CF6]" />
+            </div>
+            <h2 className="text-white font-semibold text-lg">{gt("Trim Sound")}</h2>
+          </div>
+          <button
+            onClick={() => onOpenChange(false)}
+            className="p-1.5 rounded-lg text-[#666] hover:text-white hover:bg-white/5 transition-colors"
+          >
+            <X className="w-4 h-4" />
+          </button>
         </div>
-        <p className="text-sm text-[#888888] mb-4">
-          Sounds can be at most {maxDuration} seconds. Drag the handles to pick which part to keep.
+        <p className="text-sm text-[#777] mb-5">
+          {gt("Select up to {max}s. Drag the handles or use the sliders.", { max: maxDuration })}
         </p>
 
         {isDecoding ? (
-          <div className="flex items-center justify-center py-12">
-            <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <div className="flex flex-col items-center justify-center py-16 gap-3">
+            <Loader size={32} />
+            <p className="text-xs text-[#666]">{gt("Decoding audio...")}</p>
           </div>
         ) : audioBuffer ? (
           <>
-            <canvas ref={canvasRef} className="w-full h-24 rounded-md bg-[#0a0a0a] border border-[#222222]" />
+            {/* Waveform with interactive selection */}
+            <div
+              ref={containerRef}
+              className="relative"
+            >
+              <canvas
+                ref={canvasRef}
+                onMouseDown={handleMouseDown}
+                onMouseMove={handleMouseMove}
+                onMouseUp={handleMouseUp}
+                className={cn(
+                  "w-full h-28 rounded-xl bg-[#0a0a0d] border border-[#1a1a22] cursor-pointer",
+                  dragging === "start" && "cursor-ew-resize",
+                  dragging === "end" && "cursor-ew-resize",
+                  dragging === "move" && "cursor-grabbing",
+                )}
+              />
 
-            <div className="mt-4 space-y-3">
+              {/* Time labels on waveform */}
+              <div className="absolute bottom-1.5 left-2 text-[10px] text-[#555] font-mono pointer-events-none">
+                0:00
+              </div>
+              <div className="absolute bottom-1.5 right-2 text-[10px] text-[#555] font-mono pointer-events-none">
+                {formatTime(duration)}
+              </div>
+            </div>
+
+            {/* Selection info bar */}
+            <div className="flex items-center justify-between mt-4 mb-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xs text-[#888] font-mono">
+                  {formatTime(selStart)}
+                </span>
+                <div className="h-3 w-px bg-[#333]" />
+                <span className="text-xs text-[#888] font-mono">
+                  {formatTime(selEnd)}
+                </span>
+              </div>
+              <span
+                className={cn(
+                  "text-xs font-semibold px-2.5 py-1 rounded-full",
+                  isOverMax
+                    ? "bg-red-500/10 text-red-400"
+                    : "bg-[#8B5CF6]/10 text-[#a78bfa]",
+                )}
+              >
+                {selectionLength.toFixed(1)}s / {maxDuration}s
+              </span>
+            </div>
+
+            {/* Selection length progress bar */}
+            <div className="relative h-1.5 bg-[#1a1a22] rounded-full overflow-hidden mb-5">
+              <div
+                className={cn(
+                  "h-full rounded-full transition-all duration-150",
+                  isOverMax
+                    ? "bg-red-500"
+                    : "bg-gradient-to-r from-[#8B5CF6] to-[#a78bfa]",
+                )}
+                style={{ width: `${Math.min(selPercent, 100)}%` }}
+              />
+            </div>
+
+            {/* Sliders */}
+            <div className="space-y-3 mb-5">
               <div>
-                <div className="flex items-center justify-between text-xs text-[#888888] mb-1">
-                  <span>Start: {formatTime(selStart)}</span>
-                  <span
-                    className={cn(
-                      "font-medium",
-                      selectionLength > maxDuration ? "text-red-400" : "text-[#8B5CF6]"
-                    )}
-                  >
-                    Selection: {selectionLength.toFixed(1)}s / {maxDuration}s
-                  </span>
-                  <span>End: {formatTime(selEnd)}</span>
-                </div>
+                <label className="text-[10px] uppercase tracking-wider text-[#555] font-semibold mb-1.5 block">
+                  {gt("Start")}
+                </label>
                 <input
                   type="range"
                   min={0}
@@ -292,9 +487,14 @@ export function AudioTrimmerDialog({
                   step={0.1}
                   value={selStart}
                   onChange={(e) => handleStartChange(Number(e.target.value))}
-                  aria-label="Selection start"
+                  aria-label={gt("Selection start")}
                   className="w-full accent-[#8B5CF6]"
                 />
+              </div>
+              <div>
+                <label className="text-[10px] uppercase tracking-wider text-[#555] font-semibold mb-1.5 block">
+                  {gt("End")}
+                </label>
                 <input
                   type="range"
                   min={0}
@@ -302,35 +502,46 @@ export function AudioTrimmerDialog({
                   step={0.1}
                   value={selEnd}
                   onChange={(e) => handleEndChange(Number(e.target.value))}
-                  aria-label="Selection end"
+                  aria-label={gt("Selection end")}
                   className="w-full accent-[#8B5CF6]"
                 />
               </div>
+            </div>
 
-              <div className="flex items-center justify-between gap-3">
+            {/* Controls */}
+            <div className="flex items-center justify-between gap-3">
+              <button
+                onClick={handlePreview}
+                className={cn(
+                  "flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all active:scale-95",
+                  isPlaying
+                    ? "bg-[#8B5CF6]/15 text-[#a78bfa] border border-[#8B5CF6]/30"
+                    : "bg-[#1a1a22] hover:bg-[#222230] border border-[#222230] text-white",
+                )}
+              >
+                {isPlaying ? <Pause className="w-4 h-4" /> : <Play className="w-4 h-4" />}
+                {isPlaying ? gt("Stop") : gt("Preview")}
+              </button>
+
+              <div className="flex items-center gap-2">
                 <button
-                  onClick={handlePreview}
-                  className="flex items-center gap-2 px-4 py-2 rounded-md bg-[#1a1a1a] hover:bg-[#222222] border border-[#222222] text-white text-sm transition-colors"
+                  onClick={() => onOpenChange(false)}
+                  className="px-4 py-2.5 rounded-xl text-sm text-[#888] hover:text-white hover:bg-white/5 transition-colors"
                 >
-                  {isPlaying ? <Square className="w-4 h-4" /> : <Play className="w-4 h-4" />}
-                  {isPlaying ? "Stop" : "Preview"}
+                  {gt("Cancel")}
                 </button>
-                <div className="flex items-center gap-2">
-                  <button
-                    onClick={() => onOpenChange(false)}
-                    className="px-4 py-2 rounded-md text-sm text-[#d5d9e8] hover:bg-[#1a1a1a] transition-colors"
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    onClick={handleConfirm}
-                    disabled={isExporting || selectionLength <= 0}
-                    className="flex items-center gap-2 px-4 py-2 rounded-md bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all disabled:opacity-50"
-                  >
-                    {isExporting && <Loader2 className="w-4 h-4 animate-spin" />}
-                    Use This Clip
-                  </button>
-                </div>
+                <button
+                  onClick={handleConfirm}
+                  disabled={isExporting || selectionLength <= 0 || isOverMax}
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-95 text-white text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  {isExporting ? (
+                    <Loader size={16} />
+                  ) : (
+                    <Check className="w-4 h-4" />
+                  )}
+                  {gt("Use This Clip")}
+                </button>
               </div>
             </div>
           </>

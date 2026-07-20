@@ -1,58 +1,63 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export type ConnectionProvider = 'discord' | 'twitch' | 'youtube' | 'github' | 'spotify' | 'website';
+export type IUserConnection = typeof schema.userConnections.$inferSelect;
 
-export interface IUserConnection extends Document {
-  _id: Types.ObjectId;
-  userId: Types.ObjectId;
-  provider: ConnectionProvider;
-  accountId: string;
-  username?: string;
-  displayName?: string;
-  avatar?: string;
-  metadata?: Record<string, unknown>;
-  createdAt: Date;
-  updatedAt: Date;
-}
+export const UserConnection = {
+  table: schema.userConnections,
 
-const UserConnectionSchema = new Schema<IUserConnection>({
-  userId: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    index: true,
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.userConnections).where(eq(schema.userConnections.id, normalizeId(id))).limit(1);
+    return row || null;
   },
-  provider: {
-    type: String,
-    enum: ['discord', 'twitch', 'youtube', 'github', 'spotify', 'website'],
-    required: true,
-    index: true,
-  },
-  accountId: {
-    type: String,
-    required: true,
-    trim: true,
-  },
-  username: {
-    type: String,
-    default: null,
-  },
-  displayName: {
-    type: String,
-    default: null,
-  },
-  avatar: {
-    type: String,
-    default: null,
-  },
-  metadata: {
-    type: Schema.Types.Mixed,
-    default: null,
-  },
-}, {
-  timestamps: true,
-});
 
-UserConnectionSchema.index({ userId: 1, provider: 1, accountId: 1 }, { unique: true });
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(eq(schema.userConnections.id, normalizeId(value as string))); break;
+        case 'userId': conditions.push(eq(schema.userConnections.userId, normalizeId(value as string))); break;
+        case 'provider': conditions.push(eq(schema.userConnections.provider, value as any)); break;
+        case 'accountId': conditions.push(eq(schema.userConnections.accountId, value as string)); break;
+      }
+    }
+    let query = db.select().from(schema.userConnections);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
 
-export const UserConnection = mongoose.models.UserConnection || mongoose.model<IUserConnection>('UserConnection', UserConnectionSchema);
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'userId': conditions.push(eq(schema.userConnections.userId, normalizeId(value as string))); break;
+        case 'provider': conditions.push(eq(schema.userConnections.provider, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.userConnections);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.userConnections.$inferInsert) {
+    const [row] = await db.insert(schema.userConnections).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.userConnections.$inferInsert>) {
+    const [row] = await db.update(schema.userConnections).set({ ...data, updatedAt: new Date() }).where(eq(schema.userConnections.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.userConnections).where(eq(schema.userConnections.id, normalizeId(id)));
+  },
+};

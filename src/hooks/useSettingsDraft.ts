@@ -15,12 +15,16 @@ import { useCallback, useMemo, useRef, useState } from "react";
  * caller (e.g. "widget.enabled") so dirty tracking and field-level server
  * validation errors line up 1:1.
  */
-export type SettingsValue = string | number | boolean | null;
+export type SettingsValue = string | number | boolean | null | string[] | any;
 export type SettingsDraft = Record<string, SettingsValue>;
 
 const MAX_HISTORY = 100;
 
 function valuesEqual(a: SettingsValue, b: SettingsValue): boolean {
+  if (Array.isArray(a) && Array.isArray(b)) {
+    if (a.length !== b.length) return false;
+    return a.every((val, index) => val === b[index]);
+  }
   return a === b || (a === null && b === null);
 }
 

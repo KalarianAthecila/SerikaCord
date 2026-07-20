@@ -3,6 +3,7 @@
 import { useEffect, useCallback, useState } from "react";
 import { X, ZoomIn, ZoomOut, Download, ExternalLink, ChevronLeft, ChevronRight } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useGT } from "gt-next";
 
 interface ImageLightboxItem {
   src: string;
@@ -29,10 +30,16 @@ export function ImageLightbox({
   onNavigate,
   onClose,
 }: ImageLightboxProps) {
+  const gt = useGT();
   const [scale, setScale] = useState(1);
   const [position, setPosition] = useState({ x: 0, y: 0 });
   const [isDragging, setIsDragging] = useState(false);
   const [dragStart, setDragStart] = useState({ x: 0, y: 0 });
+  const [isTauri, setIsTauri] = useState(false);
+
+  useEffect(() => {
+    setIsTauri(typeof window !== "undefined" && Boolean((window as any).__TAURI__));
+  }, []);
   const fallbackItems: ImageLightboxItem[] = src ? [{ src, alt }] : [];
   const galleryItems = items && items.length > 0 ? items : fallbackItems;
   const hasItems = galleryItems.length > 0;
@@ -158,7 +165,7 @@ export function ImageLightbox({
               navigate(-1);
             }}
             className="absolute left-4 top-1/2 -translate-y-1/2 z-20 p-2.5 bg-[#111111]/80 hover:bg-[#222222] rounded-full text-white transition-colors"
-            aria-label="Previous image"
+            aria-label={gt("Previous image")}
           >
             <ChevronLeft className="w-6 h-6" />
           </button>
@@ -168,7 +175,7 @@ export function ImageLightbox({
               navigate(1);
             }}
             className="absolute right-4 top-1/2 -translate-y-1/2 z-20 p-2.5 bg-[#111111]/80 hover:bg-[#222222] rounded-full text-white transition-colors"
-            aria-label="Next image"
+            aria-label={gt("Next image")}
           >
             <ChevronRight className="w-6 h-6" />
           </button>
@@ -182,7 +189,7 @@ export function ImageLightbox({
             handleZoomOut();
           }}
           className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
-          title="Zoom out"
+          title={gt("Zoom out")}
         >
           <ZoomOut className="w-5 h-5" />
         </button>
@@ -200,27 +207,29 @@ export function ImageLightbox({
             handleZoomIn();
           }}
           className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
-          title="Zoom in"
+          title={gt("Zoom in")}
         >
           <ZoomIn className="w-5 h-5" />
         </button>
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            handleDownload();
-          }}
-          className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
-          title="Download"
-        >
-          <Download className="w-5 h-5" />
-        </button>
+        {!isTauri && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              handleDownload();
+            }}
+            className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
+            title={gt("Download")}
+          >
+            <Download className="w-5 h-5" />
+          </button>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
             handleOpenExternal();
           }}
           className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
-          title="Open original"
+          title={gt("Open original")}
         >
           <ExternalLink className="w-5 h-5" />
         </button>
@@ -230,7 +239,7 @@ export function ImageLightbox({
             onClose();
           }}
           className="p-2 bg-[#111111]/80 hover:bg-[#222222] rounded-lg text-white transition-colors"
-          title="Close"
+          title={gt("Close")}
         >
           <X className="w-5 h-5" />
         </button>
@@ -238,7 +247,7 @@ export function ImageLightbox({
 
       <div
         className={cn(
-          "relative max-w-[90vw] max-h-[90vh] overflow-hidden",
+          "relative max-w-[90vw] max-h-[90vh]",
           scale > 1 && "cursor-grab",
           isDragging && "cursor-grabbing"
         )}
@@ -251,7 +260,7 @@ export function ImageLightbox({
       >
         <img
           src={currentItem.src}
-          alt={currentItem.alt || "Image"}
+          alt={currentItem.alt || gt("Image")}
           className="max-w-full max-h-[90vh] object-contain select-none transition-transform duration-100"
           style={{
             transform: `scale(${scale}) translate(${position.x / scale}px, ${position.y / scale}px)`,
@@ -279,7 +288,7 @@ export function ImageLightbox({
               >
                 <img
                   src={item.src}
-                  alt={item.alt || `Image ${index + 1}`}
+                  alt={item.alt || gt("Image {index}", { index: index + 1 })}
                   className="w-full h-full object-cover"
                   loading="lazy"
                 />

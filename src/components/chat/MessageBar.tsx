@@ -6,28 +6,84 @@ import {
   useImperativeHandle,
   useRef,
   useState,
+  useEffect,
 } from "react";
 import {
   PlusCircle,
   ImageIcon,
+  ImagePlay,
   Sticker,
   Smile,
-  SendHorizontal,
-  Loader2,
+  SendHorizontal, 
   X,
   FileText,
   Reply,
   Music,
+  Hash,
+  Ban,
+  UserMinus,
+  Volume2,
+  Clock,
+  Eraser,
+  Shield,
+  ShieldCheck,
+  Info,
+  UserCircle,
+  Dice5,
+  MessageSquare,
+  CircleHelp,
+  Timer,
+  Gavel,
+  Gauge,
+  Megaphone,
+  Bot,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, cdnImage } from "@/lib/utils";
 import { toast } from "sonner";
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover";
-import { CustomEmojiPicker } from "@/components/chat/CustomEmojiPicker";
+import dynamic from "next/dynamic";
+// Lazy-loaded: the emoji/GIF/sticker picker (+ its emoji dataset) is ~2k lines
+// that only matter once the user opens it, so it stays out of the initial chat
+// bundle. Radix only mounts PopoverContent on open, so this fetches on first use.
+const CustomEmojiPicker = dynamic(
+  () => import("@/components/chat/CustomEmojiPicker").then((m) => m.CustomEmojiPicker),
+  { ssr: false, loading: () => <div className="w-[440px] max-w-[calc(100vw-1rem)] h-[420px]" /> }
+);
 import { RichComposer, type RichComposerHandle, type ComposerEmoji } from "@/components/chat/RichComposer";
+import { decodeHtmlEntities } from "@/lib/chat/messages";
+import { onHotkey } from "@/lib/keybinds";
+import { T, useGT } from "gt-next";
+import { Loader } from "@/components/ui/Loader";
+import { useAuth } from "@/contexts/AuthContext";
+
+const COMMAND_ICONS: Record<string, React.ReactNode> = {
+  clear: <Eraser className="w-3.5 h-3.5" />,
+  kick: <UserMinus className="w-3.5 h-3.5" />,
+  ban: <Ban className="w-3.5 h-3.5" />,
+  unban: <ShieldCheck className="w-3.5 h-3.5" />,
+  timeout: <Timer className="w-3.5 h-3.5" />,
+  warn: <Megaphone className="w-3.5 h-3.5" />,
+  slowmode: <Gauge className="w-3.5 h-3.5" />,
+  nick: <Hash className="w-3.5 h-3.5" />,
+  serverinfo: <Info className="w-3.5 h-3.5" />,
+  userinfo: <UserCircle className="w-3.5 h-3.5" />,
+  avatar: <UserCircle className="w-3.5 h-3.5" />,
+  roll: <Dice5 className="w-3.5 h-3.5" />,
+  tts: <Volume2 className="w-3.5 h-3.5" />,
+  "8ball": <CircleHelp className="w-3.5 h-3.5" />,
+  me: <MessageSquare className="w-3.5 h-3.5" />,
+  shrug: <MessageSquare className="w-3.5 h-3.5" />,
+};
+
+const CATEGORY_ICONS: Record<string, React.ReactNode> = {
+  moderation: <Shield className="w-3 h-3" />,
+  utility: <Info className="w-3 h-3" />,
+  fun: <Dice5 className="w-3 h-3" />,
+};
 
 export interface MessageBarAttachment {
   id: string;
@@ -51,6 +107,7 @@ interface ServerEmoji {
   url: string;
   serverId?: string;
   serverName?: string;
+  serverIcon?: string;
   animated?: boolean;
 }
 
@@ -64,12 +121,27 @@ interface ServerSticker {
 
 interface MentionSuggestion {
   id: string;
-  kind: "user" | "role" | "everyone" | "here" | "emoji";
+  kind: "user" | "role" | "everyone" | "here" | "emoji" | "unicode-emoji" | "command" | "param-user" | "param-duration" | "param-choice" | "param-hint" | "channel" | "app-command" | "app-option" | "app-choice";
+  unicodeChar?: string;
   label: string;
   description?: string;
   color?: string;
   imageUrl?: string;
   animated?: boolean;
+  usage?: string;
+  paramName?: string;
+  paramRequired?: boolean;
+  paramValue?: string;
+  commandName?: string;
+  commandHint?: string;
+  category?: string;
+  appName?: string;
+  appIcon?: string | null;
+  botId?: string;
+  emoji?: string;
+  fullName?: string;
+  optionType?: number;
+  optionNames?: string[];
 }
 
 interface ReplyTarget {
@@ -114,6 +186,22 @@ interface MessageBarProps {
   // Upload
   channelId?: string;
   uploadEndpoint?: string;
+
+  /** Stable per-context id (channel/DM). When it changes, the unsent draft for
+   *  the previous context is saved and the new context's draft is restored so
+   *  switching channels no longer loses typed-but-unsent text. */
+  draftKey?: string;
+}
+
+const DRAFT_PREFIX = "serika:draft:";
+function loadDraft(key: string): string {
+  try { return localStorage.getItem(DRAFT_PREFIX + key) || ""; } catch { return ""; }
+}
+function persistDraft(key: string, text: string) {
+  try {
+    if (text.trim()) localStorage.setItem(DRAFT_PREFIX + key, text);
+    else localStorage.removeItem(DRAFT_PREFIX + key);
+  } catch { /* storage unavailable */ }
 }
 
 export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
@@ -142,10 +230,50 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
       activeMentionIndex = 0,
       channelId,
       uploadEndpoint = "/api/upload/attachment",
+      draftKey,
     },
     ref
   ) {
+    const gt = useGT();
+    const { user } = useAuth();
+    const emojiPickerEnabled = user?.settings?.textImages?.emojiPicker !== false;
+    const stickerSuggestionsEnabled = user?.settings?.textImages?.stickerSuggestions !== false;
     const composerRef = useRef<RichComposerHandle>(null);
+
+    // Draft persistence: save the previous context's unsent text and restore the
+    // new one whenever draftKey changes. Reads the live composer text at save
+    // time (empty right after a send), so sent messages never leave a stale draft.
+    const prevDraftKeyRef = useRef<string | undefined>(undefined);
+    useEffect(() => {
+      const prev = prevDraftKeyRef.current;
+      if (prev === draftKey) return;
+      if (prev !== undefined) persistDraft(prev, composerRef.current?.getText() ?? "");
+      const composer = composerRef.current;
+      if (composer && draftKey !== undefined) {
+        composer.clear();
+        const draft = loadDraft(draftKey);
+        if (draft) composer.insertTextAtCaret(draft);
+      }
+      prevDraftKeyRef.current = draftKey;
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [draftKey]);
+
+    // Save the current draft on unmount and when the tab is hidden/closed.
+    useEffect(() => {
+      const save = () => {
+        if (prevDraftKeyRef.current !== undefined) {
+          persistDraft(prevDraftKeyRef.current, composerRef.current?.getText() ?? "");
+        }
+      };
+      const onVisibility = () => { if (document.visibilityState === "hidden") save(); };
+      window.addEventListener("pagehide", save);
+      document.addEventListener("visibilitychange", onVisibility);
+      return () => {
+        window.removeEventListener("pagehide", save);
+        document.removeEventListener("visibilitychange", onVisibility);
+        save();
+      };
+    }, []);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [attachments, setAttachments] = useState<File[]>([]);
     const [attachmentPreviews, setAttachmentPreviews] = useState<string[]>([]);
@@ -154,23 +282,106 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
     const [uploadProgress, setUploadProgress] = useState<Record<number, number>>({});
     const [showEmojiPicker, setShowEmojiPicker] = useState(false);
     const [pickerTab, setPickerTab] = useState<"emoji" | "gifs" | "stickers">("emoji");
+    // Mirror picker state into refs so the (once-registered) hotkey handlers can
+    // read the latest values for tab-aware toggling.
+    const showEmojiPickerRef = useRef(showEmojiPicker);
+    const pickerTabRef = useRef(pickerTab);
+    useEffect(() => { showEmojiPickerRef.current = showEmojiPicker; }, [showEmojiPicker]);
+    useEffect(() => { pickerTabRef.current = pickerTab; }, [pickerTab]);
     const [hasText, setHasText] = useState(false);
+    const [acceptFileTypes, setAcceptFileTypes] = useState<string>("*/*");
+
+    useEffect(() => {
+      fetch("/api/platform/file-types-accept")
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          const accept = data?.accept as string | undefined;
+          if (accept && accept.length > 0) {
+            setAcceptFileTypes(accept);
+          }
+        })
+        .catch(() => {});
+    }, []);
+
+    // Broadcast keyboard-shortcut actions owned by the composer.
+    useEffect(() => {
+      // Pressing a picker hotkey opens that tab; pressing the same one again
+      // (while that tab is showing) closes the picker.
+      const toggleTab = (tab: "emoji" | "gifs" | "stickers") => {
+        if (showEmojiPickerRef.current && pickerTabRef.current === tab) {
+          setShowEmojiPicker(false);
+        } else {
+          setPickerTab(tab);
+          setShowEmojiPicker(true);
+        }
+      };
+      const unsubs = [
+        onHotkey("toggle-emoji", () => toggleTab("emoji")),
+        onHotkey("toggle-gifs", () => toggleTab("gifs")),
+        onHotkey("toggle-stickers", () => toggleTab("stickers")),
+        onHotkey("upload-file", () => fileInputRef.current?.click()),
+      ];
+      return () => unsubs.forEach((u) => u());
+    }, []);
+
+    useEffect(() => {
+      const handleGlobalKeyDown = (e: KeyboardEvent) => {
+        // 1. Only capture keydown when tab is visible
+        if (document.visibilityState !== "visible") return;
+
+        // 2. Ignore modifier key combinations (Ctrl/Meta/Alt)
+        if (e.ctrlKey || e.metaKey || e.altKey) return;
+
+        // 3. Only capture single character keys (printable characters)
+        if (!e.key || e.key.length !== 1) return;
+
+        // 4. Ignore if user is already focused on an editable element
+        const active = document.activeElement;
+        if (active) {
+          const tagName = active.tagName.toLowerCase();
+          const isEditable =
+            tagName === "input" ||
+            tagName === "textarea" ||
+            tagName === "select" ||
+            active.getAttribute("contenteditable") === "true" ||
+            (active as HTMLElement).isContentEditable;
+          if (isEditable) return;
+        }
+
+        // 5. Ignore if any modal, dialog, or context menu is open
+        const isModalOpen = document.querySelector('[role="dialog"], [role="menu"]') !== null;
+        if (isModalOpen) return;
+
+        // 6. Focus the message bar input
+        composerRef.current?.focus();
+      };
+
+      window.addEventListener("keydown", handleGlobalKeyDown);
+      return () => {
+        window.removeEventListener("keydown", handleGlobalKeyDown);
+      };
+    }, []);
+
+    // Ref mirror of attachments.length so addFiles doesn't depend on state
+    // (prevents stale closures on mobile where the file picker can suspend the page).
+    const attachmentsCountRef = useRef(0);
+    attachmentsCountRef.current = attachments.length;
 
     // ---- File upload ----
     const addFiles = useCallback((files: File[]) => {
       if (files.length === 0) return;
 
-      const maxFree = 100 * 1024 * 1024; // 100MB
-      const maxPremium = 500 * 1024 * 1024; // 500MB
+      const maxFree = 500 * 1024 * 1024; // 500MB
+      const maxPremium = 2 * 1024 * 1024 * 1024; // 2GB
 
       const validFiles: File[] = [];
       for (const file of files) {
         if (file.size > maxPremium) {
-          toast.error(`${file.name} is too large`, { description: `Maximum is 500MB (Serika+). File is ${(file.size / 1024 / 1024).toFixed(1)}MB.` });
+          toast.error(`${file.name} ${gt("is too large")}`, { description: `${gt("Maximum is 2GB (Serika+). File is")} ${(file.size / 1024 / 1024).toFixed(1)}MB.` });
           continue;
         }
         if (file.size > maxFree) {
-          toast.error(`${file.name} exceeds 100MB`, { description: "Upgrade to Serika+ for up to 500MB uploads." });
+          toast.error(`${file.name} ${gt("exceeds 500MB")}`, { description: gt("Upgrade to Serika+ for up to 2GB uploads.") });
           continue;
         }
         validFiles.push(file);
@@ -178,17 +389,18 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
 
       if (validFiles.length === 0) return;
 
-      const remainingSlots = 10 - attachments.length;
+      const currentCount = attachmentsCountRef.current;
+      const remainingSlots = 10 - currentCount;
       if (validFiles.length > remainingSlots) {
-        toast.error("Attachment limit reached", { description: "You can attach up to 10 files per message." });
+        toast.error(gt("Attachment limit reached"), { description: gt("You can attach up to 10 files per message.") });
       }
       const newFiles = validFiles.slice(0, Math.max(0, remainingSlots));
       if (newFiles.length === 0) return;
       setAttachments((prev) => [...prev, ...newFiles]);
       if (newFiles.length === 1) {
-        toast.success(`Attached ${newFiles[0].name}`);
+        toast.success(`${gt("Attached")} ${newFiles[0].name}`);
       } else {
-        toast.success(`Attached ${newFiles.length} files`);
+        toast.success(`${gt("Attached")} ${newFiles.length} ${gt("files")}`);
       }
 
       // Previews are index-aligned with attachments, so use object URLs
@@ -199,18 +411,32 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
           : ""
       );
       setAttachmentPreviews((prev) => [...prev, ...newPreviews]);
-    }, [attachments.length]);
+    }, []);
 
     const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
-      addFiles(Array.from(e.target.files || []));
+      const files = Array.from(e.target.files || []);
+      // Clear input value immediately so re-selecting the same file works
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
+      addFiles(files);
     }, [addFiles]);
 
     // Paste-to-attach (screenshots, copied images)
     const handlePaste = useCallback((e: React.ClipboardEvent) => {
-      const files = Array.from(e.clipboardData?.files || []);
+      const dt = e.clipboardData;
+      if (!dt) return;
+      // `files` is empty on some webviews (e.g. WebKitGTK in the desktop app),
+      // where pasted images arrive as clipboard `items` of kind "file" instead.
+      const files: File[] = Array.from(dt.files || []);
+      if (files.length === 0 && dt.items) {
+        for (const item of Array.from(dt.items)) {
+          if (item.kind === "file") {
+            const f = item.getAsFile();
+            if (f) files.push(f);
+          }
+        }
+      }
       if (files.length > 0) {
         e.preventDefault();
         addFiles(files);
@@ -263,7 +489,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 // fall through to error toast
               }
             }
-            let errorMsg = `Failed to upload ${file.name}`;
+            let errorMsg = `${gt("Failed to upload")} ${file.name}`;
             try {
               const data = JSON.parse(xhr.responseText);
               if (data?.error) errorMsg = data.error;
@@ -274,7 +500,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
             resolve(null);
           };
           xhr.onerror = () => {
-            toast.error(`Failed to upload ${file.name}`, { description: "Network error — check your connection." });
+            toast.error(`${gt("Failed to upload")} ${file.name}`, { description: gt("Network error — check your connection.") });
             resolve(null);
           };
           xhr.send(formData);
@@ -342,7 +568,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
       setShowEmojiPicker(false);
     }, [onStickerSelect]);
 
-    const canSend = (hasText || attachments.length > 0) && !isSending && !isUploading;
+    const canSend = (hasText || attachments.length > 0) && !isUploading;
 
     return (
       <>
@@ -352,7 +578,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
           ref={fileInputRef}
           onChange={handleFileSelect}
           multiple
-          accept="*/*"
+          accept={acceptFileTypes}
           style={{ display: "none" }}
           tabIndex={-1}
           aria-hidden="true"
@@ -360,7 +586,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
 
         {/* Attachment Previews */}
         {attachments.length > 0 && (
-          <div className="px-2 sm:px-4 pb-2">
+          <div className="px-1 sm:px-2 pb-1">
             <div className="flex flex-wrap gap-2 p-2 bg-[var(--app-surface)] rounded-lg border border-[var(--app-border)]">
               {attachments.map((file, index) => (
                 <div key={index} className="relative group">
@@ -405,7 +631,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                       type="button"
                       onClick={() => removeAttachment(index)}
                       className="absolute -top-1 -right-1 w-5 h-5 bg-red-500 rounded-full flex items-center justify-center opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity"
-                      aria-label={`Remove ${file.name}`}
+                      aria-label={`${gt("Remove")} ${file.name}`}
                     >
                       <X className="w-3 h-3 text-white" />
                     </button>
@@ -419,7 +645,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
         {/* Message Input */}
         <div
           className={cn(
-            "px-2 sm:px-4 pb-2 sm:pb-3 flex-shrink-0 relative",
+            "px-1 sm:px-2 pb-1 sm:pb-1.5 flex-shrink-0 relative",
             isDragOver && "after:absolute after:inset-1 after:rounded-lg after:border-2 after:border-dashed after:border-[#8B5CF6] after:bg-[#8B5CF6]/10 after:pointer-events-none"
           )}
           onPaste={handlePaste}
@@ -439,9 +665,11 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 <Reply className="w-4 h-4 text-[var(--app-muted)] shrink-0" />
                 <div className="min-w-0">
                   <p className="text-xs text-[var(--app-muted)] mb-0.5">
-                    Replying to {replyTo.author?.displayName || replyTo.author?.username || "message"}
+                    {gt("Replying to")} {replyTo.author?.displayName || replyTo.author?.username || gt("message")}
                   </p>
-                  <p className="text-sm text-[var(--text-primary)] truncate">{replyTo.content || "(attachment)"}</p>
+                  <p className="text-sm text-[var(--text-primary)] truncate">
+                    {replyTo.content ? decodeHtmlEntities(replyTo.content) : gt("(attachment)")}
+                  </p>
                 </div>
               </div>
               {onCancelReply && (
@@ -449,7 +677,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                   type="button"
                   onClick={onCancelReply}
                   className="text-[var(--app-muted)] hover:text-[var(--text-primary)] transition-colors shrink-0"
-                  title="Cancel reply"
+                  title={gt("Cancel reply")}
                 >
                   <X className="w-4 h-4" />
                 </button>
@@ -460,37 +688,392 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
           <div className="bg-[var(--app-surface)] rounded-lg border border-[var(--app-border)] shadow-[var(--app-elev-1)] overflow-hidden">
             {/* Mention suggestions overlay */}
             {mentionSuggestions.length > 0 && (
-              <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-20 rounded-md border border-[var(--app-border)] bg-[var(--app-surface-alt)] shadow-[var(--app-elev-2)] overflow-hidden">
-                {mentionSuggestions.map((suggestion, index) => (
-                  <button
-                    key={`${suggestion.kind}-${suggestion.id}`}
-                    type="button"
-                    onMouseDown={(event) => {
-                      event.preventDefault();
-                      onMentionSelect?.(suggestion);
-                    }}
-                    className={cn(
-                      "w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
-                      index === activeMentionIndex
-                        ? "bg-[var(--app-accent)]/20 text-[var(--text-primary)]"
-                        : "hover:bg-[var(--app-surface)] text-[var(--text-primary)]"
-                    )}
-                  >
-                    <span className="flex items-center gap-2 min-w-0 text-sm">
-                      {suggestion.kind === "emoji" ? (
-                        <>
-                          <img src={suggestion.imageUrl} alt="" className="w-5 h-5 object-contain shrink-0" loading="lazy" />
-                          <span className="truncate">:{suggestion.label}:</span>
-                        </>
-                      ) : (
-                        <span className="truncate">@{suggestion.label}</span>
+              <div className="absolute left-2 right-2 bottom-[calc(100%+8px)] z-20 rounded-lg border border-[var(--app-border)] bg-[var(--app-surface-alt)] shadow-[var(--app-elev-2)] overflow-hidden max-h-80 overflow-y-auto">
+                {/* Command list — bot commands grouped by application, then
+                    built-in commands grouped by category (Discord-style). */}
+                {mentionSuggestions.length > 0 && mentionSuggestions.every(s => s.kind === "command" || s.kind === "app-command") && (() => {
+                  // Preserve first-seen order so the running index matches the
+                  // flat suggestion array used for keyboard navigation.
+                  const groups: { key: string; kind: "app" | "cat"; label: string; icon?: string | null; items: MentionSuggestion[] }[] = [];
+                  const indexOf = new Map<string, number>();
+                  const catMeta: Record<string, { label: string; color: string }> = {
+                    moderation: { label: gt("Moderation"), color: "text-red-400" },
+                    utility: { label: gt("Utility"), color: "text-blue-400" },
+                    fun: { label: gt("Fun"), color: "text-amber-400" },
+                  };
+                  for (const s of mentionSuggestions) {
+                    const key = s.kind === "app-command" ? `app:${s.appName}` : `cat:${s.category || "utility"}`;
+                    if (!indexOf.has(key)) {
+                      indexOf.set(key, groups.length);
+                      groups.push({
+                        key,
+                        kind: s.kind === "app-command" ? "app" : "cat",
+                        label: s.kind === "app-command" ? (s.appName || gt("Bot")) : catMeta[s.category || "utility"].label,
+                        icon: s.kind === "app-command" ? s.appIcon : undefined,
+                        items: [],
+                      });
+                    }
+                    groups[indexOf.get(key)!].items.push(s);
+                  }
+                  let globalIdx = 0;
+                  return groups.map((group) => (
+                    <div key={group.key}>
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--app-surface)]/50 border-b border-[var(--app-border)]/50 sticky top-0 z-10">
+                        {group.kind === "app" ? (
+                          group.icon ? (
+                            <img src={cdnImage(group.icon)} alt="" className="w-4 h-4 rounded-sm object-cover shrink-0" />
+                          ) : (
+                            <Bot className="w-3.5 h-3.5 text-[#a78bfa] shrink-0" />
+                          )
+                        ) : (
+                          <span className={cn("shrink-0", catMeta[group.key.slice(4)]?.color)}>{CATEGORY_ICONS[group.key.slice(4)]}</span>
+                        )}
+                        <span className={cn("text-[10px] font-bold uppercase tracking-wider truncate", group.kind === "app" ? "text-[#a78bfa]" : catMeta[group.key.slice(4)]?.color)}>{group.label}</span>
+                        <span className="text-[10px] text-[var(--app-muted)] ml-auto">{group.items.length}</span>
+                      </div>
+                      {group.items.map((suggestion) => {
+                        const idx = globalIdx++;
+                        const isApp = suggestion.kind === "app-command";
+                        const cmdIcon = isApp
+                          ? (suggestion.appIcon
+                              ? <img src={cdnImage(suggestion.appIcon)} alt="" className="w-full h-full rounded-md object-cover" />
+                              : <Bot className="w-3.5 h-3.5" />)
+                          : (COMMAND_ICONS[suggestion.id as keyof typeof COMMAND_ICONS] || <Hash className="w-3.5 h-3.5" />);
+                        return (
+                          <button
+                            key={`${suggestion.kind}-${suggestion.id}`}
+                            type="button"
+                            onMouseDown={(event) => {
+                              event.preventDefault();
+                              onMentionSelect?.(suggestion);
+                            }}
+                            className={cn(
+                              "w-full flex items-center gap-3 px-3 py-2 text-left transition-colors",
+                              idx === activeMentionIndex
+                                ? "bg-[var(--app-accent)]/15 text-[var(--text-primary)]"
+                                : "hover:bg-[var(--app-surface)]/60 text-[var(--text-primary)]"
+                            )}
+                          >
+                            <span className="flex items-center justify-center w-7 h-7 shrink-0 rounded-md bg-[#8B5CF6]/15 text-[#a78bfa] overflow-hidden">
+                              {cmdIcon}
+                            </span>
+                            <span className="flex flex-col min-w-0 gap-0.5">
+                              <span className="truncate font-mono text-sm text-[#a78bfa]">/{suggestion.label}</span>
+                              <span className="truncate text-xs text-[var(--app-muted)]">{suggestion.description}</span>
+                              {suggestion.commandHint && (
+                                <span className="truncate text-[10px] text-[var(--app-muted)]/60 italic">{suggestion.commandHint}</span>
+                              )}
+                            </span>
+                            {isApp && suggestion.appName ? (
+                              <span className="ml-auto text-[11px] text-[var(--app-muted)] truncate shrink-0 max-w-[140px]">
+                                {suggestion.appName}
+                              </span>
+                            ) : suggestion.usage ? (
+                              <span className="ml-auto text-[10px] font-mono text-[var(--app-muted)]/70 truncate shrink-0 max-w-[140px]">
+                                {suggestion.usage}
+                              </span>
+                            ) : null}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ));
+                })()}
+
+                {/* App command OPTIONS list (screenshot: difficulty / mode / anilist) */}
+                {mentionSuggestions.length > 0 && mentionSuggestions.every(s => s.kind === "app-option") && mentionSuggestions[0].id !== "__app-option-hint__" && (
+                  <>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--app-surface)]/50 border-b border-[var(--app-border)]/50">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">{gt("Options")}</span>
+                      <span className="font-mono text-[10px] text-[#a78bfa] ml-auto truncate">/{mentionSuggestions[0].commandName}</span>
+                    </div>
+                    {mentionSuggestions.map((suggestion, index) => (
+                      <button
+                        key={`${suggestion.kind}-${suggestion.id}`}
+                        type="button"
+                        onMouseDown={(event) => { event.preventDefault(); onMentionSelect?.(suggestion); }}
+                        className={cn(
+                          "w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+                          index === activeMentionIndex
+                            ? "bg-[var(--app-accent)]/15 text-[var(--text-primary)]"
+                            : "hover:bg-[var(--app-surface)]/60 text-[var(--text-primary)]"
+                        )}
+                      >
+                        <span className="flex items-center gap-2 min-w-0">
+                          <span className="font-mono text-sm text-[var(--text-primary)] truncate">{suggestion.label}</span>
+                          {suggestion.paramRequired && (
+                            <span className="text-[9px] font-bold uppercase text-red-400/80 bg-red-500/10 px-1.5 py-0.5 rounded shrink-0">{gt("required")}</span>
+                          )}
+                        </span>
+                        {suggestion.description && (
+                          <span className="text-xs text-[var(--app-muted)] truncate shrink-0 max-w-[55%]">{suggestion.description}</span>
+                        )}
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {/* App command choice list (screenshot: 🎵 Audio — guess from theme song) */}
+                {mentionSuggestions.length > 0 && mentionSuggestions.every(s => s.kind === "app-choice") && (
+                  <>
+                    <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--app-surface)]/50 border-b border-[var(--app-border)]/50">
+                      <span className="text-[10px] font-bold uppercase tracking-wider text-[var(--app-muted)]">{mentionSuggestions[0].paramName}</span>
+                      <span className="font-mono text-[10px] text-[#a78bfa] ml-auto truncate">/{mentionSuggestions[0].commandName}</span>
+                    </div>
+                    {mentionSuggestions.map((suggestion, index) => (
+                      <button
+                        key={`${suggestion.kind}-${suggestion.id}`}
+                        type="button"
+                        onMouseDown={(event) => { event.preventDefault(); onMentionSelect?.(suggestion); }}
+                        className={cn(
+                          "w-full flex items-center gap-2.5 px-3 py-2 text-left transition-colors",
+                          index === activeMentionIndex
+                            ? "bg-[var(--app-accent)]/15 text-[var(--text-primary)]"
+                            : "hover:bg-[var(--app-surface)]/60 text-[var(--text-primary)]"
+                        )}
+                      >
+                        {suggestion.emoji && <span className="text-base shrink-0">{suggestion.emoji}</span>}
+                        <span className="text-sm text-[var(--text-primary)] truncate">{suggestion.label}</span>
+                        {suggestion.description && (
+                          <span className="text-xs text-[var(--app-muted)] truncate">— {suggestion.description}</span>
+                        )}
+                      </button>
+                    ))}
+                  </>
+                )}
+
+                {/* App free-text option hint (single card) */}
+                {mentionSuggestions.length === 1 && mentionSuggestions[0].kind === "app-option" && mentionSuggestions[0].id === "__app-option-hint__" && (
+                  <div className="px-4 py-3">
+                    <div className="flex items-center gap-2 mb-1.5">
+                      <span className="font-mono text-sm text-[#a78bfa]">/{mentionSuggestions[0].commandName}</span>
+                      <span className="text-xs text-[var(--app-muted)]">—</span>
+                      <span className="text-xs font-semibold text-[var(--text-secondary)]">{mentionSuggestions[0].paramName}</span>
+                      {mentionSuggestions[0].paramRequired && (
+                        <span className="text-[9px] font-bold uppercase text-red-400/80 bg-red-500/10 px-1.5 py-0.5 rounded">{gt("required")}</span>
                       )}
-                    </span>
-                    <span className="text-xs text-[var(--app-muted)] truncate">
-                      {suggestion.kind === "role" ? "Role" : suggestion.description}
-                    </span>
-                  </button>
-                ))}
+                    </div>
+                    <p className="text-xs text-[var(--app-muted)] leading-relaxed">{mentionSuggestions[0].description}</p>
+                    <p className="text-[10px] text-[var(--app-muted)]/60 mt-1.5">{gt("Type your value and press space…")}</p>
+                  </div>
+                )}
+
+                {/* Param hint card (single item) */}
+                {mentionSuggestions.length === 1 && mentionSuggestions[0].kind === "param-hint" && (() => {
+                  const s = mentionSuggestions[0];
+                  const cmdIcon = s.commandName ? COMMAND_ICONS[s.commandName as keyof typeof COMMAND_ICONS] : null;
+                  const isTts = s.commandName === "tts";
+                  return (
+                    <div className="px-4 py-3">
+                      <div className="flex items-center gap-2 mb-1.5">
+                        {cmdIcon && (
+                          <span className="flex items-center justify-center w-6 h-6 shrink-0 rounded-md bg-[#8B5CF6]/15 text-[#a78bfa]">
+                            {cmdIcon}
+                          </span>
+                        )}
+                        <span className="font-mono text-sm text-[#a78bfa]">/{s.commandName}</span>
+                        <span className="text-xs text-[var(--app-muted)]">—</span>
+                        <span className="text-xs font-semibold text-[var(--text-secondary)]">{s.paramName}</span>
+                        {s.paramRequired && (
+                          <span className="text-[9px] font-bold uppercase text-red-400/80 bg-red-500/10 px-1.5 py-0.5 rounded">{gt("required")}</span>
+                        )}
+                      </div>
+                      <p className="text-xs text-[var(--app-muted)] leading-relaxed pl-8">{s.description}</p>
+                      {isTts ? (
+                        <div className="mt-2.5 pl-8 space-y-1.5">
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[f]</span>
+                            <span className="text-[var(--app-muted)]">{gt("Female voice")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[m]</span>
+                            <span className="text-[var(--app-muted)]">{gt("Male voice")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[2x]</span>
+                            <span className="text-[var(--app-muted)]">{gt("Speed (also: [1.5x], [slow], [fast], [turbo])")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[vol:50]</span>
+                            <span className="text-[var(--app-muted)]">{gt("Volume 0–500% (also: [vol:BASS] bass boost, [vol:EAR] max loudness)")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[steven]</span>
+                            <span className="text-[var(--app-muted)]">{gt("Stephen Hawking robotic voice")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[fish:miku]</span>
+                            <span className="text-[var(--app-muted)]">{gt("FishAudio AI voice (also: [fish:model-id])")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <span className="shrink-0 px-1.5 py-0.5 rounded bg-[#8B5CF6]/15 text-[#a78bfa] font-mono font-semibold">[f-japanese]</span>
+                            <span className="text-[var(--app-muted)]">{gt("Gender + accent (also: [m-dutch], [scottish]…)")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <Volume2 className="w-3 h-3 shrink-0 text-emerald-400/70" />
+                            <span className="text-[var(--app-muted)]">{gt("Switch speakers mid-message: [m] hi [f] hello")}</span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[11px]">
+                            <Music className="w-3 h-3 shrink-0 text-amber-400/70" />
+                            <span className="text-[var(--app-muted)]">{gt("Trigger words auto-play sound effects mid-speech")}</span>
+                          </div>
+                          <div className="mt-2 pt-2 border-t border-[var(--app-border)]/40">
+                            <p className="text-[10px] text-[var(--app-muted)]/70 font-mono">
+                              <span className="text-[#a78bfa]">/tts</span> [m] whoa nice day [f] ik right
+                            </p>
+                          </div>
+                        </div>
+                      ) : (
+                        <p className="text-[10px] text-[var(--app-muted)]/60 mt-1.5 pl-8">{gt("Type your value and press space…")}</p>
+                      )}
+                    </div>
+                  );
+                })()}
+
+                {/* Param user suggestions */}
+                {mentionSuggestions.length > 0 && mentionSuggestions[0].kind === "param-user" && (() => {
+                  const cmdName = mentionSuggestions[0].commandName;
+                  const paramName = mentionSuggestions[0].paramName;
+                  const cmdIcon = cmdName ? COMMAND_ICONS[cmdName as keyof typeof COMMAND_ICONS] : null;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--app-surface)]/50 border-b border-[var(--app-border)]/50">
+                        {cmdIcon && (
+                          <span className="flex items-center justify-center w-5 h-5 shrink-0 rounded bg-[#8B5CF6]/15 text-[#a78bfa]">
+                            {cmdIcon}
+                          </span>
+                        )}
+                        <span className="font-mono text-xs text-[#a78bfa]">/{cmdName}</span>
+                        <span className="text-[10px] text-[var(--app-muted)]">— {gt("select a member for")}</span>
+                        <span className="text-[10px] font-semibold text-[var(--text-secondary)]">{paramName}</span>
+                      </div>
+                      {mentionSuggestions.map((suggestion, index) => (
+                        <button
+                          key={`${suggestion.kind}-${suggestion.id}`}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            onMentionSelect?.(suggestion);
+                          }}
+                          className={cn(
+                            "w-full flex items-center gap-3 px-3 py-2 text-left transition-colors",
+                            index === activeMentionIndex
+                              ? "bg-[var(--app-accent)]/15 text-[var(--text-primary)]"
+                              : "hover:bg-[var(--app-surface)]/60 text-[var(--text-primary)]"
+                          )}
+                        >
+                          <span
+                            className="flex items-center justify-center w-7 h-7 shrink-0 rounded-full text-xs font-bold"
+                            style={suggestion.color ? { backgroundColor: suggestion.color + "30", color: suggestion.color } : undefined}
+                          >
+                            {(suggestion.label || "?").charAt(0).toUpperCase()}
+                          </span>
+                          <span className="flex flex-col min-w-0">
+                            <span className="truncate text-sm" style={suggestion.color ? { color: suggestion.color } : undefined}>
+                              {suggestion.label}
+                            </span>
+                            {suggestion.description && (
+                              <span className="truncate text-xs text-[var(--app-muted)]">@{suggestion.description}</span>
+                            )}
+                          </span>
+                        </button>
+                      ))}
+                    </>
+                  );
+                })()}
+
+                {/* Param duration / choice suggestions */}
+                {mentionSuggestions.length > 0 && (mentionSuggestions[0].kind === "param-duration" || mentionSuggestions[0].kind === "param-choice") && (() => {
+                  const cmdName = mentionSuggestions[0].commandName;
+                  const paramName = mentionSuggestions[0].paramName;
+                  const isDuration = mentionSuggestions[0].kind === "param-duration";
+                  const cmdIcon = cmdName ? COMMAND_ICONS[cmdName as keyof typeof COMMAND_ICONS] : null;
+                  return (
+                    <>
+                      <div className="flex items-center gap-2 px-3 py-1.5 bg-[var(--app-surface)]/50 border-b border-[var(--app-border)]/50">
+                        {cmdIcon && (
+                          <span className="flex items-center justify-center w-5 h-5 shrink-0 rounded bg-[#8B5CF6]/15 text-[#a78bfa]">
+                            {cmdIcon}
+                          </span>
+                        )}
+                        <span className="font-mono text-xs text-[#a78bfa]">/{cmdName}</span>
+                        <span className="text-[10px] text-[var(--app-muted)]">— {gt("choose")} {isDuration ? gt("a duration") : gt("an option")} {gt("for")}</span>
+                        <span className="text-[10px] font-semibold text-[var(--text-secondary)]">{paramName}</span>
+                      </div>
+                      {mentionSuggestions.map((suggestion, index) => (
+                        <button
+                          key={`${suggestion.kind}-${suggestion.id}`}
+                          type="button"
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            onMentionSelect?.(suggestion);
+                          }}
+                          className={cn(
+                            "w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+                            index === activeMentionIndex
+                              ? "bg-[var(--app-accent)]/15 text-[var(--text-primary)]"
+                              : "hover:bg-[var(--app-surface)]/60 text-[var(--text-primary)]"
+                          )}
+                        >
+                          <span className="flex items-center gap-2.5 min-w-0 text-sm">
+                            {isDuration ? (
+                              <Clock className="w-4 h-4 shrink-0 text-[var(--app-muted)]" />
+                            ) : (
+                              <span className="w-4 h-4 shrink-0 rounded-sm border-2 border-[var(--app-muted)]/40" />
+                            )}
+                            <span className="truncate">{suggestion.label}</span>
+                          </span>
+                          {suggestion.description && (
+                            <span className="text-xs font-mono text-[var(--app-muted)] truncate shrink-0">
+                              {suggestion.description}
+                            </span>
+                          )}
+                        </button>
+                      ))}
+                    </>
+                  );
+                })()}
+
+                {/* Regular mention/emoji suggestions (non-command, non-param) */}
+                {mentionSuggestions.length > 0 && !mentionSuggestions.some(s => s.kind === "command" || s.kind === "app-command" || s.kind === "app-option" || s.kind === "app-choice" || s.kind === "param-user" || s.kind === "param-duration" || s.kind === "param-choice" || s.kind === "param-hint") && mentionSuggestions.map((suggestion, index) => {
+                  return (
+                    <button
+                      key={`${suggestion.kind}-${suggestion.id}`}
+                      type="button"
+                      onMouseDown={(event) => {
+                        event.preventDefault();
+                        onMentionSelect?.(suggestion);
+                      }}
+                      className={cn(
+                        "w-full flex items-center justify-between gap-3 px-3 py-2 text-left transition-colors",
+                        index === activeMentionIndex
+                          ? "bg-[var(--app-accent)]/20 text-[var(--text-primary)]"
+                          : "hover:bg-[var(--app-surface)] text-[var(--text-primary)]"
+                      )}
+                    >
+                      <span className="flex items-center gap-2 min-w-0 text-sm">
+                        {suggestion.kind === "emoji" ? (
+                          <>
+                            <img src={cdnImage(suggestion.imageUrl)} alt="" className="w-5 h-5 object-contain shrink-0" loading="lazy" />
+                            <span className="truncate">:{suggestion.label}:</span>
+                          </>
+                        ) : suggestion.kind === "unicode-emoji" ? (
+                          <>
+                            <span className="text-base shrink-0">{suggestion.unicodeChar}</span>
+                            <span className="truncate">:{suggestion.label}:</span>
+                          </>
+                        ) : suggestion.kind === "channel" ? (
+                          <span className="truncate flex items-center gap-1 font-medium"><Hash className="w-4 h-4 text-[var(--text-muted)] shrink-0" />{suggestion.label}</span>
+                        ) : (
+                          <span className="truncate">@{suggestion.label}</span>
+                        )}
+                      </span>
+                      <span className="text-xs text-[var(--app-muted)] truncate shrink-0">
+                        {suggestion.kind === "role" ? gt("Role") : suggestion.description}
+                      </span>
+                    </button>
+                  );
+                })}
               </div>
             )}
 
@@ -501,7 +1084,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 className="absolute left-2 sm:left-3 top-1/2 -translate-y-1/2 text-[var(--app-muted)] hover:text-[var(--text-primary)] transition-colors z-10"
-                title="Upload file"
+                title={gt("Upload file")}
               >
                 <PlusCircle className="w-5 sm:w-6 h-5 sm:h-6" />
               </button>
@@ -517,7 +1100,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 onKeyDown={onKeyDown}
                 placeholder={placeholder}
                 aria-label={ariaLabel ?? placeholder}
-                disabled={disabled || isSending}
+                disabled={disabled}
               />
 
               {/* Right-side buttons (pinned to editor row) */}
@@ -530,12 +1113,13 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                   setShowEmojiPicker(true);
                 }}
                 className="hover:text-[var(--text-primary)] transition-colors hidden sm:block"
-                title="Open GIF picker"
+                title={gt("Open GIF picker")}
               >
-                <ImageIcon className="w-6 h-6" />
+                <ImagePlay className="w-6 h-6" />
               </button>
 
               {/* Sticker picker button */}
+              {stickerSuggestionsEnabled && (
               <button
                 type="button"
                 onClick={() => {
@@ -543,12 +1127,14 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                   setShowEmojiPicker(true);
                 }}
                 className="hover:text-[var(--text-primary)] transition-colors hidden sm:block"
-                title="Open sticker picker"
+                title={gt("Open sticker picker")}
               >
                 <Sticker className="w-6 h-6" />
               </button>
+              )}
 
               {/* Emoji picker button */}
+              {emojiPickerEnabled && (
               <Popover
                 open={showEmojiPicker}
                 onOpenChange={(open) => {
@@ -585,18 +1171,19 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                   />
                 </PopoverContent>
               </Popover>
+              )}
 
-              {/* Send button (stays visible with a spinner while sending/uploading) */}
+              {/* Send button (shows spinner while sending/uploading, but stays clickable) */}
               {(canSend || isSending || isUploading) && (
                 <button
                   type="button"
                   onClick={onSend}
-                  disabled={isSending || isUploading}
-                  aria-label={isUploading ? "Uploading attachments" : isSending ? "Sending" : "Send message"}
+                  disabled={isUploading}
+                  aria-label={isUploading ? gt("Uploading attachments") : isSending ? gt("Sending") : gt("Send message")}
                   className="text-[#8B5CF6] hover:text-[#A78BFA] transition-colors disabled:opacity-70"
                 >
                   {isSending || isUploading ? (
-                    <Loader2 className="w-5 sm:w-6 h-5 sm:h-6 animate-spin" />
+                    <Loader size={20} className="sm:w-6 sm:h-6" />
                   ) : (
                     <SendHorizontal className="w-5 sm:w-6 h-5 sm:h-6" />
                   )}

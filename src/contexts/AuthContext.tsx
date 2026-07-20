@@ -1,6 +1,8 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef } from "react";
+import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef, useMemo } from "react";
+import { upsertSavedAccount } from "@/lib/services/savedAccounts";
+import { clearMessageCache } from "@/hooks/useChatSession";
 
 export type BadgeId = 
   | 'staff' | 'admin' | 'moderator' 
@@ -18,6 +20,8 @@ interface User {
   banner?: string;
   bio?: string;
   pronouns?: string;
+  timezone?: string;
+  showTimezone?: boolean;
   status: "online" | "idle" | "dnd" | "offline";
   customStatus?: string;
   isPremium?: boolean;
@@ -36,14 +40,23 @@ interface User {
       color?: string;
       gradient?: string[];
     };
+    nameplate?: {
+      type?: 'none' | 'color' | 'gradient' | 'preset';
+      color?: string;
+      gradient?: string[];
+      presetId?: string;
+    };
+    [key: string]: any;
   };
   gifFavorites?: Array<{ url: string; title?: string; source?: string; addedAt: number }>;
+  emojiFavorites?: Array<{ emoji: string; name?: string; customEmojiId?: string | null; url?: string | null; addedAt: number }>;
 }
 
 interface AuthContextType {
   user: User | null;
   isLoading: boolean;
   login: (email: string, password: string) => Promise<void>;
+  register: (data: { email: string; username: string; password: string; displayName?: string }) => Promise<void>;
   logout: () => Promise<void>;
   refresh: () => Promise<void>;
   updateUser: (updates: Partial<User>) => void;
@@ -56,6 +69,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const statusUpdatePending = useRef(false);
+  const refreshInFlight = useRef(false);
 
   const sendPresenceHeartbeat = useCallback(async () => {
     if (typeof document !== "undefined" && document.visibilityState !== "visible") return;
@@ -96,11 +110,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refresh = useCallback(async () => {
+    // Prevent concurrent refresh calls — if a refresh is already in flight,
+    // wait for it instead of firing a duplicate request.
+    if (refreshInFlight.current) return;
+    refreshInFlight.current = true;
+    setIsLoading(true);
     try {
-      const response = await fetch("/api/users/@me");
+      let response = await fetch("/api/users/@me");
+
+      // If the access token expired, try refreshing it once before giving up.
+      if (response.status === 401) {
+        const refreshRes = await fetch("/api/auth/refresh", { method: "POST" });
+        if (refreshRes.ok) {
+          response = await fetch("/api/users/@me");
+        }
+      }
+
       if (response.ok) {
         const data = await response.json();
         setUser(data);
+        upsertSavedAccount(data);
 
         // Set user online when refreshing auth. Fire-and-forget so the app shell
         // paints as soon as we know who the user is, rather than blocking first
@@ -122,6 +151,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setUser(null);
     } finally {
       setIsLoading(false);
+      refreshInFlight.current = false;
     }
   }, []);
 
@@ -198,7 +228,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     const response = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -206,26 +236,53 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     });
 
     if (!response.ok) {
-      const data = await response.json();
+      const data = await response.json().catch(() => ({}));
       throw new Error(data.error || "Failed to login");
     }
 
+    // Wait for the context to pick up the new auth cookie before returning.
     await refresh();
-  };
+    // Clear any cached messages from a previous session to prevent
+    // cross-account message leakage via localStorage SWR cache.
+    clearMessageCache();
+  }, [refresh]);
 
-  const logout = async () => {
+  const register = useCallback(async (data: { email: string; username: string; password: string; displayName?: string }) => {
+    const response = await fetch("/api/auth/register", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(data),
+    });
+
+    if (!response.ok) {
+      const resData = await response.json().catch(() => ({}));
+      throw new Error(resData.error || "Failed to register");
+    }
+
+    // Registration requires email verification — no auth cookie is set,
+    // so we don't call refresh() here. The caller should show a success
+    // message and redirect to login.
+  }, []);
+
+  const logout = useCallback(async () => {
     // Set offline before logging out
-    await setOnlineStatus("offline");
-    await fetch("/api/auth/logout", { method: "POST" });
+    try { await setOnlineStatus("offline"); } catch {}
+    try { await fetch("/api/auth/logout", { method: "POST" }); } catch {}
+    clearMessageCache();
     setUser(null);
-  };
+  }, [setOnlineStatus]);
 
-  const updateUser = (updates: Partial<User>) => {
+  const updateUser = useCallback((updates: Partial<User>) => {
     setUser(prev => prev ? { ...prev, ...updates } : null);
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ user, isLoading, login, register, logout, refresh, updateUser, setOnlineStatus }),
+    [user, isLoading, login, register, logout, refresh, updateUser, setOnlineStatus]
+  );
 
   return (
-    <AuthContext.Provider value={{ user, isLoading, login, logout, refresh, updateUser, setOnlineStatus }}>
+    <AuthContext.Provider value={value}>
       {children}
     </AuthContext.Provider>
   );

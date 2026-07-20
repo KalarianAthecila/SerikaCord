@@ -15,6 +15,7 @@ import {
   Hash,
   Volume2,
   Megaphone,
+  MessagesSquare,
   ChevronDown,
   Settings,
   UserPlus,
@@ -35,22 +36,28 @@ import {
   Edit2,
   Trash2,
   Copy,
+  Check,
   Link as LinkIcon,
   BellOff,
+  AlertTriangle,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, cdnImage } from "@/lib/utils";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { getNameplateBackground } from "@/lib/constants/nameplates";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { UserProfilePopup } from "@/components/user/UserProfilePopup";
 import { VoiceBar } from "@/components/voice/VoiceBar";
 import { ServerBadge } from "@/components/ui/badges";
 import { isChannelMuted, toggleChannelMute } from "@/lib/services/notificationUX";
-import { useMentions } from "@/hooks/useMentions";
+import { useUnread } from "@/contexts/UnreadContext";
+import { prefetchChannelMessages } from "@/hooks/useChatSession";
 import { usePermissions } from "@/hooks/usePermissions";
 import { usePolling } from "@/hooks/usePolling";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
+import { ChannelSettingsDialog } from "@/components/dialogs/ChannelSettingsDialog";
+import { T, useGT } from "gt-next";
 import { toast } from "sonner";
 
 interface DMChannel {
@@ -64,6 +71,8 @@ interface DMChannel {
     status: string;
     isPremium?: boolean;
     isSystem?: boolean;
+    isBot?: boolean;
+    isVerified?: boolean;
     customization?: {
       profileColor?: string;
       profileAccentColor?: string;
@@ -78,12 +87,13 @@ interface DMChannel {
   }[];
   lastMessageId?: string;
   updatedAt?: string;
+  unreadCount?: number;
 }
 
 interface ChannelSidebarProps {
   onInvitePeople?: () => void;
   onServerSettings?: () => void;
-  onCreateChannel?: () => void;
+  onCreateChannel?: (defaultType?: "text" | "voice" | "category", defaultParentId?: string) => void;
   onCreateCategory?: () => void;
   onLeaveServer?: () => void;
 }
@@ -92,17 +102,17 @@ export function ChannelSidebar({
   onInvitePeople,
   onServerSettings,
   onCreateChannel,
-  onCreateCategory,
 }: ChannelSidebarProps) {
-  const { currentServer, channels, currentChannel, setCurrentChannel, leaveServer, deleteChannel, updateChannel } = useServer();
+  const { currentServer, channels, currentChannel, leaveServer, deleteChannel, updateChannel, reorderChannels } = useServer();
   const { user } = useAuth();
   const router = useRouter();
   const { can, isAdmin } = usePermissions(currentServer?.id);
+  const gt = useGT();
   const canManageChannels = can("MANAGE_CHANNELS");
   const canManageServer = can("MANAGE_SERVER");
   const canInvite = can("CREATE_INVITE");
   const canManageAny = canManageChannels || canManageServer || isAdmin;
-  const { getChannelCount, markChannelRead } = useMentions(currentServer?.id);
+  const { isChannelUnread, getMentionCount, registerChannels, setActiveChannel, seedDmCounts, notifyDmActivity, markChannelRead } = useUnread();
   const [activeVoiceChannelName, setActiveVoiceChannelName] = useState<string | undefined>(undefined);
   const [voiceParticipants, setVoiceParticipants] = useState<import("@/lib/services/voiceService").VoiceParticipant[]>([]);
 
@@ -143,7 +153,6 @@ export function ChannelSidebar({
 
   const navigateToChannel = (channel: typeof channels[0]) => {
     if (!currentServer) return;
-    setCurrentChannel(channel);
     router.push(`/channels/${currentServer.id}/${channel.id}`);
   };
 
@@ -157,8 +166,15 @@ export function ChannelSidebar({
     y: number;
     channel: typeof channels[0];
   } | null>(null);
-  const [editingChannel, setEditingChannel] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
+
+  // Channel Settings Dialog state
+  const [settingsChannelId, setSettingsChannelId] = useState<string | null>(null);
+
+  // Drag and Drop state
+  const [draggedChannel, setDraggedChannel] = useState<typeof channels[0] | null>(null);
+  const [dragOverTarget, setDragOverTarget] = useState<string | null>(null);
+  const [dropIndicator, setDropIndicator] = useState<{ targetId: string; position: "before" | "after" } | null>(null);
+  const dragCounterRef = useRef(0);
 
   const handleContextMenu = (e: React.MouseEvent, channel: typeof channels[0]) => {
     e.preventDefault();
@@ -167,46 +183,252 @@ export function ChannelSidebar({
 
   const closeContextMenu = () => setContextMenu(null);
 
-  // Close context menu when clicking outside
+  // DM row context menu (separate from server channels — different item set).
+  const [dmContextMenu, setDmContextMenu] = useState<{ x: number; y: number; channel: DMChannel } | null>(null);
+  const closeDmContextMenu = () => setDmContextMenu(null);
+
+  // Close context menu when clicking outside or pressing Escape
   useEffect(() => {
-    const handleClick = () => closeContextMenu();
-    if (contextMenu) {
-      window.addEventListener('click', handleClick);
-      return () => window.removeEventListener('click', handleClick);
-    }
-  }, [contextMenu]);
+    if (!contextMenu && !dmContextMenu) return;
+    const handleClick = () => { closeContextMenu(); closeDmContextMenu(); };
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        closeContextMenu();
+        closeDmContextMenu();
+      }
+    };
+    window.addEventListener('click', handleClick);
+    window.addEventListener("keydown", handleKeyDown, { capture: true });
+    return () => {
+      window.removeEventListener('click', handleClick);
+      window.removeEventListener("keydown", handleKeyDown, { capture: true } as EventListenerOptions);
+    };
+  }, [contextMenu, dmContextMenu]);
 
   const handleEditChannel = () => {
     if (contextMenu?.channel) {
-      setEditingChannel(contextMenu.channel.id);
-      setEditName(contextMenu.channel.name);
+      setSettingsChannelId(contextMenu.channel.id);
       closeContextMenu();
     }
   };
 
-  const handleSaveEdit = async (channelId: string) => {
-    if (editName.trim()) {
-      try {
-        await updateChannel(channelId, { name: editName.trim() });
-        toast.success("Channel updated");
-      } catch (error) {
-        console.error("Failed to update channel:", error);
-        toast.error("Failed to update channel");
+  // Drag and Drop handlers
+  const handleDragStart = (e: React.DragEvent, channel: typeof channels[0]) => {
+    if (!canManageChannels) return;
+    setDraggedChannel(channel);
+    e.dataTransfer.effectAllowed = "move";
+    e.dataTransfer.setData("text/plain", channel.id);
+    // Make the drag image semi-transparent
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = "0.4";
+      e.currentTarget.style.transition = "opacity 150ms ease";
+    }
+  };
+
+  const handleDragEnd = (e: React.DragEvent) => {
+    if (e.currentTarget instanceof HTMLElement) {
+      e.currentTarget.style.opacity = "1";
+    }
+    setDraggedChannel(null);
+    setDragOverTarget(null);
+    setDropIndicator(null);
+    dragCounterRef.current = 0;
+  };
+
+  const handleDragEnter = (e: React.DragEvent, targetId: string) => {
+    e.preventDefault();
+    dragCounterRef.current++;
+    setDragOverTarget(targetId);
+  };
+
+  const handleDragLeave = (e: React.DragEvent) => {
+    e.preventDefault();
+    dragCounterRef.current--;
+    if (dragCounterRef.current === 0) {
+      setDragOverTarget(null);
+    }
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = "move";
+  };
+
+  const handleDropOnCategory = async (e: React.DragEvent, categoryId: string | null) => {
+    e.preventDefault();
+    setDragOverTarget(null);
+    setDropIndicator(null);
+    dragCounterRef.current = 0;
+    if (!draggedChannel || !currentServer) return;
+    if (draggedChannel.type === "category") return;
+
+    const targetChildren = categoryId
+      ? (channelsByCategory.get(categoryId) || []).filter(c => c.id !== draggedChannel.id)
+      : uncategorizedChannels.filter(c => c.id !== draggedChannel.id);
+
+    const updates: Array<{ id: string; position: number; parentId?: string | null }> = [
+      { id: draggedChannel.id, position: targetChildren.length, parentId: categoryId },
+    ];
+    targetChildren.forEach((ch, i) => {
+      updates.push({ id: ch.id, position: i, parentId: categoryId });
+    });
+
+    try {
+      await reorderChannels(currentServer.id, updates);
+      toast.success(gt("Moved #{name}", { name: draggedChannel.name }));
+    } catch (err) {
+      toast.error(gt("Failed to move channel"));
+    }
+    setDraggedChannel(null);
+  };
+
+  const handleDragOverChannel = (e: React.DragEvent, targetChannel: typeof channels[0]) => {
+    if (!draggedChannel || !canManageChannels) return;
+    e.preventDefault();
+    e.stopPropagation();
+    e.dataTransfer.dropEffect = "move";
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const isBefore = e.clientY < rect.top + rect.height / 2;
+    
+    let targetId = targetChannel.id;
+    if (draggedChannel.type === "category" && targetChannel.type !== "category" && targetChannel.parentId) {
+      const parentCat = categories.find(c => c.id === targetChannel.parentId);
+      if (parentCat) {
+        targetId = parentCat.id;
       }
     }
-    setEditingChannel(null);
-    setEditName("");
+    
+    setDropIndicator({ targetId, position: isBefore ? "before" : "after" });
+    setDragOverTarget(null);
+  };
+
+  const handleDropOnChannel = async (e: React.DragEvent, targetChannel: typeof channels[0]) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragOverTarget(null);
+    setDropIndicator(null);
+    dragCounterRef.current = 0;
+    if (!draggedChannel || !currentServer) return;
+    if (draggedChannel.id === targetChannel.id) return;
+
+    // Handle normal channel dropped on a category header
+    if (draggedChannel.type !== "category" && targetChannel.type === "category") {
+      return handleDropOnCategory(e, targetChannel.id);
+    }
+
+    let target = targetChannel;
+    if (draggedChannel.type === "category" && target.type !== "category" && target.parentId) {
+      const parentCat = categories.find(c => c.id === target.parentId);
+      if (parentCat) {
+        target = parentCat;
+      }
+    }
+
+    const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    const isBefore = e.clientY < rect.top + rect.height / 2;
+    const targetParent = target.type === "category" ? null : (target.parentId || null);
+    if (draggedChannel.type === "category" && targetParent !== null) return;
+
+    let siblings: typeof channels;
+    if (targetParent) {
+      siblings = (channelsByCategory.get(targetParent) || []).filter(c => c.id !== draggedChannel.id);
+    } else if (target.type === "category") {
+      siblings = categories.filter(c => c.id !== draggedChannel.id);
+    } else {
+      siblings = uncategorizedChannels.filter(c => c.id !== draggedChannel.id);
+    }
+
+    const targetIdx = siblings.findIndex(c => c.id === target.id);
+    if (targetIdx === -1) {
+      siblings.push(draggedChannel);
+    } else {
+      const insertIdx = isBefore ? targetIdx : targetIdx + 1;
+      siblings.splice(insertIdx, 0, draggedChannel);
+    }
+
+    const updates: Array<{ id: string; position: number; parentId?: string | null }> = siblings.map((ch, i) => ({
+      id: ch.id,
+      position: i,
+      parentId: draggedChannel.type === "category" ? null : (ch.parentId || null),
+    }));
+
+    if (draggedChannel.type !== "category") {
+      const draggedUpdate = updates.find(u => u.id === draggedChannel.id);
+      if (draggedUpdate) draggedUpdate.parentId = targetParent;
+    }
+
+    try {
+      await reorderChannels(currentServer.id, updates);
+      toast.success(gt("Moved {name}", { name: `${draggedChannel.type === "category" ? "" : "#"}${draggedChannel.name}` }));
+    } catch (err) {
+      toast.error(gt("Failed to move channel"));
+    }
+    setDraggedChannel(null);
+  };
+
+  const handleDropOnBottom = async (e: React.DragEvent) => {
+    e.preventDefault();
+    setDragOverTarget(null);
+    setDropIndicator(null);
+    dragCounterRef.current = 0;
+    if (!draggedChannel || !currentServer) return;
+
+    if (draggedChannel.type === "category") {
+      const siblings = categories.filter(c => c.id !== draggedChannel.id);
+      siblings.push(draggedChannel);
+
+      const updates = siblings.map((ch, i) => ({
+        id: ch.id,
+        position: i,
+        parentId: null,
+      }));
+
+      try {
+        await reorderChannels(currentServer.id, updates);
+        toast.success(gt("Moved category {name} to bottom", { name: draggedChannel.name }));
+      } catch (err) {
+        toast.error(gt("Failed to move category"));
+      }
+    } else {
+      const targetCategory = categories.length > 0 ? categories[categories.length - 1] : null;
+      const targetParentId = targetCategory ? targetCategory.id : null;
+
+      const siblings = targetParentId
+        ? (channelsByCategory.get(targetParentId) || []).filter(c => c.id !== draggedChannel.id)
+        : uncategorizedChannels.filter(c => c.id !== draggedChannel.id);
+      
+      siblings.push(draggedChannel);
+
+      const updates = siblings.map((ch, i) => ({
+        id: ch.id,
+        position: i,
+        parentId: targetParentId,
+      }));
+
+      const draggedUpdate = updates.find(u => u.id === draggedChannel.id);
+      if (draggedUpdate) draggedUpdate.parentId = targetParentId;
+
+      try {
+        await reorderChannels(currentServer.id, updates);
+        toast.success(gt("Moved #{name} to bottom", { name: draggedChannel.name }));
+      } catch (err) {
+        toast.error(gt("Failed to move channel"));
+      }
+    }
+    setDraggedChannel(null);
   };
 
   const handleDeleteChannel = async () => {
-    if (contextMenu?.channel && confirm(`Are you sure you want to delete #${contextMenu.channel.name}?`)) {
+    if (contextMenu?.channel && confirm(gt("Are you sure you want to delete #{channel}?", { channel: contextMenu.channel.name }))) {
       try {
         await deleteChannel(contextMenu.channel.id);
         closeContextMenu();
-        toast.success("Channel deleted");
+        toast.success(gt("Channel deleted"));
       } catch (error) {
         console.error("Failed to delete channel:", error);
-        toast.error("Failed to delete channel");
+        toast.error(gt("Failed to delete channel"));
       }
     }
   };
@@ -215,7 +437,7 @@ export function ChannelSidebar({
     if (contextMenu?.channel) {
       navigator.clipboard.writeText(contextMenu.channel.id);
       closeContextMenu();
-      toast.success("Channel ID copied");
+      toast.success(gt("Channel ID copied"));
     }
   };
 
@@ -224,55 +446,412 @@ export function ChannelSidebar({
       const link = `${window.location.origin}/channels/${currentServer.id}/${contextMenu.channel.id}`;
       navigator.clipboard.writeText(link);
       closeContextMenu();
-      toast.success("Channel link copied");
+      toast.success(gt("Channel link copied"));
     }
   };
 
-  const getChannelIcon = (type: string, isLocked?: boolean) => {
-    if (isLocked) {
-      return <Lock className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
+  const getChannelIcon = (type: string, isLocked?: boolean, isNsfw?: boolean) => {
+    const baseIcon = (() => {
+      if (isLocked) {
+        return <Lock className="w-5 h-5 text-[var(--text-muted)]" />;
+      }
+      switch (type) {
+        case "voice":
+          return <Volume2 className="w-5 h-5 text-[var(--text-muted)]" />;
+        case "announcement":
+          return <Megaphone className="w-5 h-5 text-[var(--text-muted)]" />;
+        case "forum":
+          return <MessagesSquare className="w-5 h-5 text-[var(--text-muted)]" />;
+        case "category":
+          return <Folder className="w-5 h-5 text-[var(--text-muted)]" />;
+        default:
+          return <Hash className="w-5 h-5 text-[var(--text-muted)]" />;
+      }
+    })();
+
+    if (isNsfw) {
+      return (
+        <span className="relative flex-shrink-0 w-5 h-5">
+          {baseIcon}
+          <AlertTriangle className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 text-red-400" />
+        </span>
+      );
     }
-    switch (type) {
-      case "voice":
-        return <Volume2 className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-      case "announcement":
-        return <Megaphone className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-      case "category":
-        return <Folder className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-      default:
-        return <Hash className="w-5 h-5 text-[var(--text-muted)] flex-shrink-0" />;
-    }
+
+    return <span className="flex-shrink-0">{baseIcon}</span>;
   };
 
-  // Group channels by type
-  const textChannels = channels.filter(c => c.type === "text");
+  // iOS detection (or ?platform=ios query param for testing).
+  // Must stay above any early return so hook order is stable (React #310).
+  const isIOS = useMemo(() => {
+    if (typeof window === "undefined") return false;
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get("platform") === "ios") return true;
+    const ua = navigator.userAgent;
+    return /iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  }, []);
+
+  // Group channels by type & category
   const voiceChannels = useMemo(() => channels.filter(c => c.type === "voice"), [channels]);
-  const announcementChannels = channels.filter(c => c.type === "announcement");
 
-  // Mark channel as read when it becomes active
-  useEffect(() => {
-    if (currentChannel?.id) {
-      markChannelRead(currentChannel.id);
+  // Channels you've been mentioned in float to the top of their group.
+  const mentionFirst = useCallback(
+    (a: typeof channels[0], b: typeof channels[0]) => {
+      const am = getMentionCount(a.id) > 0 ? 0 : 1;
+      const bm = getMentionCount(b.id) > 0 ? 0 : 1;
+      if (am !== bm) return am - bm;
+      return a.position - b.position;
+    },
+    [getMentionCount]
+  );
+
+  const normalChannels = useMemo(() => {
+    return channels.filter(c => c.type !== "public_thread" && c.type !== "private_thread");
+  }, [channels]);
+
+  const threadsByParent = useMemo(() => {
+    const map = new Map<string, typeof channels>();
+    for (const channel of channels) {
+      if (channel.type === "public_thread" || channel.type === "private_thread") {
+        if (channel.parentId) {
+          const pId = channel.parentId.toString();
+          if (!map.has(pId)) {
+            map.set(pId, []);
+          }
+          map.get(pId)?.push(channel);
+        }
+      }
     }
-  }, [currentChannel?.id, markChannelRead]);
+    return map;
+  }, [channels]);
+
+  const uncategorizedChannels = useMemo(() => {
+    return normalChannels.filter(c => c.type !== "category" && !c.parentId).sort(mentionFirst);
+  }, [normalChannels, mentionFirst]);
+
+  const categories = useMemo(() => {
+    return normalChannels.filter(c => c.type === "category").sort((a, b) => a.position - b.position);
+  }, [normalChannels]);
+
+  const channelsByCategory = useMemo(() => {
+    const map = new Map<string, typeof channels>();
+    for (const channel of normalChannels) {
+      if (channel.type === "category") continue;
+      if (channel.parentId) {
+        const pId = channel.parentId.toString();
+        if (!map.has(pId)) {
+          map.set(pId, []);
+        }
+        map.get(pId)?.push(channel);
+      }
+    }
+    // Sort channels inside each category by position, mention channels first.
+    for (const key of map.keys()) {
+      map.get(key)?.sort(mentionFirst);
+    }
+    return map;
+  }, [normalChannels, mentionFirst]);
+
+  // Mark channel as read when it becomes active (also updates the unread engine's
+  // notion of which channel the user is viewing so its own messages don't glow).
+  useEffect(() => {
+    setActiveChannel(currentChannel?.id ?? null);
+  }, [currentChannel?.id, setActiveChannel]);
+
+  // Feed the unread engine the channel list (channel→server map + last-activity
+  // seed) so it can compute glow/badges and per-server aggregation.
+  useEffect(() => {
+    if (channels.length === 0) return;
+    registerChannels(
+      channels.map((c) => ({
+        id: c.id,
+        serverId: c.serverId,
+        type: c.type,
+        lastMessageAt: c.lastMessageAt ?? null,
+      }))
+    );
+  }, [channels, registerChannels]);
+
+  // Preload: when a server's channels load, warm the message cache so opening a
+  // channel is instant. Priority: unread channels first, then the most
+  // recently-active ones (by lastMessageAt). The channel the user is viewing is
+  // already being fetched by the mounted chat, so we skip it. Bounded count +
+  // concurrency keep this light (server-side decrypt is cached after first warm).
+  useEffect(() => {
+    if (channels.length === 0) return;
+    let cancelled = false;
+
+    const textChannels = channels.filter(
+      (c) => (c.type === "text" || c.type === "announcement") && c.id !== currentChannel?.id
+    );
+    const unread = textChannels.filter((c) => isChannelUnread(c.id));
+    const byRecency = [...textChannels].sort((a, b) => {
+      const at = a.lastMessageAt ? new Date(a.lastMessageAt).getTime() : 0;
+      const bt = b.lastMessageAt ? new Date(b.lastMessageAt).getTime() : 0;
+      return bt - at;
+    });
+    // Unread first, then recent, de-duped, capped.
+    const seen = new Set<string>();
+    const queue: string[] = [];
+    for (const c of [...unread, ...byRecency]) {
+      if (seen.has(c.id)) continue;
+      seen.add(c.id);
+      queue.push(c.id);
+      if (queue.length >= 12) break;
+    }
+
+    // Concurrency-limited worker pool (3 at a time).
+    let cursor = 0;
+    const runWorker = async () => {
+      while (!cancelled && cursor < queue.length) {
+        const id = queue[cursor++];
+        await prefetchChannelMessages(`/api/channels/${id}`);
+      }
+    };
+    void Promise.all([runWorker(), runWorker(), runWorker()]);
+
+    return () => {
+      cancelled = true;
+    };
+    // Keyed on the server/channel set so it runs once per server open.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentServer?.id, channels.length]);
 
   // State for collapsed categories
   const [collapsedCategories, setCollapsedCategories] = useState<Set<string>>(new Set());
+
+  // Reset collapsed categories on server switch
+  useEffect(() => {
+    setCollapsedCategories(new Set());
+  }, [currentServer?.id]);
   const [dmChannels, setDmChannels] = useState<DMChannel[]>([]);
   const [externalVoiceParticipants, setExternalVoiceParticipants] = useState<Map<string, VoiceParticipant[]>>(new Map());
   const pathname = usePathname();
 
-  useEffect(() => {
-    if (!currentServer || !channels.length || !pathname) return;
-    const match = pathname.match(/^\/channels\/[^/]+\/([^/]+)$/);
-    if (match) {
-      const channelId = match[1];
-      const channel = channels.find((c) => c.id === channelId);
-      if (channel && currentChannel?.id !== channel.id) {
-        setCurrentChannel(channel);
-      }
+  const renderChannelItem = (channel: typeof channels[0]) => {
+    const showDropBefore = dropIndicator?.targetId === channel.id && dropIndicator.position === "before";
+    const showDropAfter = dropIndicator?.targetId === channel.id && dropIndicator.position === "after";
+    if (channel.type === "voice") {
+      const isActive = voiceService.currentRoomId === `channel-${channel.id}`;
+      const channelParticipants = isActive ? voiceParticipants : (externalVoiceParticipants.get(channel.id) || []);
+      return (
+        <div
+          key={channel.id}
+          className={cn(
+            "mb-0.5 relative",
+            canManageChannels && "cursor-grab active:cursor-grabbing"
+          )}
+          draggable={canManageChannels}
+          onDragStart={(e) => handleDragStart(e, channel)}
+          onDragEnd={handleDragEnd}
+          onDragOver={(e) => handleDragOverChannel(e, channel)}
+          onDrop={(e) => handleDropOnChannel(e, channel)}
+        >
+          {showDropBefore && <div className="absolute -top-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
+          {showDropAfter && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
+          <button
+            onClick={() => handleVoiceChannelClick(channel)}
+            onContextMenu={(e) => handleContextMenu(e, channel)}
+            className={cn(
+              "w-full px-2 py-1 mx-2 rounded flex items-center gap-1.5 transition-all group min-w-0 overflow-hidden",
+              isActive
+                ? "text-green-400 hover:bg-[var(--bg-sidebar-elevated)]"
+                : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)]",
+              currentChannel?.id === channel.id && "bg-[var(--bg-active)]"
+            )}
+            style={{ width: "calc(100% - 16px)" }}
+          >
+            {channel.isNsfw ? (
+              <span className="relative flex-shrink-0 w-4 h-4">
+                <Volume2 className={cn(
+                  "w-4 h-4",
+                  isActive ? "text-green-400" : "text-[var(--text-muted)]"
+                )} />
+                <AlertTriangle className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 text-red-400" />
+              </span>
+            ) : (
+              <Volume2 className={cn(
+                "w-4 h-4 flex-shrink-0",
+                isActive ? "text-green-400" : "text-[var(--text-muted)]"
+              )} />
+            )}
+            <span className="truncate text-sm flex-1 text-left min-w-0" title={channel.name}>{channel.name}</span>
+            {channelParticipants.length > 0 && (
+              <span className="flex items-center gap-1 shrink-0">
+                <span className={cn("inline-block w-1.5 h-1.5 rounded-full", isActive ? "bg-green-500 animate-pulse" : "bg-green-500/60")} />
+                <span className={cn("text-[10px]", isActive ? "text-green-400" : "text-green-400/70")}>{channelParticipants.length}</span>
+              </span>
+            )}
+            {canManageChannels && (
+              <Settings
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setSettingsChannelId(channel.id);
+                }}
+                className="w-4 h-4 shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] opacity-0 group-hover:opacity-100 transition-opacity"
+              />
+            )}
+          </button>
+          {/* Participants — Discord style */}
+          {channelParticipants.length > 0 && (
+            <div className="ml-6 mr-2 space-y-0.5 mb-1">
+              {channelParticipants.map((p) => (
+                <div
+                  key={p.userId}
+                  className="flex items-center gap-1.5 px-1.5 py-0.5 rounded group/vp"
+                >
+                  <Avatar className="w-5 h-5 shrink-0">
+                    <AvatarImage src={cdnImage(p.avatar)} />
+                    <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-[9px]">
+                      {(p.displayName || p.username).charAt(0).toUpperCase()}
+                    </AvatarFallback>
+                  </Avatar>
+                  <span className="text-xs text-[var(--text-secondary)] truncate flex-1">
+                    {p.displayName || p.username}
+                  </span>
+                  {!p.audio && (
+                    <MicOff className="w-3 h-3 text-red-400 shrink-0" />
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      );
     }
-  }, [pathname, channels, currentServer, setCurrentChannel, currentChannel?.id]);
+
+    const mentionCount = getMentionCount(channel.id);
+    const isActive = currentChannel?.id === channel.id;
+    const unread = !isActive && isChannelUnread(channel.id);
+    return (
+      <div
+        key={channel.id}
+        draggable={canManageChannels}
+        onDragStart={(e) => handleDragStart(e, channel)}
+        onDragEnd={handleDragEnd}
+        onDragOver={(e) => handleDragOverChannel(e, channel)}
+        onDrop={(e) => handleDropOnChannel(e, channel)}
+        className={cn(
+          "relative",
+          canManageChannels && "cursor-grab active:cursor-grabbing"
+        )}
+      >
+        {showDropBefore && <div className="absolute -top-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
+        {showDropAfter && <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />}
+        {/* Unread pill: a small white bar on the far left, Discord-style. */}
+        {unread && (
+          <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-2 rounded-r-full bg-white z-20" />
+        )}
+        <button
+          onClick={() => { navigateToChannel(channel); setActiveChannel(channel.id); }}
+          onMouseEnter={() => { void prefetchChannelMessages(`/api/channels/${channel.id}`); }}
+          onContextMenu={(e) => handleContextMenu(e, channel)}
+          className={cn(
+            "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] transition-all group min-w-0 overflow-hidden",
+            isActive && "bg-[var(--bg-active)] text-[var(--app-accent)]",
+            !isActive && unread && "text-white font-semibold"
+          )}
+          style={{ width: "calc(100% - 16px)" }}
+        >
+          {getChannelIcon(channel.type, undefined, channel.isNsfw)}
+          <span className="truncate text-sm flex-1 text-left min-w-0" title={channel.name}>{channel.name}</span>
+          {mentionCount > 0 && !isActive && (
+            <span className="shrink-0 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-[#c4306b] text-[10px] font-bold text-white leading-none">
+              {mentionCount > 99 ? "99+" : mentionCount}
+            </span>
+          )}
+          {canManageChannels && (
+            <Settings
+              onClick={(e) => {
+                e.stopPropagation();
+                setSettingsChannelId(channel.id);
+              }}
+              className="w-4 h-4 shrink-0 text-[var(--text-muted)] hover:text-[var(--text-primary)] opacity-0 group-hover:opacity-100 transition-opacity"
+            />
+          )}
+        </button>
+      </div>
+    );
+  };
+
+  const renderThreadItem = (thread: typeof channels[0], isLast: boolean) => {
+    const isActive = currentChannel?.id === thread.id;
+    const unread = !isActive && isChannelUnread(thread.id);
+    const mentionCount = getMentionCount(thread.id);
+
+    return (
+      <div key={thread.id} className="relative flex items-center pl-6 pr-2 mb-0.5 group">
+        <div 
+          className="absolute left-[25px] top-0 w-px bg-zinc-700" 
+          style={{ height: isLast ? "14px" : "100%" }}
+        />
+        <div 
+          className="absolute left-[25px] top-[14px] w-3 h-px bg-zinc-700"
+        />
+
+        {unread && (
+          <div className="absolute left-[33px] top-1/2 -translate-y-1/2 w-1 h-2 rounded-r-full bg-white z-20" />
+        )}
+
+        <button
+          onClick={() => { navigateToChannel(thread); setActiveChannel(thread.id); }}
+          onMouseEnter={() => { void prefetchChannelMessages(`/api/channels/${thread.id}`); }}
+          onContextMenu={(e) => handleContextMenu(e, thread)}
+          className={cn(
+            "w-full pl-7 pr-2 py-1 rounded flex items-center gap-1.5 text-xs text-[#888888] hover:text-[#d5d9e8] hover:bg-[var(--bg-sidebar-elevated)] transition-all min-w-0 overflow-hidden",
+            isActive && "bg-[var(--bg-active)] text-[var(--app-accent)] font-medium",
+            !isActive && unread && "text-white font-semibold"
+          )}
+        >
+          <span className="text-[9px] uppercase font-bold tracking-wider px-1 py-0.5 rounded bg-zinc-800 text-zinc-500 scale-90 select-none shrink-0">
+            Th
+          </span>
+          <span className="truncate flex-1 text-left min-w-0" title={thread.name}>
+            {thread.name}
+          </span>
+          {mentionCount > 0 && !isActive && (
+            <span className="shrink-0 min-w-[14px] h-[14px] px-1 flex items-center justify-center rounded-full bg-[#c4306b] text-[9px] font-bold text-white leading-none">
+              {mentionCount > 99 ? "99+" : mentionCount}
+            </span>
+          )}
+          {canManageChannels && (
+            <Settings
+              onClick={(e) => {
+                e.stopPropagation();
+                setSettingsChannelId(thread.id);
+              }}
+              className="w-3 h-3 shrink-0 text-[#888888] hover:text-white opacity-0 group-hover:opacity-100 transition-opacity"
+            />
+          )}
+        </button>
+      </div>
+    );
+  };
+
+  const renderChannelWithThreads = (channel: typeof channels[0]) => {
+    const parentHtml = renderChannelItem(channel);
+    const childThreads = threadsByParent.get(channel.id) || [];
+    
+    if (childThreads.length === 0) {
+      return parentHtml;
+    }
+    
+    return (
+      <div key={channel.id} className="flex flex-col">
+        {parentHtml}
+        <div className="flex flex-col mt-0.5">
+          {childThreads.map((thread, index) => {
+            const isLast = index === childThreads.length - 1;
+            return renderThreadItem(thread, isLast);
+          })}
+        </div>
+      </div>
+    );
+  };
+
+  // NOTE: The active channel is derived solely in the channel page
+  // (`[serverId]/[channelId]/page.tsx`), which is serverId-aware and avoids the
+  // stale-channel race. The sidebar no longer sets `currentChannel` itself.
 
   const toggleCategory = (categoryId: string) => {
     setCollapsedCategories(prev => {
@@ -326,11 +905,16 @@ export function ChannelSidebar({
           return bTime - aTime;
         });
         setDmChannels(channels);
+        // Seed authoritative per-DM unread counts into the unread engine so the
+        // accent mention badges show real numbers (not just a session tally).
+        const counts: Record<string, number> = {};
+        for (const c of channels) counts[c.id] = c.unreadCount || 0;
+        seedDmCounts(counts);
       }
     } catch (error) {
       console.error("Failed to fetch DM channels:", error);
     }
-  }, []);
+  }, [seedDmCounts]);
 
   useEffect(() => {
     if (!currentServer) {
@@ -341,47 +925,142 @@ export function ChannelSidebar({
     }
   }, [currentServer, fetchDMChannels]);
 
+  // Keep the DM list live while it's shown (no server selected): re-fetch on tab
+  // focus/visibility as a resilient fallback for the SSE stream below.
+  usePolling(fetchDMChannels, 20000, !currentServer);
+
+  // Feed DM channels into the unread engine so DM rows get the same
+  // read/unread treatment as server channels (bold + pill). `updatedAt` bumps
+  // whenever a new message lands, which is exactly our "last activity" signal.
+  useEffect(() => {
+    if (dmChannels.length === 0) return;
+    registerChannels(
+      dmChannels.map((c) => ({
+        id: c.id,
+        type: "dm",
+        lastMessageAt: c.updatedAt ?? null,
+      }))
+    );
+  }, [dmChannels, registerChannels]);
+
+  // Real-time DM list updates: when a new DM/message arrives the server pushes a
+  // `dm:list:update` over this stream, so a new conversation or reordered
+  // conversation shows up instantly without waiting for the poll. Mirrors the
+  // mobile MessagesView subscription. Only connected while the DM list is shown.
+  useEffect(() => {
+    if (currentServer) return;
+    let source: EventSource | null = null;
+    let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+    let attempts = 0;
+    let closed = false;
+
+    const connect = () => {
+      if (closed) return;
+      source = new EventSource("/api/dms/stream");
+      source.onopen = () => {
+        attempts = 0;
+      };
+      source.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === "dm:list:update") {
+            // Apply in place: bump the conversation to the top instantly. A
+            // full /api/dms refetch (recipients + decrypt) is only needed when
+            // the channel is one we've never seen (a brand-new conversation).
+            const channelId = String(data.channelId ?? "");
+            const createdAt = data.message?.createdAt;
+            // Live unread badge: count messages from the other participant only.
+            if (channelId && data.message?.authorId && data.message.authorId !== user?.id) {
+              notifyDmActivity(channelId, typeof createdAt === "string" ? createdAt : undefined);
+            }
+            setDmChannels((prev) => {
+              const idx = prev.findIndex((c) => c.id === channelId);
+              if (idx === -1) {
+                void fetchDMChannels();
+                return prev;
+              }
+              const updated: DMChannel = {
+                ...prev[idx],
+                lastMessageId: data.message?.id ?? prev[idx].lastMessageId,
+                updatedAt: typeof createdAt === "string" ? createdAt : new Date().toISOString(),
+              };
+              return [updated, ...prev.slice(0, idx), ...prev.slice(idx + 1)];
+            });
+          }
+        } catch {
+          /* ignore malformed events */
+        }
+      };
+      source.onerror = () => {
+        source?.close();
+        if (closed) return;
+        const backoff = Math.min(1000 * 2 ** attempts, 30000);
+        attempts += 1;
+        reconnectTimer = setTimeout(connect, backoff);
+      };
+    };
+    connect();
+
+    return () => {
+      closed = true;
+      source?.close();
+      if (reconnectTimer) clearTimeout(reconnectTimer);
+    };
+  }, [currentServer, fetchDMChannels, notifyDmActivity, user?.id]);
+
   const statusColors: Record<string, string> = {
-    online: "#8B5CF6",
-    idle: "#A78BFA",
+    online: "#23A559",
+    idle: "#F0B232",
     dnd: "#EF4444",
     offline: "#555555",
   };
 
+  // While navigating DM→server the ServerContext hasn't loaded `currentServer`
+  // yet. Without this guard the DM list flashes for a frame. If the URL points
+  // at a real server, show a channel-sidebar skeleton instead of that flash.
+  if (!currentServer) {
+    const serverMatch = pathname?.match(/^\/channels\/([^/]+)/);
+    const specialRoutes = ["explore", "settings", "me", "notifications", "profile", "messages"];
+    const expectingServer = Boolean(serverMatch && !specialRoutes.includes(serverMatch[1]));
+    if (expectingServer) {
+      return <ChannelSidebarSkeleton />;
+    }
+  }
+
   if (!currentServer) {
     return (
-      <div className="flex flex-col w-60 h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)]">
+      <div className="flex flex-col w-64 min-w-0 h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] overflow-hidden">
         {/* DM Header */}
-        <div className="h-12 px-4 flex items-center border-b border-[var(--border-subtle)]">
-          <button className="w-full h-7 px-2 rounded bg-[var(--bg-sidebar-elevated)] text-[var(--text-muted)] text-sm text-left hover:bg-[var(--bg-sidebar-elevated)] transition-colors">
-            Find or start a conversation
+        <div className="h-12 px-3 flex items-center border-b border-[var(--border-subtle)] shrink-0">
+          <button className="w-full h-7 px-2.5 rounded-md bg-[var(--bg-sidebar-elevated)] text-[var(--text-muted)] text-sm text-left hover:brightness-110 transition-all truncate">
+            {gt("Find or start a conversation")}
           </button>
         </div>
 
         {/* Navigation */}
-        <div className="px-2 pt-3 pb-1">
+        <div className="px-2 pt-2 pb-1 shrink-0">
           <Link
             href="/channels/me"
             className={cn(
-              "flex items-center gap-3 px-2 py-2 rounded-md transition-colors",
+              "flex items-center gap-2.5 px-2 py-2 rounded-md transition-colors w-full min-w-0",
               pathname === "/channels/me"
                 ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
                 : "text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
             )}
           >
-            <Users className="w-5 h-5" />
-            <span className="font-medium">Friends</span>
+            <Users className="w-5 h-5 shrink-0" />
+            <span className="font-medium truncate"><T>Friends</T></span>
           </Link>
         </div>
 
         {/* DM List */}
-        <ScrollArea className="flex-1">
-          <div className="px-2 py-2">
-            <div className="px-2 mb-2 flex items-center justify-between">
-              <span className="text-xs font-semibold uppercase text-[var(--text-muted)]">
-                Direct Messages
+        <ScrollArea className="flex-1 overflow-hidden">
+          <div className="px-2 py-1">
+            <div className="px-2 mb-1 flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase text-[var(--text-muted)] tracking-wide">
+                <T>Direct Messages</T>
               </span>
-              <button className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors">
+              <button className="text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors shrink-0">
                 <PlusCircle className="w-4 h-4" />
               </button>
             </div>
@@ -392,47 +1071,67 @@ export function ChannelSidebar({
                   const recipient = channel.recipients[0];
                   if (!recipient) return null;
                   const isActive = pathname === `/dm/${recipient.id}`;
+                  const unread = !isActive && isChannelUnread(channel.id);
+                  const dmMentions = isActive ? 0 : getMentionCount(channel.id);
 
                   return (
                     <Link
                       key={channel.id}
                       href={`/dm/${recipient.id}`}
+                      onMouseEnter={() => { void prefetchChannelMessages(`/api/dms/${recipient.id}`); }}
+                      onContextMenu={(e) => { e.preventDefault(); setDmContextMenu({ x: e.clientX, y: e.clientY, channel }); }}
                       className={cn(
-                        "group flex items-center gap-3 px-2 py-1.5 rounded-md transition-colors",
+                        "group relative flex items-center gap-2 px-2 py-[5px] rounded-md transition-colors min-w-0",
                         isActive
                           ? "bg-[var(--bg-active)] text-[var(--text-primary)]"
-                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]"
+                          : "text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] hover:text-[var(--text-primary)]",
+                        !isActive && unread && "text-white"
                       )}
                     >
+                      {/* Unread pill: white bar on the far left, Discord-style. */}
+                      {unread && (
+                        <span className="absolute -left-2 top-1/2 -translate-y-1/2 w-1 h-2 rounded-r-full bg-white" />
+                      )}
                       <div className="relative shrink-0">
                         <Avatar className="w-8 h-8">
-                          <AvatarImage src={recipient.avatar} />
+                          <AvatarImage src={cdnImage(recipient.avatar)} />
                           <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-xs">
                             {(recipient.displayName || recipient.username).charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
                         <div
-                          className="absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-[var(--bg-sidebar)]"
+                          className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full border-2 border-[var(--bg-sidebar)]"
                           style={{ backgroundColor: statusColors[recipient.status] || statusColors.offline }}
                         />
                       </div>
-                      <span className={cn("flex-1 truncate text-sm flex items-center gap-1.5", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
-                        {recipient.displayName || recipient.username}
+                      <div className="relative flex-1 min-w-0 overflow-hidden flex items-center gap-1">
+                        <span className={cn("truncate text-sm", unread && "font-semibold", getDisplayNameStyleClasses(recipient.customization?.displayNameStyle))} style={getDisplayNameStyleInline(recipient.customization?.displayNameStyle)}>
+                          {recipient.displayName || recipient.username}
+                        </span>
                         {recipient.isSystem && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-semibold leading-none bg-blue-500/20 text-blue-400 whitespace-nowrap">
-                            System
+                          <span className="shrink-0 px-1 py-[2px] rounded bg-[#5865F2] text-[8px] font-bold text-white uppercase leading-none select-none">
+                            SYSTEM
                           </span>
                         )}
-                      </span>
+                        {recipient.isBot && !recipient.isSystem && (
+                          <span className="shrink-0 px-1 py-[2px] rounded bg-[#5865F2] text-[8px] font-bold text-white uppercase leading-none select-none">
+                            BOT
+                          </span>
+                        )}
+                      </div>
+                      {dmMentions > 0 && (
+                        <span className="shrink-0 min-w-[18px] h-[18px] px-1.5 flex items-center justify-center rounded-full bg-[var(--app-accent)] text-[11px] font-bold text-[var(--text-on-accent)] leading-none group-hover:hidden">
+                          {dmMentions > 99 ? "99+" : dmMentions}
+                        </span>
+                      )}
                       <button
-                        className="p-1 opacity-0 group-hover:opacity-100 hover:text-[var(--text-primary)] transition-opacity"
+                        className="p-1 opacity-0 group-hover:opacity-100 hover:text-[var(--text-primary)] transition-opacity shrink-0"
                         onClick={(e) => {
                           e.preventDefault();
                           e.stopPropagation();
-                          // Close DM functionality would go here
                         }}
                       >
-                        <X className="w-4 h-4" />
+                        <X className="w-3.5 h-3.5" />
                       </button>
                     </Link>
                   );
@@ -448,12 +1147,64 @@ export function ChannelSidebar({
 
         {/* User Panel */}
         <UserPanel user={user} />
+
+        {/* DM row context menu */}
+        {dmContextMenu && (
+          <div
+            className="fixed z-50 min-w-[180px] bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1.5 animate-in fade-in-0 zoom-in-95"
+            style={{ left: dmContextMenu.x, top: dmContextMenu.y }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              disabled={!isChannelUnread(dmContextMenu.channel.id) && getMentionCount(dmContextMenu.channel.id) === 0}
+              onClick={() => { markChannelRead(dmContextMenu.channel.id); closeDmContextMenu(); }}
+              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            >
+              <Check className="w-4 h-4" />
+              {gt("Mark As Read")}
+            </button>
+            <div className="h-px bg-[var(--border-subtle)] my-1" />
+            <button
+              onClick={() => { navigator.clipboard.writeText(dmContextMenu.channel.recipients[0]?.id || ""); closeDmContextMenu(); }}
+              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+            >
+              <Copy className="w-4 h-4" />
+              {gt("Copy User ID")}
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // Age-gated server block for iOS — render padlock screen instead of channel list
+  if (isIOS && currentServer?.isAgeGated) {
+    return (
+      <div className="flex flex-col w-60 h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)]">
+        <div className="h-12 px-4 flex items-center border-b border-[var(--border-subtle)] shrink-0">
+          <span className="font-semibold truncate text-[var(--text-primary)]">{currentServer.name}</span>
+        </div>
+        <div className="flex-1 flex flex-col items-center justify-center px-6 text-center select-none">
+          <div className="relative mb-6">
+            <span className="absolute -top-2 -left-3 text-[var(--text-muted)] text-xs select-none">✦</span>
+            <span className="absolute -top-1 right-0 text-[var(--text-muted)] text-[10px] select-none">✧</span>
+            <span className="absolute bottom-0 -left-2 text-[var(--text-muted)] text-[8px] select-none">+</span>
+            <span className="absolute bottom-2 -right-3 text-[var(--text-muted)] text-xs select-none">·</span>
+            <div className="w-16 h-16 rounded-2xl bg-[var(--bg-sidebar-elevated)] flex items-center justify-center border border-[var(--border-subtle)]">
+              <Lock className="w-8 h-8 text-[var(--text-muted)]" />
+            </div>
+          </div>
+          <p className="text-sm text-[var(--text-muted)] leading-relaxed max-w-[200px]">
+            This server&apos;s content is unavailable on iOS
+          </p>
+        </div>
+        <UserPanel user={user} />
       </div>
     );
   }
 
   return (
-    <div className="flex flex-col w-60 h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)]">
+    <div className="flex flex-col w-64 h-full min-h-0 bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] overflow-hidden">
       {/* Server Header (banner behind the name when the server has one) */}
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
@@ -499,7 +1250,7 @@ export function ChannelSidebar({
                 className="text-[var(--app-accent)] focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer"
               >
                 <UserPlus className="w-4 h-4 mr-2" />
-                Invite People
+                {gt("Invite People")}
               </DropdownMenuItem>
               <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
             </>
@@ -510,257 +1261,156 @@ export function ChannelSidebar({
               className="focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer"
             >
               <Settings className="w-4 h-4 mr-2" />
-              Server Settings
+              {gt("Server Settings")}
             </DropdownMenuItem>
           )}
           {canManageChannels && (
             <>
               <DropdownMenuItem
-                onClick={onCreateChannel}
+                onClick={() => onCreateChannel?.("text")}
                 className="focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer"
               >
                 <PlusCircle className="w-4 h-4 mr-2" />
-                Create Channel
+                {gt("Create Channel")}
               </DropdownMenuItem>
               <DropdownMenuItem
-                onClick={onCreateCategory || onCreateChannel}
+                onClick={() => onCreateChannel?.("category")}
                 className="focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer"
               >
                 <Folder className="w-4 h-4 mr-2" />
-                Create Category
+                {gt("Create Category")}
               </DropdownMenuItem>
             </>
           )}
           {canManageAny && <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />}
           <DropdownMenuItem className="focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer">
             <Bell className="w-4 h-4 mr-2" />
-            Notification Settings
+            {gt("Notification Settings")}
           </DropdownMenuItem>
           <DropdownMenuItem className="focus:bg-[var(--app-accent)] focus:text-[var(--text-on-accent)] cursor-pointer">
             <Shield className="w-4 h-4 mr-2" />
-            Privacy Settings
+            {gt("Privacy Settings")}
           </DropdownMenuItem>
           <DropdownMenuSeparator className="bg-[var(--border-subtle)]" />
           <DropdownMenuItem
             onClick={async () => {
-              if (currentServer && confirm(`Are you sure you want to leave ${currentServer.name}?`)) {
+              if (currentServer && confirm(gt("Are you sure you want to leave {server}?", { server: currentServer.name }))) {
                 await leaveServer(currentServer.id);
               }
             }}
             className="text-red-500 focus:bg-red-500 focus:text-[var(--text-on-accent)] cursor-pointer"
           >
             <LogOut className="w-4 h-4 mr-2" />
-            Leave Server
+            {gt("Leave Server")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
 
       {/* Channel List */}
-      <ScrollArea className="flex-1">
+      <ScrollArea className="flex-1 min-h-0">
         <div className="py-3">
-          {/* Announcement Channels (if any) */}
-          {announcementChannels.length > 0 && (
-            <div className="mb-2">
-              <div className="px-2 mb-1">
-                <button
-                  className="w-full px-1 flex items-center gap-0.5 group"
-                  onClick={() => toggleCategory('announcements')}
-                >
-                  <ChevronRight
-                    className={cn(
-                      "w-3 h-3 text-[var(--text-muted)] transition-transform",
-                      !collapsedCategories.has('announcements') && "rotate-90"
-                    )}
-                  />
-                  <span className="text-xs font-semibold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
-                    Announcements
-                  </span>
-                </button>
+          {/* Uncategorized Channels drop zone */}
+          <div
+            className={cn(
+              "mb-4 min-h-[8px] rounded transition-colors",
+              dragOverTarget === "__uncategorized__" && draggedChannel && "bg-[var(--app-accent)]/10 ring-1 ring-[var(--app-accent)]/40"
+            )}
+            onDragEnter={(e) => handleDragEnter(e, "__uncategorized__")}
+            onDragLeave={handleDragLeave}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDropOnCategory(e, null)}
+          >
+            {uncategorizedChannels.length > 0 && (
+              <div className="space-y-0.5">
+                {uncategorizedChannels.map((channel) => renderChannelWithThreads(channel))}
               </div>
-              {!collapsedCategories.has('announcements') && announcementChannels.map((channel) => {
-                const mentionCount = getChannelCount(channel.id);
-                return (
-                <button
-                  key={channel.id}
-                  onClick={() => { navigateToChannel(channel); markChannelRead(channel.id); }}
-                  onContextMenu={(e) => handleContextMenu(e, channel)}
-                  className={cn(
-                    "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] transition-all group",
-                    currentChannel?.id === channel.id && "bg-[var(--bg-active)] text-[var(--app-accent)]",
-                    mentionCount > 0 && currentChannel?.id !== channel.id && "text-[var(--text-primary)]"
-                  )}
-                  style={{ width: "calc(100% - 16px)" }}
-                >
-                  {getChannelIcon(channel.type)}
-                  <span className="truncate text-sm font-medium flex-1 text-left">{channel.name}</span>
-                  {mentionCount > 0 && currentChannel?.id !== channel.id && (
-                    <span className="shrink-0 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-[#8B5CF6] text-[10px] font-bold text-white leading-none">
-                      {mentionCount > 99 ? "99+" : mentionCount}
-                    </span>
-                  )}
-                </button>
-                );
-              })}
-            </div>
-          )}
-
-          {/* Text Channels */}
-          <div className="mb-2">
-            <div className="px-2 mb-1">
-              <button
-                className="w-full px-1 flex items-center justify-between group"
-                onClick={() => toggleCategory('text')}
-              >
-                <div className="flex items-center gap-0.5">
-                  <ChevronRight
-                    className={cn(
-                      "w-3 h-3 text-[var(--text-muted)] transition-transform",
-                      !collapsedCategories.has('text') && "rotate-90"
-                    )}
-                  />
-                  <span className="text-xs font-semibold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
-                    Text Channels
-                  </span>
-                </div>
-                {canManageChannels && (
-                  <PlusCircle
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCreateChannel?.();
-                    }}
-                    className="w-4 h-4 text-[var(--text-muted)] hover:text-[var(--text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
-                )}
-              </button>
-            </div>
-            {!collapsedCategories.has('text') && textChannels.map((channel) => (
-              editingChannel === channel.id ? (
-                <div key={channel.id} className="w-full px-2 py-1 mx-2" style={{ width: "calc(100% - 16px)" }}>
-                  <input
-                    type="text"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    onBlur={() => handleSaveEdit(channel.id)}
-                    onKeyDown={(e) => {
-                      if (e.key === 'Enter') handleSaveEdit(channel.id);
-                      if (e.key === 'Escape') { setEditingChannel(null); setEditName(""); }
-                    }}
-                    autoFocus
-                    className="w-full px-2 py-1 bg-[var(--bg-sidebar-elevated)] border border-[#8B5CF6] rounded text-[var(--text-primary)] text-sm focus:outline-none"
-                  />
-                </div>
-              ) : (
-                <button
-                  key={channel.id}
-                  onClick={() => { navigateToChannel(channel); markChannelRead(channel.id); }}
-                  onContextMenu={(e) => handleContextMenu(e, channel)}
-                  className={cn(
-                    "w-full px-2 py-1.5 mx-2 rounded flex items-center gap-1.5 text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)] transition-all group",
-                    currentChannel?.id === channel.id && "bg-[var(--bg-active)] text-[var(--app-accent)]",
-                    getChannelCount(channel.id) > 0 && currentChannel?.id !== channel.id && "text-[var(--text-primary)]"
-                  )}
-                  style={{ width: "calc(100% - 16px)" }}
-                >
-                  {getChannelIcon(channel.type)}
-                  <span className="truncate text-sm flex-1 text-left">{channel.name}</span>
-                  {(() => {
-                    const count = getChannelCount(channel.id);
-                    return count > 0 && currentChannel?.id !== channel.id ? (
-                      <span className="shrink-0 min-w-[16px] h-[16px] px-1 flex items-center justify-center rounded-full bg-[#8B5CF6] text-[10px] font-bold text-white leading-none">
-                        {count > 99 ? "99+" : count}
-                      </span>
-                    ) : null;
-                  })()}
-                </button>
-              )
-            ))}
+            )}
           </div>
 
-          {/* Voice Channels */}
-          <div className="mb-2">
-            <div className="px-2 mb-1">
-              <button
-                className="w-full px-1 flex items-center justify-between group"
-                onClick={() => toggleCategory('voice')}
-              >
-                <div className="flex items-center gap-0.5">
-                  <ChevronRight
-                    className={cn(
-                      "w-3 h-3 text-[var(--text-muted)] transition-transform",
-                      !collapsedCategories.has('voice') && "rotate-90"
-                    )}
-                  />
-                  <span className="text-xs font-semibold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)]">
-                    Voice Channels
-                  </span>
-                </div>
-                {canManageChannels && (
-                  <PlusCircle
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      onCreateChannel?.();
-                    }}
-                    className="w-4 h-4 text-[var(--text-muted)] hover:text-[var(--text-secondary)] opacity-0 group-hover:opacity-100 transition-opacity"
-                  />
+          {/* Categorized Channels */}
+          {categories.map((category) => {
+            const isCollapsed = collapsedCategories.has(category.id);
+            const categoryChildren = channelsByCategory.get(category.id) || [];
+            return (
+              <div
+                key={category.id}
+                className={cn(
+                  "mb-4 rounded transition-colors",
+                  dragOverTarget === category.id && draggedChannel && "bg-[var(--app-accent)]/5 ring-1 ring-[var(--app-accent)]/30"
                 )}
-              </button>
-            </div>
-            {!collapsedCategories.has('voice') && voiceChannels.map((channel) => {
-              const isActive = voiceService.currentRoomId === `channel-${channel.id}`;
-              const channelParticipants = isActive ? voiceParticipants : (externalVoiceParticipants.get(channel.id) || []);
-              return (
-                <div key={channel.id} className="mb-0.5">
-                  <button
-                    onClick={() => handleVoiceChannelClick(channel)}
-                    onContextMenu={(e) => handleContextMenu(e, channel)}
-                    className={cn(
-                      "w-full px-2 py-1 mx-2 rounded flex items-center gap-1.5 transition-all group",
-                      isActive
-                        ? "text-green-400 hover:bg-[var(--bg-sidebar-elevated)]"
-                        : "text-[var(--text-muted)] hover:text-[var(--text-secondary)] hover:bg-[var(--bg-sidebar-elevated)]"
-                    )}
-                    style={{ width: "calc(100% - 16px)" }}
+                onDragEnter={(e) => handleDragEnter(e, category.id)}
+                onDragLeave={handleDragLeave}
+                onDragOver={handleDragOver}
+                onDrop={(e) => handleDropOnCategory(e, category.id)}
+              >
+                {/* Category Header */}
+                <div
+                  className={cn(
+                    "px-2 mb-1 relative",
+                    canManageChannels && "cursor-grab active:cursor-grabbing"
+                  )}
+                  draggable={canManageChannels}
+                  onDragStart={(e) => handleDragStart(e, category)}
+                  onDragEnd={handleDragEnd}
+                  onDragOver={(e) => handleDragOverChannel(e, category)}
+                  onDrop={(e) => handleDropOnChannel(e, category)}
+                >
+                  {dropIndicator?.targetId === category.id && dropIndicator.position === "before" && (
+                    <div className="absolute -top-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />
+                  )}
+                  {dropIndicator?.targetId === category.id && dropIndicator.position === "after" && (
+                    <div className="absolute -bottom-px left-2 right-2 h-0.5 bg-[var(--app-accent)] rounded-full z-20" />
+                  )}
+                  <div
+                    className="w-full px-1 flex items-center justify-between group cursor-pointer"
+                    onClick={() => toggleCategory(category.id)}
+                    onContextMenu={(e) => handleContextMenu(e, category)}
                   >
-                    <Volume2 className={cn(
-                      "w-4 h-4 flex-shrink-0",
-                      isActive ? "text-green-400" : "text-[var(--text-muted)]"
-                    )} />
-                    <span className="truncate text-sm flex-1 text-left">{channel.name}</span>
-                    {channelParticipants.length > 0 && (
-                      <span className="flex items-center gap-1 shrink-0">
-                        <span className={cn("inline-block w-1.5 h-1.5 rounded-full", isActive ? "bg-green-500 animate-pulse" : "bg-green-500/60")} />
-                        <span className={cn("text-[10px]", isActive ? "text-green-400" : "text-green-400/70")}>{channelParticipants.length}</span>
+                    <div className="flex items-center gap-0.5 min-w-0">
+                      <ChevronRight
+                        className={cn(
+                          "w-3 h-3 text-[var(--text-muted)] transition-transform shrink-0",
+                          !isCollapsed && "rotate-90"
+                        )}
+                      />
+                      <span className="text-xs font-bold uppercase text-[var(--text-muted)] group-hover:text-[var(--text-secondary)] select-none truncate min-w-0">
+                        {category.name}
                       </span>
-                    )}
-                  </button>
-                  {/* Participants — Discord style */}
-                  {channelParticipants.length > 0 && (
-                    <div className="ml-6 mr-2 space-y-0.5 mb-1">
-                      {channelParticipants.map((p) => (
-                        <div
-                          key={p.userId}
-                          className="flex items-center gap-1.5 px-1.5 py-0.5 rounded group/vp"
-                        >
-                          <Avatar className="w-5 h-5 shrink-0">
-                            <AvatarImage src={p.avatar} />
-                            <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-[9px]">
-                              {(p.displayName || p.username).charAt(0).toUpperCase()}
-                            </AvatarFallback>
-                          </Avatar>
-                          <span className="text-xs text-[var(--text-secondary)] truncate flex-1">
-                            {p.displayName || p.username}
-                          </span>
-                          {!p.audio && (
-                            <MicOff className="w-3 h-3 text-red-400 shrink-0" />
-                          )}
-                        </div>
-                      ))}
                     </div>
-                  )}
+                    {canManageChannels && (
+                      <PlusCircle
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCreateChannel?.(undefined, category.id);
+                        }}
+                        className="w-4 h-4 text-[var(--text-muted)] hover:text-[var(--text-secondary)] opacity-60 hover:opacity-100 group-hover:opacity-100 transition-opacity shrink-0"
+                      />
+                    )}
+                  </div>
                 </div>
-              );
-            })}
-          </div>
+
+                {/* Category Children Channels */}
+                {!isCollapsed && (
+                  <div className="space-y-0.5">
+                    {categoryChildren.length > 0 ? (
+                      categoryChildren.map((channel) => renderChannelWithThreads(channel))
+                    ) : (
+                      <div className="pl-6 text-[11px] text-[var(--text-muted)] italic select-none">
+                        No channels in this category
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* Invisible bottom drop zone — no visual cringe, just works */}
+          <div
+            className={cn("w-full transition-all", draggedChannel ? "min-h-[32px]" : "min-h-0")}
+            onDragOver={(e) => { if (draggedChannel) { e.preventDefault(); e.dataTransfer.dropEffect = "move"; } }}
+            onDrop={(e) => { if (draggedChannel) { e.preventDefault(); handleDropOnBottom(e); } }}
+          />
         </div>
       </ScrollArea>
 
@@ -783,7 +1433,7 @@ export function ChannelSidebar({
               className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
             >
               <Edit2 className="w-4 h-4" />
-              Edit Channel
+              {gt("Edit Channel")}
             </button>
           )}
           {canInvite && (
@@ -792,23 +1442,25 @@ export function ChannelSidebar({
               className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
             >
               <UserPlus className="w-4 h-4" />
-              Invite People
+              {gt("Invite People")}
             </button>
           )}
           {(canManageChannels || canInvite) && <div className="h-px bg-[var(--border-subtle)] my-1" />}
-          <button
-            onClick={handleCopyChannelLink}
-            className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
-          >
-            <LinkIcon className="w-4 h-4" />
-            Copy Link
-          </button>
+          {contextMenu?.channel?.type !== "category" && (
+            <button
+              onClick={handleCopyChannelLink}
+              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+            >
+              <LinkIcon className="w-4 h-4" />
+              {gt("Copy Link")}
+            </button>
+          )}
           <button
             onClick={handleCopyChannelId}
             className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
           >
             <Copy className="w-4 h-4" />
-            Copy Channel ID
+            {contextMenu?.channel?.type === "category" ? gt("Copy Category ID") : gt("Copy Channel ID")}
           </button>
           <div className="h-px bg-[var(--border-subtle)] my-1" />
           <button
@@ -817,8 +1469,8 @@ export function ChannelSidebar({
                 const nowMuted = toggleChannelMute(contextMenu.channel.id);
                 toast.success(
                   nowMuted
-                    ? `#${contextMenu.channel.name} muted`
-                    : `#${contextMenu.channel.name} unmuted`
+                    ? gt("#{name} muted", { name: contextMenu.channel.name })
+                    : gt("#{name} unmuted", { name: contextMenu.channel.name })
                 );
               }
               closeContextMenu();
@@ -826,7 +1478,7 @@ export function ChannelSidebar({
             className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
           >
             <BellOff className="w-4 h-4" />
-            {contextMenu?.channel && isChannelMuted(contextMenu.channel.id) ? "Unmute Channel" : "Mute Channel"}
+            {contextMenu?.channel && isChannelMuted(contextMenu.channel.id) ? gt("Unmute Channel") : gt("Mute Channel")}
           </button>
           {canManageChannels && (
             <>
@@ -836,17 +1488,26 @@ export function ChannelSidebar({
                 className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-red-400 hover:bg-red-500 hover:text-[var(--text-primary)] transition-colors"
               >
                 <Trash2 className="w-4 h-4" />
-                Delete Channel
+                {gt("Delete Channel")}
               </button>
             </>
           )}
         </div>
       )}
+
+      {/* Channel Settings Dialog */}
+      {settingsChannelId && (
+        <ChannelSettingsDialog
+          open={!!settingsChannelId}
+          onOpenChange={(open) => { if (!open) setSettingsChannelId(null); }}
+          channelId={settingsChannelId}
+        />
+      )}
     </div>
   );
 }
 
-interface UserPanelProps {
+export interface UserPanelProps {
   user: {
     id?: string;
     username?: string;
@@ -867,7 +1528,8 @@ interface UserPanelProps {
   } | null;
 }
 
-function UserPanel({ user }: UserPanelProps) {
+export function UserPanel({ user }: UserPanelProps) {
+  const gt = useGT();
   const [isMuted, setIsMuted] = useState(voiceService.muted);
   const [isDeafened, setIsDeafened] = useState(voiceService.deafened);
 
@@ -895,15 +1557,30 @@ function UserPanel({ user }: UserPanelProps) {
     window.dispatchEvent(new CustomEvent('openUserSettings'));
   };
 
+  const nameplateBg = getNameplateBackground(user?.customization);
+
   return (
-    <div className="h-[52px] px-2 flex items-center bg-[var(--bg-sidebar)] border-t border-[var(--border-subtle)]">
+    <div className="relative overflow-hidden h-[52px] px-2 flex items-center bg-[var(--bg-sidebar)] border-t border-[var(--border-subtle)]">
+      {/* Nameplate — floats behind the whole panel, not boxed in its own pill */}
+      {nameplateBg && (
+        <span
+          aria-hidden
+          className="absolute inset-0 pointer-events-none"
+          style={{
+            background: nameplateBg,
+            opacity: 0.55,
+            WebkitMaskImage: "linear-gradient(90deg, #000 55%, transparent 100%)",
+            maskImage: "linear-gradient(90deg, #000 55%, transparent 100%)",
+          }}
+        />
+      )}
       <UserProfilePopup onOpenSettings={handleSettingsClick}>
         <button
-          className="flex items-center gap-2 flex-1 min-w-0 p-1 rounded hover:bg-[var(--bg-sidebar-elevated)] transition-colors"
+          className="relative z-10 flex items-center gap-2 flex-1 min-w-0 p-1 rounded hover:bg-[var(--bg-sidebar-elevated)]/60 transition-colors"
         >
           <div className="relative shrink-0">
             <Avatar className="w-8 h-8">
-              <AvatarImage src={user?.avatar} alt={user?.displayName} />
+              <AvatarImage src={cdnImage(user?.avatar)} alt={user?.displayName} />
               <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
                 {user?.displayName?.charAt(0).toUpperCase() || "?"}
               </AvatarFallback>
@@ -911,31 +1588,28 @@ function UserPanel({ user }: UserPanelProps) {
             <div
               className={cn(
                 "absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full border-[3px] border-[var(--bg-sidebar)]",
-                user?.status === "online" && "bg-[var(--app-accent)]",
-                user?.status === "idle" && "bg-[#A78BFA]",
-                user?.status === "dnd" && "bg-red-500",
-                (!user?.status || user?.status === "offline") && "bg-[var(--text-muted)]"
+                user?.status === "online" && "bg-[#23A559]",
+                user?.status === "idle" && "bg-[#F0B232]",
+                user?.status === "dnd" && "bg-[#EF4444]",
+                (!user?.status || user?.status === "offline") && "bg-[#555555]"
               )}
             />
           </div>
-          <div className="flex-1 min-w-0 text-left">
-            <div className={cn("text-sm font-medium text-[var(--text-primary)] truncate", getDisplayNameStyleClasses(user?.customization?.displayNameStyle))} style={getDisplayNameStyleInline(user?.customization?.displayNameStyle)}>
-              {user?.displayName || "Unknown"}
-            </div>
-            <div className="text-xs text-[var(--text-muted)] truncate">
-              {user?.username || "unknown"}
+          <div className="relative flex-1 min-w-0 text-left">
+            <div className={cn("text-sm font-bold truncate", getDisplayNameStyleClasses(user?.customization?.displayNameStyle))} style={getDisplayNameStyleInline(user?.customization?.displayNameStyle)}>
+              {user?.displayName || gt("Unknown")}
             </div>
           </div>
         </button>
       </UserProfilePopup>
-      <div className="flex items-center gap-0.5">
+      <div className="relative z-10 flex items-center gap-0.5">
         <button
           onClick={handleMuteToggle}
           className={cn(
             "p-1.5 rounded hover:bg-[var(--bg-sidebar-elevated)] transition-colors",
             isMuted ? "text-red-500" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
           )}
-          title={isMuted ? "Unmute" : "Mute"}
+          title={isMuted ? gt("Unmute") : gt("Mute")}
         >
           {isMuted ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
         </button>
@@ -945,17 +1619,47 @@ function UserPanel({ user }: UserPanelProps) {
             "p-1.5 rounded hover:bg-[var(--bg-sidebar-elevated)] transition-colors",
             isDeafened ? "text-red-500" : "text-[var(--text-secondary)] hover:text-[var(--text-primary)]"
           )}
-          title={isDeafened ? "Undeafen" : "Deafen"}
+          title={isDeafened ? gt("Undeafen") : gt("Deafen")}
         >
           {isDeafened ? <HeadphoneOff className="w-5 h-5" /> : <Headphones className="w-5 h-5" />}
         </button>
         <button
           onClick={handleSettingsClick}
           className="p-1.5 rounded hover:bg-[var(--bg-sidebar-elevated)] text-[var(--text-secondary)] hover:text-[var(--text-primary)] transition-colors"
-          title="User Settings"
+          title={gt("User Settings")}
         >
           <Settings className="w-5 h-5" />
         </button>
+      </div>
+    </div>
+  );
+}
+
+/** Placeholder shown while the target server's channel list is still loading,
+ *  so switching from a DM into a server doesn't flash the DM list. */
+function ChannelSidebarSkeleton() {
+  return (
+    <div className="flex flex-col w-64 min-w-0 h-full bg-[var(--bg-sidebar)] border-r border-[var(--border-subtle)] overflow-hidden">
+      {/* Server header bar */}
+      <div className="h-12 px-4 flex items-center border-b border-[var(--border-subtle)] shrink-0">
+        <div className="h-4 w-32 rounded bg-[var(--bg-sidebar-elevated)] animate-pulse" />
+      </div>
+      {/* Channel rows */}
+      <div className="flex-1 px-2 pt-4 space-y-4 overflow-hidden">
+        {[0, 1, 2].map((group) => (
+          <div key={group} className="space-y-1.5">
+            <div className="h-3 w-20 mx-2 rounded bg-[var(--bg-sidebar-elevated)] animate-pulse" />
+            {Array.from({ length: 3 + group }).map((_, i) => (
+              <div key={i} className="flex items-center gap-2 px-2 py-1.5">
+                <div className="w-4 h-4 rounded bg-[var(--bg-sidebar-elevated)] animate-pulse" />
+                <div
+                  className="h-3 rounded bg-[var(--bg-sidebar-elevated)] animate-pulse"
+                  style={{ width: `${50 + ((i * 17 + group * 11) % 40)}%` }}
+                />
+              </div>
+            ))}
+          </div>
+        ))}
       </div>
     </div>
   );

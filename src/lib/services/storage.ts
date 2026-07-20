@@ -1,24 +1,17 @@
-import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import crypto from 'crypto';
-import fs from 'fs';
-import { nanoid } from 'nanoid';
-import path from 'path';
 import { config } from '../config';
+import { nanoid } from 'nanoid';
+import crypto from 'crypto';
+import { sanitizeSvgBuffer } from '../security/svgSanitizer';
 
-// Whether B2 credentials are configured — if not, fall back to local disk storage.
-const useLocalStorage = !config.B2_KEY_ID || !config.B2_APPLICATION_KEY;
-if (useLocalStorage) {
-  console.warn('⚠️ B2 credentials not configured — using local disk storage (dev only). Files will be saved to public/uploads/.');
-}
-
-// Initialize S3 client for Backblaze B2 (only used when credentials are present)
+// Initialize S3 client for Backblaze B2
 const s3Client = new S3Client({
   endpoint: `https://${config.B2_ENDPOINT}`,
   region: config.B2_REGION,
   credentials: {
-    accessKeyId: config.B2_KEY_ID || 'placeholder',
-    secretAccessKey: config.B2_APPLICATION_KEY || 'placeholder',
+    accessKeyId: config.B2_KEY_ID,
+    secretAccessKey: config.B2_APPLICATION_KEY,
   },
   forcePathStyle: true,
 });
@@ -31,7 +24,8 @@ export type UploadCategory =
   | 'server-banners' 
   | 'emojis'
   | 'stickers'
-  | 'audio';
+  | 'audio'
+  | 'app-icons';
 
 interface UploadResult {
   url: string;
@@ -53,19 +47,23 @@ interface UploadOptions {
 }
 
 // Validate file type based on category
+// Note: 'attachments' is intentionally excluded — the upload route (uploads.ts)
+// validates attachment types against the DB whitelist (platform_settings.allowedFileTypes)
+// before calling storage. Hardcoding here would reject newly-added DB types.
 function validateFileType(category: UploadCategory, contentType: string): boolean {
-  const categoryAllowedTypes: Record<UploadCategory, readonly string[]> = {
+  const categoryAllowedTypes: Partial<Record<UploadCategory, readonly string[]>> = {
     avatars: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     banners: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     'server-icons': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     'server-banners': ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
-    attachments: config.ALLOWED_FILE_TYPES,
     emojis: ['image/jpeg', 'image/png', 'image/gif', 'image/webp'],
     stickers: ['image/png', 'image/apng', 'application/json'], // JSON for Lottie
     audio: ['audio/mpeg', 'audio/mp3', 'audio/wav', 'audio/x-wav', 'audio/ogg', 'audio/webm'],
   };
 
-  return categoryAllowedTypes[category]?.includes(contentType) ?? false;
+  const allowed = categoryAllowedTypes[category];
+  if (!allowed) return true; // Unknown or DB-managed categories (e.g. attachments) — skip
+  return allowed.includes(contentType);
 }
 
 // Get max file size for category
@@ -76,9 +74,10 @@ function getMaxSize(category: UploadCategory): number {
     'server-icons': config.MAX_AVATAR_SIZE,
     'server-banners': config.MAX_BANNER_SIZE,
     attachments: config.MAX_FILE_SIZE,
-    emojis: 256 * 1024, // 256KB
-    stickers: 512 * 1024, // 512KB
-    audio: 2 * 1024 * 1024, // 2MB
+    emojis: 20 * 1024 * 1024, // 20MB
+    stickers: 20 * 1024 * 1024, // 20MB
+    audio: 20 * 1024 * 1024, // 20MB
+    'app-icons': config.MAX_AVATAR_SIZE,
   };
 
   return categorySizes[category] ?? config.MAX_FILE_SIZE;
@@ -105,6 +104,41 @@ function generateKey(options: UploadOptions, filename: string): string {
   parts.push(filename);
   
   return parts.join('/');
+}
+
+// Strip a stored media URL down to its bucket key.
+// Tolerates the current CDN (cdn.serika.chat) as well as legacy Backblaze
+// hosts still present in older DB rows:
+//   https://cdn.serika.chat/<key>
+//   https://serikacord-media.s3.eu-central-003.backblazeb2.com/<key>   (virtual-host style)
+//   https://s3.eu-central-003.backblazeb2.com/serikacord-media/<key>   (path style)
+//   https://f003.backblazeb2.com/file/serikacord-media/<key>           (B2 friendly URL)
+export function keyFromUrl(url: string): string {
+  let key = url;
+  try {
+    const { pathname } = new URL(url);
+    key = pathname.replace(/^\/+/, '');
+    // Drop the B2 friendly-URL prefix and any leading "<bucket>/"
+    key = key.replace(/^file\//, '');
+    const bucketPrefix = `${config.B2_BUCKET_NAME}/`;
+    if (key.startsWith(bucketPrefix)) key = key.slice(bucketPrefix.length);
+  } catch {
+    // Not an absolute URL — fall back to trimming the configured CDN base.
+    key = url.replace(`${config.CDN_URL}/`, '');
+  }
+  return key;
+}
+
+/**
+ * Normalize a stored media URL to the current CDN format.
+ * Legacy URLs (direct Backblaze B2 hosts) are rewritten to `https://cdn.serika.chat/<key>`.
+ * URLs already on the CDN are returned unchanged.
+ */
+export function normalizeUrl(url: string): string {
+  if (!url) return url;
+  if (url.includes(config.CDN_URL)) return url;
+  const key = keyFromUrl(url);
+  return `${config.CDN_URL}/${key}`;
 }
 
 // Calculate file hash for integrity
@@ -153,12 +187,10 @@ export class StorageService {
 
     const hash = await calculateHash(buffer);
 
-    // ----- Local disk fallback (no B2 credentials) -----
-    if (useLocalStorage) {
-      const uploadsDir = path.join(process.cwd(), 'public', 'uploads', ...key.split('/').slice(0, -1));
-      fs.mkdirSync(uploadsDir, { recursive: true });
-      fs.writeFileSync(path.join(process.cwd(), 'public', 'uploads', ...key.split('/')), buffer);
-      return { url: `/uploads/${key}`, key, size, contentType, hash };
+    // Sanitize SVGs server-side to strip <script>, event handlers, etc.
+    // This makes SVG uploads safe even if opened directly in a browser tab.
+    if (contentType === 'image/svg+xml') {
+      buffer = sanitizeSvgBuffer(buffer);
     }
 
     // S3 metadata values must be ASCII — encode non-ASCII filenames
@@ -207,14 +239,6 @@ export class StorageService {
 
   // Delete a file
   async delete(key: string): Promise<void> {
-    if (useLocalStorage) {
-      try {
-        fs.unlinkSync(path.join(process.cwd(), 'public', 'uploads', ...key.split('/')));
-      } catch {
-        // best-effort
-      }
-      return;
-    }
     await s3Client.send(new DeleteObjectCommand({
       Bucket: config.B2_BUCKET_NAME,
       Key: key,
@@ -223,8 +247,7 @@ export class StorageService {
 
   // Delete by URL
   async deleteByUrl(url: string): Promise<void> {
-    const key = url.replace(`${config.CDN_URL}/`, '');
-    await this.delete(key);
+    await this.delete(keyFromUrl(url));
   }
 
   // Check if file exists

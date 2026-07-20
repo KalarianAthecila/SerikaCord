@@ -1,10 +1,12 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, and, type SQL } from 'drizzle-orm';
+import { normalizeId } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export type ExperimentType = 
-  | 'feature_flag'      // Simple on/off feature flags
-  | 'ab_test'           // A/B testing with multiple variants
-  | 'percentage_rollout' // Gradual percentage-based rollout
-  | 'user_segment';     // Specific user segments
+export type ExperimentType =
+  | 'feature_flag'
+  | 'ab_test'
+  | 'percentage_rollout'
+  | 'user_segment';
 
 export type ExperimentStatus = 'draft' | 'running' | 'paused' | 'completed' | 'archived';
 
@@ -12,8 +14,8 @@ export interface IExperimentVariant {
   id: string;
   name: string;
   description?: string;
-  weight: number; // Percentage weight for this variant (0-100)
-  config: Record<string, unknown>; // Variant-specific configuration
+  weight: number;
+  config: Record<string, unknown>;
 }
 
 export interface IExperimentFilter {
@@ -33,222 +35,90 @@ export interface IExperimentMetrics {
   }>;
 }
 
-export interface IExperiment extends Document {
-  _id: Types.ObjectId;
-  
-  // Identification
-  name: string;
-  key: string; // Unique identifier used in code (e.g., 'new_emoji_picker')
-  description?: string;
-  
-  // Type & Status
-  type: ExperimentType;
-  status: ExperimentStatus;
-  
-  // Targeting
-  rolloutPercentage: number; // 0-100
-  variants: IExperimentVariant[];
-  filters: IExperimentFilter[];
-  
-  // User Assignments (for consistent experience)
-  // Stored as hash buckets for efficient lookup
-  userBuckets: Map<string, string>; // userId -> variantId
-  
-  // Specific user overrides
-  userOverrides: {
-    userId: Types.ObjectId;
-    variantId: string;
-  }[];
-  
-  // Excluded users
-  excludedUsers: Types.ObjectId[];
-  
-  // Metrics
-  metrics: IExperimentMetrics;
-  
-  // Audit
-  createdBy: Types.ObjectId;
-  updatedBy?: Types.ObjectId;
-  startedAt?: Date;
-  endedAt?: Date;
-  
-  // Instance targeting (for multi-instance support)
-  targetInstances: string[]; // Empty = all instances, or specific instance IDs
-  
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IExperiment = typeof schema.experiments.$inferSelect;
 
-const ExperimentVariantSchema = new Schema({
-  id: {
-    type: String,
-    required: true,
-  },
-  name: {
-    type: String,
-    required: true,
-  },
-  description: String,
-  weight: {
-    type: Number,
-    required: true,
-    min: 0,
-    max: 100,
-    default: 0,
-  },
-  config: {
-    type: Schema.Types.Mixed,
-    default: {},
-  },
-}, { _id: false });
+export const Experiment = {
+  table: schema.experiments,
 
-const ExperimentFilterSchema = new Schema({
-  type: {
-    type: String,
-    required: true,
-    enum: ['user_id', 'badge', 'premium', 'staff', 'account_age', 'server_count', 'custom'],
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.experiments).where(eq(schema.experiments.id, normalizeId(id))).limit(1);
+    return row || null;
   },
-  operator: {
-    type: String,
-    required: true,
-    enum: ['equals', 'not_equals', 'contains', 'gt', 'lt', 'gte', 'lte', 'in', 'not_in'],
-  },
-  value: {
-    type: Schema.Types.Mixed,
-    required: true,
-  },
-}, { _id: false });
 
-const ExperimentSchema = new Schema<IExperiment>({
-  name: {
-    type: String,
-    required: true,
-    trim: true,
-    maxlength: 100,
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'key': conditions.push(eq(schema.experiments.key, value as string)); break;
+        case 'status': conditions.push(eq(schema.experiments.status, value as any)); break;
+        case 'type': conditions.push(eq(schema.experiments.type, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.experiments);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
   },
-  key: {
-    type: String,
-    required: true,
-    unique: true,
-    trim: true,
-    lowercase: true,
-    match: /^[a-z0-9_]+$/,
-    maxlength: 50,
-  },
-  description: {
-    type: String,
-    maxlength: 500,
-  },
-  type: {
-    type: String,
-    required: true,
-    enum: ['feature_flag', 'ab_test', 'percentage_rollout', 'user_segment'],
-    default: 'feature_flag',
-  },
-  status: {
-    type: String,
-    required: true,
-    enum: ['draft', 'running', 'paused', 'completed', 'archived'],
-    default: 'draft',
-  },
-  rolloutPercentage: {
-    type: Number,
-    required: true,
-    min: 0,
-    max: 100,
-    default: 0,
-  },
-  variants: {
-    type: [ExperimentVariantSchema],
-    default: [],
-  },
-  filters: {
-    type: [ExperimentFilterSchema],
-    default: [],
-  },
-  userBuckets: {
-    type: Map,
-    of: String,
-    default: new Map(),
-  },
-  userOverrides: [{
-    userId: {
-      type: Schema.Types.ObjectId,
-      ref: 'User',
-      required: true,
-    },
-    variantId: {
-      type: String,
-      required: true,
-    },
-  }],
-  excludedUsers: [{
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-  }],
-  metrics: {
-    impressions: { type: Number, default: 0 },
-    conversions: { type: Number, default: 0 },
-    conversionRate: { type: Number, default: 0 },
-    variantMetrics: {
-      type: Schema.Types.Mixed,
-      default: {},
-    },
-  },
-  createdBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-  },
-  updatedBy: {
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-  },
-  startedAt: Date,
-  endedAt: Date,
-  targetInstances: {
-    type: [String],
-    default: [],
-  },
-}, {
-  timestamps: true,
-});
 
-// Indexes for efficient queries
-// Note: key already has unique:true which creates an index
-ExperimentSchema.index({ status: 1 });
-ExperimentSchema.index({ type: 1 });
-ExperimentSchema.index({ 'userOverrides.userId': 1 });
-ExperimentSchema.index({ createdAt: -1 });
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'status': conditions.push(eq(schema.experiments.status, value as any)); break;
+        case 'type': conditions.push(eq(schema.experiments.type, value as any)); break;
+      }
+    }
+    let query = db.select().from(schema.experiments);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
 
-export const Experiment = mongoose.models.Experiment || mongoose.model<IExperiment>('Experiment', ExperimentSchema);
+  async create(data: typeof schema.experiments.$inferInsert) {
+    const [row] = await db.insert(schema.experiments).values(data).returning();
+    return row;
+  },
 
-// Helper function to determine variant for a user
+  async updateById(id: string, data: Partial<typeof schema.experiments.$inferInsert>) {
+    const [row] = await db.update(schema.experiments).set({ ...data, updatedAt: new Date() }).where(eq(schema.experiments.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.experiments).where(eq(schema.experiments.id, normalizeId(id)));
+  },
+};
+
 export function getUserVariant(
   experiment: IExperiment,
   userId: string,
   userAttributes?: Record<string, unknown>
 ): { inExperiment: boolean; variant: IExperimentVariant | null } {
-  // Check if experiment is running
   if (experiment.status !== 'running') {
     return { inExperiment: false, variant: null };
   }
 
-  // Check excluded users
-  if (experiment.excludedUsers.some(id => id.toString() === userId)) {
+  const excludedUsers = (experiment.excludedUsers as string[]) || [];
+  if (excludedUsers.some(id => id === userId)) {
     return { inExperiment: false, variant: null };
   }
 
-  // Check user overrides first
-  const override = experiment.userOverrides.find(o => o.userId.toString() === userId);
+  const userOverrides = (experiment.userOverrides as Array<{ userId: string; variantId: string }>) || [];
+  const override = userOverrides.find(o => o.userId === userId);
   if (override) {
-    const variant = experiment.variants.find(v => v.id === override.variantId);
+    const variants = (experiment.variants as IExperimentVariant[]) || [];
+    const variant = variants.find(v => v.id === override.variantId);
     return { inExperiment: true, variant: variant || null };
   }
 
-  // Apply filters
-  if (experiment.filters.length > 0 && userAttributes) {
-    const passesFilters = experiment.filters.every(filter => {
+  const filters = (experiment.filters as IExperimentFilter[]) || [];
+  if (filters.length > 0 && userAttributes) {
+    const passesFilters = filters.every(filter => {
       const attrValue = userAttributes[filter.type];
       switch (filter.operator) {
         case 'equals':
@@ -273,49 +143,44 @@ export function getUserVariant(
           return true;
       }
     });
-    
+
     if (!passesFilters) {
       return { inExperiment: false, variant: null };
     }
   }
 
-  // Check if user is in rollout percentage using consistent hashing
   const hash = hashUserId(userId, experiment.key);
   const bucket = hash % 100;
-  
-  if (bucket >= experiment.rolloutPercentage) {
+
+  if (bucket >= (experiment.rolloutPercentage ?? 0)) {
     return { inExperiment: false, variant: null };
   }
 
-  // Assign variant based on weights
-  if (experiment.variants.length === 0) {
-    // Feature flag - just return that user is in experiment
+  const variants = (experiment.variants as IExperimentVariant[]) || [];
+  if (variants.length === 0) {
     return { inExperiment: true, variant: null };
   }
 
-  // Calculate cumulative weights
   let cumulativeWeight = 0;
   const variantBucket = hash % 100;
-  
-  for (const variant of experiment.variants) {
+
+  for (const variant of variants) {
     cumulativeWeight += variant.weight;
     if (variantBucket < cumulativeWeight) {
       return { inExperiment: true, variant };
     }
   }
 
-  // Fallback to first variant
-  return { inExperiment: true, variant: experiment.variants[0] || null };
+  return { inExperiment: true, variant: variants[0] || null };
 }
 
-// Consistent hash function for user bucketing
 function hashUserId(userId: string, experimentKey: string): number {
   const str = `${userId}:${experimentKey}`;
   let hash = 0;
   for (let i = 0; i < str.length; i++) {
     const char = str.charCodeAt(i);
     hash = ((hash << 5) - hash) + char;
-    hash = hash & hash; // Convert to 32-bit integer
+    hash = hash & hash;
   }
   return Math.abs(hash);
 }

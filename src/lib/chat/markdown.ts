@@ -1,7 +1,9 @@
 export interface MarkdownNode {
-  type: "text" | "bold" | "italic" | "underline" | "strikethrough" | "code" | "codeblock" | "link" | "linebreak";
+  type: "text" | "bold" | "italic" | "underline" | "strikethrough" | "code" | "codeblock" | "link" | "linebreak" | "timestamp" | "channel_mention" | "spoiler";
   content: string;
   href?: string;
+  format?: string;
+  options?: string;
   children?: MarkdownNode[];
 }
 
@@ -10,7 +12,10 @@ const BOLD_RE = /\*\*([^*]+)\*\*/;
 const ITALIC_RE = /(?<!\*)\*([^*]+)\*(?!\*)/;
 const UNDERLINE_RE = /__([^_]+)__/;
 const STRIKE_RE = /~~([^~]+)~~/;
-const LINK_RE = /\[([^\]]+)\]\(([^)]+)\)/;
+const SPOILER_RE = /\|\|([^|]+)\|\|/;
+const LINK_RE = /\[([^\]]+)\]\((?:<([^>]+)>|([^)]+))\)/;
+const TIMESTAMP_RE = /<t:(-?\d+)(?::([tTdDfFRC])((?:\[[^\]]*\])*))?>/;
+const CHANNEL_MENTION_RE = /<#([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/;
 
 function parseInline(text: string): MarkdownNode[] {
   const nodes: MarkdownNode[] = [];
@@ -25,8 +30,27 @@ function parseInline(text: string): MarkdownNode[] {
       { regex: BOLD_RE, type: "bold", build: (m) => ({ type: "bold", content: m[1], key: `b-${key++}` } as MarkdownNode) },
       { regex: UNDERLINE_RE, type: "underline", build: (m) => ({ type: "underline", content: m[1], key: `u-${key++}` } as MarkdownNode) },
       { regex: STRIKE_RE, type: "strikethrough", build: (m) => ({ type: "strikethrough", content: m[1], key: `s-${key++}` } as MarkdownNode) },
+      { regex: SPOILER_RE, type: "spoiler", build: (m) => ({ type: "spoiler", content: m[1], key: `sp-${key++}` } as MarkdownNode) },
       { regex: ITALIC_RE, type: "italic", build: (m) => ({ type: "italic", content: m[1], key: `i-${key++}` } as MarkdownNode) },
-      { regex: LINK_RE, type: "link", build: (m) => ({ type: "link", content: m[1], href: m[2], key: `l-${key++}` } as MarkdownNode) },
+      { regex: LINK_RE, type: "link", build: (m) => {
+        const href = (m[2] || m[3] || '').trim();
+        if (/serika\.cc/i.test(href)) {
+          return { type: "text", content: m[1], key: `l-${key++}` } as MarkdownNode;
+        }
+        // Security: only allow safe URL schemes to prevent javascript: XSS
+        const trimmedHref = href.trim().toLowerCase();
+        const isSafeScheme = /^https?:\/\//i.test(trimmedHref) ||
+          /^mailto:/i.test(trimmedHref) ||
+          /^\/[^/]/i.test(trimmedHref) ||   // relative paths
+          /^#/.test(trimmedHref);              // anchor links
+        if (!isSafeScheme) {
+          // Dangerous scheme (javascript:, data:, vbscript:, etc.) — render as plain text
+          return { type: "text", content: `[${m[1]}](${href})`, key: `l-${key++}` } as MarkdownNode;
+        }
+        return { type: "link", content: m[1], href, key: `l-${key++}` } as MarkdownNode;
+      } },
+      { regex: TIMESTAMP_RE, type: "timestamp", build: (m) => ({ type: "timestamp", content: m[1], format: m[2] || "f", options: m[3], key: `ts-${key++}` } as MarkdownNode) },
+      { regex: CHANNEL_MENTION_RE, type: "channel_mention", build: (m) => ({ type: "channel_mention", content: m[1], key: `ch-${key++}` } as MarkdownNode) },
     ];
 
     for (const candidate of candidates) {
@@ -49,7 +73,7 @@ function parseInline(text: string): MarkdownNode[] {
       nodes.push({ type: "text", content: remaining.slice(0, earliestMatch.index) });
     }
 
-    if (earliestMatch.node.type === "bold" || earliestMatch.node.type === "italic" || earliestMatch.node.type === "underline" || earliestMatch.node.type === "strikethrough") {
+    if (earliestMatch.node.type === "bold" || earliestMatch.node.type === "italic" || earliestMatch.node.type === "underline" || earliestMatch.node.type === "strikethrough" || earliestMatch.node.type === "spoiler") {
       earliestMatch.node.children = parseInline(earliestMatch.node.content);
       earliestMatch.node.content = "";
     }
@@ -62,7 +86,7 @@ function parseInline(text: string): MarkdownNode[] {
 }
 
 export interface ParsedMarkdown {
-  type: "paragraph" | "codeblock" | "heading";
+  type: "paragraph" | "codeblock" | "heading" | "blockquote" | "small";
   level?: number;
   inline?: MarkdownNode[];
   code?: string;
@@ -71,7 +95,14 @@ export interface ParsedMarkdown {
 
 export function parseMarkdown(text: string): ParsedMarkdown[] {
   const blocks: ParsedMarkdown[] = [];
-  const lines = text.split("\n");
+  // Normalize CRLF / lone-CR line endings to LF first. A trailing "\r" on a
+  // line makes the heading branch regex (anchored with `$`, and `.` never
+  // matches `\r`) fail to match while the paragraph-loop guard (no `$`) still
+  // treats it as a heading — so neither consumes the line, `i` never advances,
+  // and the outer loop spins forever appending empty paragraphs. That runaway
+  // allocation hard-crashes the tab on any CRLF message containing a `#`/`-#`
+  // line (e.g. text pasted from Windows / some bots).
+  const lines = text.replace(/\r\n?/g, "\n").split("\n");
   let i = 0;
 
   while (i < lines.length) {
@@ -91,6 +122,28 @@ export function parseMarkdown(text: string): ParsedMarkdown[] {
       continue;
     }
 
+    // Multi-line blockquote (>>>)
+    if (line.trim().startsWith(">>>")) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && (lines[i].trim().startsWith(">>>") || lines[i].trim().startsWith(">"))) {
+        quoteLines.push(lines[i].replace(/^>>?>\s*/, ""));
+        i++;
+      }
+      blocks.push({ type: "blockquote", inline: parseInline(quoteLines.join("\n")) });
+      continue;
+    }
+
+    // Single-line blockquote (>)
+    if (line.trim().startsWith(">") && !line.trim().startsWith(">>>")) {
+      const quoteLines: string[] = [];
+      while (i < lines.length && lines[i].trim().startsWith(">") && !lines[i].trim().startsWith(">>>")) {
+        quoteLines.push(lines[i].replace(/^>\s*/, ""));
+        i++;
+      }
+      blocks.push({ type: "blockquote", inline: parseInline(quoteLines.join("\n")) });
+      continue;
+    }
+
     // Heading — space after # is optional (#Hello and # Hello both work)
     const headingMatch = line.match(/^(#{1,3})\s*(.+)$/);
     if (headingMatch) {
@@ -103,15 +156,20 @@ export function parseMarkdown(text: string): ParsedMarkdown[] {
       continue;
     }
 
-    // Empty line - skip
-    if (line.trim() === "") {
+    // Small text block (-# syntax)
+    const smallMatch = line.match(/^-(#{1,3})\s*(.+)$/);
+    if (smallMatch) {
+      blocks.push({
+        type: "small",
+        inline: parseInline(smallMatch[2]),
+      });
       i++;
       continue;
     }
 
-    // Paragraph - collect consecutive non-empty lines
+    // Paragraph - collect consecutive lines (including empty ones for multiline support)
     const paraLines: string[] = [];
-    while (i < lines.length && lines[i].trim() !== "" && !lines[i].trim().startsWith("```") && !lines[i].match(/^#{1,3}\s*.+/)) {
+    while (i < lines.length && !lines[i].trim().startsWith("```") && !lines[i].match(/^#{1,3}\s*.+/) && !lines[i].match(/^-(#{1,3})\s*.+/) && !lines[i].trim().startsWith(">")) {
       paraLines.push(lines[i]);
       i++;
     }

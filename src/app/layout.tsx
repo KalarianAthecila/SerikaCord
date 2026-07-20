@@ -1,8 +1,13 @@
 import type { Metadata, Viewport } from "next";
-import { Inter } from "next/font/google";
+import { Inter, Noto_Kufi_Arabic } from "next/font/google";
+import { GTProvider } from "gt-next";
 import { ThemeProvider } from "@/contexts/ThemeContext";
+import { AuthProvider } from "@/contexts/AuthContext";
+import { LocaleSync } from "@/components/LocaleSync";
 import { NetworkStatus } from "@/components/ui/network-status";
 import { ToasterWrapper } from "@/components/ui/ToasterWrapper";
+import { TauriUpdater } from "@/components/TauriUpdater";
+import { buildRootMetadata } from "@/lib/seo";
 import "./globals.css";
 
 const inter = Inter({
@@ -10,21 +15,14 @@ const inter = Inter({
   subsets: ["latin"],
 });
 
-export const metadata: Metadata = {
-  title: "SerikaCord",
-  description: "A modern Discord-like chat application",
-  manifest: "/manifest.json",
-  icons: {
-    icon: "/favicon.ico",
-    apple: "/icons/icon-192x192.png",
-  },
-  appleWebApp: {
-    capable: true,
-    statusBarStyle: "black-translucent",
-    title: "SerikaCord",
-  },
-  applicationName: "SerikaCord",
-};
+const notoKufi = Noto_Kufi_Arabic({
+  variable: "--font-arabic",
+  subsets: ["arabic"],
+  display: "swap",
+});
+
+export const metadata: Metadata = buildRootMetadata();
+
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -68,22 +66,50 @@ export default function RootLayout({
     })();
   `;
 
+  const rtlBootstrapScript = `
+    (function () {
+      try {
+        var stored = localStorage.getItem("serika-locale");
+        var locale = stored || "en";
+        var rtlLocales = ["ar", "he", "fa", "ur"];
+        var isRTL = rtlLocales.some(function (l) { return locale.startsWith(l); });
+        var root = document.documentElement;
+        root.setAttribute("lang", locale);
+        root.setAttribute("dir", isRTL ? "rtl" : "ltr");
+        if (isRTL) {
+          root.classList.add("rtl");
+        } else {
+          root.classList.remove("rtl");
+        }
+      } catch {}
+    })();
+  `;
+
   return (
-    <html lang="en" suppressHydrationWarning>
+    <html lang="en" dir="ltr" suppressHydrationWarning>
       <head suppressHydrationWarning>
         <meta name="apple-mobile-web-app-capable" content="yes" />
         <meta name="mobile-web-app-capable" content="yes" />
-        <link rel="apple-touch-icon" href="/icons/icon-192x192.png" />
+        <link rel="apple-touch-icon" href="/logo-icon.svg" />
         <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: themeBootstrapScript }} />
+        <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: rtlBootstrapScript }} />
+        <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: "document.addEventListener('contextmenu',function(e){e.preventDefault();},false);" }} />
+        <script suppressHydrationWarning dangerouslySetInnerHTML={{ __html: "if(window.__TAURI__){var _f=window.fetch;window.fetch=function(u,o){o=o||{};o.headers=o.headers||{};if(o.headers instanceof Headers){o.headers.set('x-serika-client','tauri');}else{o.headers['x-serika-client']='tauri';}return _f.call(window,u,o);};}" }} />
       </head>
       <body
-        className={`${inter.variable} font-sans antialiased`}
+        className={`${inter.variable} ${notoKufi.variable} font-sans antialiased`}
       >
-        <ThemeProvider>
-          {children}
-          <NetworkStatus />
-          <ToasterWrapper />
-        </ThemeProvider>
+        <GTProvider>
+          <LocaleSync />
+          <ThemeProvider>
+            <AuthProvider>
+              {children}
+              <NetworkStatus />
+              <ToasterWrapper />
+              <TauriUpdater />
+            </AuthProvider>
+          </ThemeProvider>
+        </GTProvider>
       </body>
     </html>
   );

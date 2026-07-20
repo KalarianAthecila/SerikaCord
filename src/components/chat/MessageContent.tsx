@@ -1,11 +1,20 @@
 "use client";
 
-import { useEffect, useRef, useMemo, memo } from "react";
-import twemoji from "twemoji";
-import { cn } from "@/lib/utils";
-import { isImageLikeUrl, isGifUrl } from "@/lib/chat/media";
+import { useEffect, useRef, useMemo, memo, useState, useCallback } from "react";
+import twemoji from "@twemoji/api";
+import { twemojiOnError } from "@/lib/twemoji-helpers";
+import { useChatGt } from "./ChatGtContext";
+import { cn, cdnImage } from "@/lib/utils";
+import { isImageLikeUrl, isGifUrl, isGifProviderUrl } from "@/lib/chat/media";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 import { GifFavoriteButton } from "@/components/chat/GifFavoriteButton";
+import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
+import { decodeHtmlEntities } from "@/lib/chat/messages";
+import { Copy, Star, StarOff } from "lucide-react";
+import { toast } from "sonner";
+import { useEmojiFavorites } from "@/hooks/useEmojiFavorites";
+import { createPortal } from "react-dom";
+import { EMOJI_TO_NAME } from "@/lib/constants/emojis";
 
 interface CustomEmoji {
   id: string;
@@ -35,6 +44,7 @@ interface MessageContentProps {
   mentionUsers?: MentionUser[];
   mentionRoles?: MentionRole[];
   currentUserId?: string;
+  serverId?: string;
   className?: string;
   edited?: boolean;
   sticker?: {
@@ -46,6 +56,9 @@ interface MessageContentProps {
   onImageClick?: (src: string, alt?: string) => void;
   /** Passed back through onMediaClick so parents can keep a stable handler */
   messageId?: string;
+  /** Inline mode (e.g. reply previews): render emoji/mentions inline, but never
+   *  expand into full-size images/stickers. */
+  inline?: boolean;
 }
 
 // Check if a string is only a URL (possibly with whitespace)
@@ -57,8 +70,13 @@ function isOnlyUrl(text: string): boolean {
 
 // Check if a string contains only emoji characters (including custom emoji syntax)
 function isOnlyEmoji(text: string, customEmojiCount: number): boolean {
-  // Remove whitespace and custom emoji placeholders
-  const stripped = text.replace(/\s/g, "").replace(/:[a-zA-Z0-9_]+:/g, "");
+  // Remove whitespace and custom emoji placeholders. Full custom-emoji tokens
+  // (<:name:id> / <a:name:id>) must be stripped too, otherwise a message made
+  // only of custom emojis leaves behind the raw id and fails the emoji check.
+  const stripped = text
+    .replace(/\s/g, "")
+    .replace(/<a?:[a-zA-Z0-9_]{2,32}:[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}>/g, "")
+    .replace(/:[a-zA-Z_][a-zA-Z0-9_]*:/g, "");
   const emojiRegex = /^(?:\p{Emoji_Presentation}|\p{Emoji}\uFE0F)*$/u;
   
   // Check if remaining chars are only emojis and total emoji count is small
@@ -76,14 +94,110 @@ export const MessageContent = memo(function MessageContent({
   mentionUsers = [],
   mentionRoles = [],
   currentUserId,
+  serverId,
   className,
   edited,
   sticker,
   onMediaClick,
   onImageClick,
   messageId,
+  inline = false,
 }: MessageContentProps) {
+  const gt = useChatGt();
   const textRef = useRef<HTMLSpanElement>(null);
+  const { isFavorite, toggleFavorite } = useEmojiFavorites();
+  const [emojiCtxMenu, setEmojiCtxMenu] = useState<{
+    x: number;
+    y: number;
+    emoji: CustomEmoji;
+    isCustom?: boolean;
+  } | null>(null);
+
+  // Close emoji context menu on click elsewhere or Escape
+  useEffect(() => {
+    if (!emojiCtxMenu) return;
+    const close = () => setEmojiCtxMenu(null);
+    const closeOnEsc = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        e.preventDefault();
+        e.stopPropagation();
+        setEmojiCtxMenu(null);
+      }
+    };
+    window.addEventListener("click", close);
+    window.addEventListener("scroll", close, true);
+    window.addEventListener("keydown", closeOnEsc, { capture: true });
+    return () => {
+      window.removeEventListener("click", close);
+      window.removeEventListener("scroll", close, true);
+      window.removeEventListener("keydown", closeOnEsc, { capture: true } as EventListenerOptions);
+    };
+  }, [emojiCtxMenu]);
+
+  const handleEmojiContextMenu = useCallback((e: React.MouseEvent, emoji: CustomEmoji) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setEmojiCtxMenu({ x: e.clientX, y: e.clientY, emoji, isCustom: true });
+  }, []);
+
+  // Delegated right-click handler on the whole message span so a right-click on
+  // any emoji (custom or standard) reliably opens the emoji menu (and never falls through to
+  // the message context menu), regardless of how the emoji <img> was produced.
+  const handleSpanContextMenu = useCallback((e: React.MouseEvent) => {
+    const img = (e.target as HTMLElement)?.closest?.("img.custom-emoji, img.emoji") as HTMLElement | null;
+    if (!img) return; // not an emoji — let the message context menu handle it
+    e.preventDefault();
+    e.stopPropagation();
+
+    const isCustom = img.classList.contains("custom-emoji");
+    if (isCustom) {
+      const id = img.getAttribute("data-emoji-id");
+      if (!id) return;
+      setEmojiCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        emoji: {
+          id,
+          name: img.getAttribute("data-emoji-name") || "emoji",
+          url: img.getAttribute("data-emoji-url") || "",
+          serverId: img.getAttribute("data-emoji-server") || undefined,
+        },
+        isCustom: true,
+      });
+    } else {
+      // Standard unicode emoji
+      const emojiChar = img.getAttribute("alt") || "";
+      setEmojiCtxMenu({
+        x: e.clientX,
+        y: e.clientY,
+        emoji: {
+          id: emojiChar,
+          name: EMOJI_TO_NAME[emojiChar] || "emoji",
+          url: img.getAttribute("src") || "",
+        },
+        isCustom: false,
+      });
+    }
+  }, []);
+
+  const handleCopyEmojiId = useCallback(() => {
+    if (!emojiCtxMenu) return;
+    navigator.clipboard?.writeText(emojiCtxMenu.emoji.id);
+    toast.success(gt("Copied {id}", { id: emojiCtxMenu.emoji.id }));
+    setEmojiCtxMenu(null);
+  }, [emojiCtxMenu, gt]);
+
+  const handleToggleEmojiFav = useCallback(() => {
+    if (!emojiCtxMenu) return;
+    const isCustom = emojiCtxMenu.isCustom;
+    toggleFavorite({
+      emoji: isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.id,
+      name: emojiCtxMenu.emoji.name,
+      customEmojiId: isCustom ? emojiCtxMenu.emoji.id : undefined,
+      url: isCustom ? (emojiCtxMenu.emoji.url || emojiCtxMenu.emoji.imageUrl) : undefined,
+    });
+    setEmojiCtxMenu(null);
+  }, [emojiCtxMenu, toggleFavorite]);
   const mentionUserMap = useMemo(() => {
     const map = new Map<string, MentionUser>();
     for (const mentionUser of mentionUsers) {
@@ -107,13 +221,18 @@ export const MessageContent = memo(function MessageContent({
     onImageClick?.(src, alt);
   };
 
+  // Decode any legacy HTML entities, then strip /tts prefix for display
+  const decodedContent = decodeHtmlEntities(content);
+  const isTtsMessage = decodedContent.startsWith("/tts ");
+  const displayContent = isTtsMessage ? decodedContent.slice(5) : decodedContent;
+
   // Check if the entire message is just an image URL
   const imageOnlyUrl = useMemo(() => {
-    if (isOnlyUrl(content) && isImageLikeUrl(content.trim())) {
-      return content.trim();
+    if (isOnlyUrl(displayContent) && isImageLikeUrl(displayContent.trim())) {
+      return displayContent.trim();
     }
     return null;
-  }, [content]);
+  }, [displayContent]);
 
   // Parse content to identify custom emojis and inline images
   const parsedContent = useMemo(() => {
@@ -122,8 +241,8 @@ export const MessageContent = memo(function MessageContent({
       return { parts: [], customEmojiCount: 0 };
     }
 
-    const tokenRegex = /<@!?([a-f0-9]{24})>|<@&([a-f0-9]{24})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>|:([a-zA-Z0-9_]+):/gi;
-    const urlRegex = /(https?:\/\/[^\s]+)/g;
+    const tokenRegex = /<@!?([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|<@&([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|(?<!\S)@(everyone|here)\b|<(a)?:([a-zA-Z0-9_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>|:([a-zA-Z_][a-zA-Z0-9_]*):/gi;
+    const urlRegex = /(?<!\]\(<?)https?:\/\/[^\s]+/g;
     const parts: Array<{
       type: "text" | "custom-emoji" | "image" | "link" | "mention-user" | "mention-role" | "mention-special";
       content: string;
@@ -138,15 +257,15 @@ export const MessageContent = memo(function MessageContent({
     let urlMatch;
     const segments: Array<{ type: "text" | "url"; content: string }> = [];
     
-    while ((urlMatch = urlRegex.exec(content)) !== null) {
+    while ((urlMatch = urlRegex.exec(displayContent)) !== null) {
       if (urlMatch.index > lastIndex) {
-        segments.push({ type: "text", content: content.slice(lastIndex, urlMatch.index) });
+        segments.push({ type: "text", content: displayContent.slice(lastIndex, urlMatch.index) });
       }
       segments.push({ type: "url", content: urlMatch[0] });
       lastIndex = urlMatch.index + urlMatch[0].length;
     }
-    if (lastIndex < content.length) {
-      segments.push({ type: "text", content: content.slice(lastIndex) });
+    if (lastIndex < displayContent.length) {
+      segments.push({ type: "text", content: displayContent.slice(lastIndex) });
     }
 
     let customEmojiCount = 0;
@@ -156,6 +275,8 @@ export const MessageContent = memo(function MessageContent({
       if (segment.type === "url") {
         if (isImageLikeUrl(segment.content)) {
           parts.push({ type: "image", content: segment.content, url: segment.content });
+        } else if (/serika\.cc/i.test(segment.content)) {
+          parts.push({ type: "text", content: segment.content });
         } else {
           parts.push({ type: "link", content: segment.content, url: segment.content });
         }
@@ -230,13 +351,13 @@ export const MessageContent = memo(function MessageContent({
     }
 
     return { parts, customEmojiCount };
-  }, [content, serverEmojis, imageOnlyUrl]);
+  }, [displayContent, serverEmojis, imageOnlyUrl]);
 
   // Determine if message is emoji-only for larger display
   const isLargeEmoji = useMemo(() => {
     if (imageOnlyUrl) return false;
-    return isOnlyEmoji(content, parsedContent.customEmojiCount);
-  }, [content, parsedContent.customEmojiCount, imageOnlyUrl]);
+    return isOnlyEmoji(displayContent, parsedContent.customEmojiCount);
+  }, [displayContent, parsedContent.customEmojiCount, imageOnlyUrl]);
 
   // Apply twemoji to text parts after render
   useEffect(() => {
@@ -247,26 +368,35 @@ export const MessageContent = memo(function MessageContent({
           folder: "svg",
           ext: ".svg",
           className: "emoji",
-        });
+          onerror: twemojiOnError,
+        } as Parameters<typeof twemoji.parse>[1]);
       });
     }
-  }, [content, serverEmojis]);
+  }, [displayContent, serverEmojis]);
 
-  const emojiSize = isLargeEmoji ? "w-10 h-10" : "w-5 h-5";
+  // Inline mode (reply previews): render a compact sticker/attachment label
+  // instead of the full media so the preview stays a single line.
+  if (inline && (sticker || imageOnlyUrl)) {
+    return (
+      <span ref={textRef} onContextMenu={handleSpanContextMenu} className={cn("twemoji", className)}>
+        {sticker ? `${sticker.name}` : gt("(attachment)")}
+      </span>
+    );
+  }
 
   // If the message has a sticker, render it as a smaller Discord-like sticker
   if (sticker) {
     return (
       <div className={className}>
         <img
-          src={sticker.imageUrl}
+          src={cdnImage(sticker.imageUrl)}
           alt={sticker.name}
           title={sticker.name}
           className="max-w-[160px] max-h-[160px] w-auto h-auto object-contain cursor-pointer hover:opacity-90 transition-opacity rounded-lg"
           onClick={() => handleMediaClick(sticker.imageUrl, sticker.name)}
           loading="lazy"
         />
-        {edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
+        {edited && <span className="text-xs text-[#555555] ml-1">({gt("edited")})</span>}
       </div>
     );
   }
@@ -276,28 +406,29 @@ export const MessageContent = memo(function MessageContent({
     const onlyGif = isGifUrl(imageOnlyUrl);
     return (
       <div className={className}>
-        <div className={cn("inline-block relative group", onlyGif && "rounded-lg overflow-hidden")}>
+        <div className={cn("relative group", onlyGif ? "inline-flex rounded-lg chat-gif-wrap" : "inline-block w-fit")}>
           <img
             src={imageOnlyUrl}
-            alt="Image"
-            className="chat-media cursor-pointer hover:opacity-90 transition-opacity"
-            onClick={() => handleMediaClick(imageOnlyUrl, "Image")}
+            alt={gt("Image")}
+            className="chat-media cursor-pointer hover:opacity-90 transition-opacity block"
+            onClick={() => handleMediaClick(imageOnlyUrl, gt("Image"))}
             loading="lazy"
           />
           {onlyGif && (
-            <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-              <GifFavoriteButton url={imageOnlyUrl} />
+            <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+              <GifFavoriteButton url={imageOnlyUrl} className="p-0" />
             </div>
           )}
         </div>
-        {edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
+        {edited && <span className="text-xs text-[#555555] ml-1">({gt("edited")})</span>}
       </div>
     );
   }
 
   return (
-    <span 
-      ref={textRef} 
+    <span
+      ref={textRef}
+      onContextMenu={handleSpanContextMenu}
       className={cn(
         isLargeEmoji ? "twemoji-large" : "twemoji",
         className
@@ -308,33 +439,39 @@ export const MessageContent = memo(function MessageContent({
           return (
             <img
               key={`emoji-${index}-${part.emoji.id}`}
-              src={part.emoji.url || part.emoji.imageUrl}
+              src={cdnImage(part.emoji.url || part.emoji.imageUrl)}
               alt={`:${part.emoji.name}:`}
               title={`:${part.emoji.name}:`}
-              className={cn(
-                "inline-block align-middle mx-0.5",
-                emojiSize,
-                part.emoji.animated && "animate-pulse"
-              )}
+              className="custom-emoji"
               loading="lazy"
+              data-emoji-id={part.emoji.id}
+              data-emoji-name={part.emoji.name}
+              data-emoji-url={part.emoji.url || part.emoji.imageUrl || ""}
+              data-emoji-server={part.emoji.serverId || ""}
+              onContextMenu={(e) => handleEmojiContextMenu(e, part.emoji!)}
             />
           );
         }
         if (part.type === "image" && part.url) {
+          if (inline) {
+            return (
+              <span key={`image-${index}`} className="opacity-70">{gt("(attachment)")}</span>
+            );
+          }
           const inlineGif = isGifUrl(part.url);
           return (
             <span key={`image-${index}`} className="block my-2">
-              <span className={cn("inline-block relative group", inlineGif && "rounded-lg overflow-hidden")}>
+              <span className={cn("relative group", inlineGif && "inline-flex rounded-lg chat-gif-wrap")}>
                 <img
                   src={part.url}
-                  alt="Image"
-                  className="chat-media cursor-pointer hover:opacity-90 transition-opacity"
-                  onClick={() => handleMediaClick(part.url!, "Image")}
+                  alt={gt("Image")}
+                  className="chat-media cursor-pointer hover:opacity-90 transition-opacity block"
+                  onClick={() => handleMediaClick(part.url!, gt("Image"))}
                   loading="lazy"
-                />
-                {inlineGif && (
-                  <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <GifFavoriteButton url={part.url} />
+                  />
+                  {inlineGif && (
+                    <div className="absolute top-2 right-2 z-10 opacity-0 group-hover:opacity-100 transition-opacity p-1 bg-black/60 backdrop-blur-sm rounded-full flex items-center justify-center">
+                      <GifFavoriteButton url={part.url} className="p-0" />
                   </div>
                 )}
               </span>
@@ -342,6 +479,11 @@ export const MessageContent = memo(function MessageContent({
           );
         }
         if (part.type === "link" && part.url) {
+          // GIF-provider page links (giphy/tenor/klipy) are rendered as an
+          // actual GIF by LinkEmbed, so don't also show the raw URL text.
+          if (isGifProviderUrl(part.url)) {
+            return null;
+          }
           return (
             <a
               key={`link-${index}`}
@@ -356,25 +498,57 @@ export const MessageContent = memo(function MessageContent({
         }
         if (part.type === "mention-user" && part.mentionId) {
           const mentionUser = mentionUserMap.get(part.mentionId);
-          const mentionLabel = mentionUser?.displayName || mentionUser?.username || "unknown";
+          const isResolved = Boolean(mentionUser);
+          const mentionLabel = mentionUser?.displayName || mentionUser?.username || gt("Unknown User");
           const isSelfMention = Boolean(currentUserId && currentUserId === part.mentionId);
-          return (
+          const mentionSpan = (
             <span
-              key={`mention-user-${index}-${part.mentionId}`}
+              title={isResolved ? undefined : `User ID: ${part.mentionId}`}
               className={cn(
-                "inline-block px-1 py-0.5 rounded font-medium",
+                "inline-block px-1 py-0.5 rounded font-medium cursor-pointer",
                 isSelfMention
                   ? "bg-yellow-500/25 text-yellow-200"
-                  : "bg-[var(--app-accent)]/20 text-[var(--app-accent)]"
+                  : isResolved
+                    ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)] hover:bg-[var(--app-accent)]/30"
+                    : "bg-[var(--app-surface-alt)] text-[var(--app-muted)] hover:bg-[var(--app-border)]"
               )}
             >
               @{mentionLabel}
             </span>
           );
+          // Wrap in MemberProfilePopup if we have enough info to show the card
+          if (mentionUser && mentionUser.id && mentionUser.id !== "unknown") {
+            return (
+              <MemberProfilePopup
+                key={`mention-user-${index}-${part.mentionId}`}
+                member={{
+                  id: mentionUser.id,
+                  username: mentionUser.username || "unknown",
+                  displayName: mentionUser.displayName,
+                }}
+                serverId={serverId}
+                side="top"
+                align="center"
+              >
+                <button
+                  type="button"
+                  className="inline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  {mentionSpan}
+                </button>
+              </MemberProfilePopup>
+            );
+          }
+          return (
+            <span key={`mention-user-${index}-${part.mentionId}`}>
+              {mentionSpan}
+            </span>
+          );
         }
         if (part.type === "mention-role" && part.mentionId) {
           const mentionRole = mentionRoleMap.get(part.mentionId);
-          const mentionLabel = mentionRole?.name || "role";
+          const mentionLabel = mentionRole?.name || gt("role");
           const roleColor = mentionRole?.color || "var(--app-accent)";
           const roleBackgroundColor = roleColor.startsWith("#") ? `${roleColor}22` : "rgba(124, 58, 237, 0.2)";
           return (
@@ -403,7 +577,66 @@ export const MessageContent = memo(function MessageContent({
           </span>
         );
       })}
-      {edited && <span className="text-xs text-[#555555] ml-1">(edited)</span>}
+      {typeof document !== "undefined" && emojiCtxMenu && createPortal(
+        <div
+          className="fixed z-[9999] min-w-[180px] bg-[var(--bg-card)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1"
+          style={{ 
+            left: Math.min(emojiCtxMenu.x, window.innerWidth - 188), 
+            top: Math.min(emojiCtxMenu.y, window.innerHeight - 148) 
+          }}
+          onClick={(e) => e.stopPropagation()}
+        >
+          {/* Emoji preview header */}
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-[var(--border-subtle)]">
+            <img
+              src={cdnImage(emojiCtxMenu.emoji.url || emojiCtxMenu.emoji.imageUrl)}
+              alt={emojiCtxMenu.isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.id}
+              className="w-6 h-6 object-contain"
+            />
+            <div className="min-w-0">
+              <div className="text-sm font-medium text-[var(--text-primary)] truncate">
+                {emojiCtxMenu.isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.name}
+              </div>
+              {emojiCtxMenu.isCustom && emojiCtxMenu.emoji.serverId && (
+                <div className="text-[10px] text-[var(--text-muted)] truncate">{emojiCtxMenu.emoji.serverId}</div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={handleToggleEmojiFav}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+          >
+            {isFavorite(
+              emojiCtxMenu.isCustom ? `:${emojiCtxMenu.emoji.name}:` : emojiCtxMenu.emoji.id,
+              emojiCtxMenu.isCustom ? emojiCtxMenu.emoji.id : undefined
+            ) ? (
+              <>
+                <StarOff className="w-4 h-4" />
+                {gt("Unfavorite")}
+              </>
+            ) : (
+              <>
+                <Star className="w-4 h-4" />
+                {gt("Favorite")}
+              </>
+            )}
+          </button>
+          <button
+            onClick={handleCopyEmojiId}
+            className="w-full flex items-center gap-2 px-3 py-1.5 text-sm text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-colors"
+          >
+            <Copy className="w-4 h-4" />
+            {emojiCtxMenu.isCustom ? gt("Copy Emoji ID") : gt("Copy Emoji")}
+          </button>
+        </div>,
+        document.body
+      )}
+      {isTtsMessage && (
+        <span className="inline-flex items-center gap-1 ml-1.5 px-1.5 py-0.5 rounded text-[10px] font-bold bg-indigo-500/15 text-indigo-400 align-middle select-none">
+          🔊 {gt("TTS")}
+        </span>
+      )}
+      {edited && <span className="text-xs text-[#555555] ml-1">({gt("edited")})</span>}
     </span>
   );
 });

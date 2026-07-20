@@ -2,10 +2,12 @@
 
 import { usePathname, useRouter } from "next/navigation";
 import { useServer } from "@/contexts/ServerContext";
+import { useUnread } from "@/contexts/UnreadContext";
 import { useAuth } from "@/contexts/AuthContext";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Home, MessageSquare, Bell, User } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, cdnImage } from "@/lib/utils";
+import { useGT } from "gt-next";
 
 interface NavItem {
   icon: React.ElementType;
@@ -24,13 +26,20 @@ interface BottomNavigationProps {
 }
 
 export function BottomNavigation({
-  notificationCount = 0,
-  messageCount = 0
+  notificationCount,
+  messageCount
 }: BottomNavigationProps) {
   const pathname = usePathname();
   const router = useRouter();
   const { setCurrentServer, setCurrentChannel } = useServer();
+  const { totalDmUnreadCount, totalMentionCount } = useUnread();
   const { user } = useAuth();
+  const gt = useGT();
+
+  // Live badge counts come from the app-wide unread engine. Explicit props (if
+  // ever passed) win, so callers can still override.
+  const messages = messageCount ?? totalDmUnreadCount;
+  const notifications = notificationCount ?? totalMentionCount;
 
   // Hide inside an open conversation (channel chat or DM) so the composer
   // gets the full viewport and the keyboard doesn't fight the nav.
@@ -41,27 +50,27 @@ export function BottomNavigation({
   const navItems: NavItem[] = [
     {
       icon: Home,
-      label: "Servers",
+      label: gt("Servers"),
       href: "/channels/me",
       clearServer: true,
     },
     {
       icon: MessageSquare,
-      label: "Messages",
+      label: gt("Messages"),
       href: "/channels/messages",
-      badge: messageCount,
+      badge: messages,
       clearServer: true,
     },
     {
       icon: Bell,
-      label: "Notifications",
+      label: gt("Notifications"),
       href: "/channels/notifications",
-      badge: notificationCount,
+      badge: notifications,
       clearServer: true,
     },
     {
       icon: User,
-      label: "You",
+      label: gt("You"),
       href: "/channels/profile",
       clearServer: true,
       isProfile: true,
@@ -93,7 +102,7 @@ export function BottomNavigation({
   };
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-[#050608]/95 backdrop-blur-2xl border-t border-white/[0.06] md:hidden">
+    <nav className="fixed bottom-0 left-0 right-0 z-50 bg-[var(--bg-app)]/95 backdrop-blur-2xl border-t border-[var(--border-subtle)] md:hidden">
       <div className="flex items-center justify-around h-[56px] px-1" style={{ paddingBottom: "env(safe-area-inset-bottom)" }}>
         {navItems.map((item) => {
           const isActive = getIsActive(item.href);
@@ -111,40 +120,40 @@ export function BottomNavigation({
               {/* Active pill indicator at top */}
               <div className={cn(
                 "absolute top-0 inset-x-1/4 h-[2px] rounded-full transition-all duration-300",
-                isActive ? "bg-[#8B5CF6] opacity-100" : "opacity-0"
+                isActive ? "bg-[var(--app-accent)] opacity-100" : "opacity-0"
               )} />
 
               <div className={cn(
                 "relative flex items-center justify-center w-10 h-8 rounded-2xl transition-all duration-200",
-                isActive ? "bg-[#8B5CF6]/15" : "bg-transparent"
+                isActive ? "bg-[var(--app-accent)]/15" : "bg-transparent"
               )}>
                 {item.isProfile && user ? (
                   <Avatar
                     className={cn(
                       "w-[24px] h-[24px] ring-2 transition-all duration-200",
-                      isActive ? "ring-[#8B5CF6]" : "ring-transparent"
+                      isActive ? "ring-[var(--app-accent)]" : "ring-transparent"
                     )}
                   >
-                    <AvatarImage src={user.avatar || undefined} alt="" />
-                    <AvatarFallback className="bg-[#8B5CF6] text-white text-[10px]">
+                    <AvatarImage src={cdnImage(user.avatar || undefined)} alt="" />
+                    <AvatarFallback className="bg-[var(--app-accent)] text-white text-[10px]">
                       {(user.displayName || user.username || "?").charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
                 ) : (
                   <Icon className={cn(
                     "w-[22px] h-[22px] transition-all duration-200",
-                    isActive ? "text-[#8B5CF6]" : "text-neutral-500"
+                    isActive ? "text-[var(--app-accent)]" : "text-neutral-500"
                   )} />
                 )}
                 {item.badge != null && item.badge > 0 && (
-                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 flex items-center justify-center bg-[#ED4245] text-white text-[9px] font-bold rounded-full border-[2px] border-[#050608]">
+                  <span className="absolute -top-1 -right-1 min-w-[16px] h-4 px-1 flex items-center justify-center bg-[#ED4245] text-white text-[9px] font-bold rounded-full border-[2px] border-[var(--bg-app)]">
                     {item.badge > 99 ? "99+" : item.badge}
                   </span>
                 )}
               </div>
               <span className={cn(
                 "text-[10px] font-semibold leading-none transition-colors duration-200",
-                isActive ? "text-[#8B5CF6]" : "text-neutral-600"
+                isActive ? "text-[var(--app-accent)]" : "text-neutral-600"
               )}>
                 {item.label}
               </span>

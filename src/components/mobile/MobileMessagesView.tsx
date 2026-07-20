@@ -4,7 +4,9 @@ import { useState, useEffect, useCallback, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { UserPlus, Star, RefreshCw, Search, X, ChevronLeft } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, cdnImage } from "@/lib/utils";
+import { useGT } from "gt-next";
+import { useUnread } from "@/contexts/UnreadContext";
 
 interface Message {
   id: string;
@@ -28,6 +30,8 @@ interface MobileMessagesViewProps {
 
 export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
   const router = useRouter();
+  const gt = useGT();
+  const { isChannelUnread, registerChannels, getMentionCount, seedDmCounts } = useUnread();
   const [messages, setMessages] = useState<Message[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -49,7 +53,7 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
     const hours = Math.floor(minutes / 60);
     const days = Math.floor(hours / 24);
 
-    if (minutes < 1) return "Now";
+    if (minutes < 1) return gt("Now");
     if (minutes < 60) return `${minutes}m`;
     if (hours < 24) return `${hours}h`;
     if (days < 7) return `${days}d`;
@@ -81,17 +85,32 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
               id: channel.id,
               recipientId: recipientId,
               type: channel.type === "group" ? "group" : "dm",
-              name: recipient?.displayName || recipient?.username || "Unknown",
+              name: recipient?.displayName || recipient?.username || gt("Unknown"),
               username: recipient?.username || "",
               avatar: recipient?.avatar,
-              lastMessage: channel.lastMessage?.content || "Start a conversation",
+              lastMessage: channel.lastMessage?.content || gt("Start a conversation"),
               timestamp: formatTimestamp(channel.updatedAt),
               status: recipient?.status || "offline",
             });
           }
         });
         
-        setMessages(Array.from(seenRecipients.values()));
+        const list = Array.from(seenRecipients.values());
+        setMessages(list);
+        // Feed the unread engine so DM rows light up cross-device.
+        registerChannels(
+          (data.channels || []).map((c: { id: string; updatedAt?: string | null }) => ({
+            id: c.id,
+            type: "dm" as const,
+            lastMessageAt: c.updatedAt ?? null,
+          }))
+        );
+        // Seed authoritative per-DM unread counts for the accent count badges.
+        const counts: Record<string, number> = {};
+        for (const c of (data.channels || []) as Array<{ id: string; unreadCount?: number }>) {
+          counts[c.id] = c.unreadCount || 0;
+        }
+        seedDmCounts(counts);
       }
     } catch (error) {
       console.error("Failed to fetch messages:", error);
@@ -100,7 +119,7 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
       setIsRefreshing(false);
       setPullDistance(0);
     }
-  }, [formatTimestamp]);
+  }, [formatTimestamp, registerChannels, seedDmCounts]);
 
   useEffect(() => {
     fetchMessages();
@@ -203,7 +222,7 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
   const regularMessages = filteredMessages.filter(m => !m.isPinned && !m.isFavorite);
 
   return (
-    <div className="flex flex-col h-full bg-[#000000]">
+    <div className="flex flex-col h-full bg-[var(--bg-app)]">
       {/* Pull to refresh indicator */}
       <div 
         className={cn(
@@ -214,7 +233,7 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
       >
         <RefreshCw 
           className={cn(
-            "w-6 h-6 text-[#8B5CF6] transition-transform",
+            "w-6 h-6 text-[var(--app-accent)] transition-transform",
             isRefreshing && "animate-spin",
             pullDistance > 80 && "scale-110"
           )}
@@ -223,7 +242,7 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
       </div>
 
       {/* Header */}
-      <div className="flex flex-col px-5 bg-[#000000] sticky top-0 z-10 pt-safe">
+      <div className="flex flex-col px-5 bg-[var(--bg-app)] sticky top-0 z-10 pt-safe">
         <div className="flex items-center justify-between pt-4 pb-3">
           {showSearch ? (
             <div className="flex-1 flex items-center gap-3">
@@ -232,40 +251,40 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
                   setShowSearch(false);
                   setSearchQuery("");
                 }}
-                className="p-2 -ml-2 rounded-full hover:bg-[#1a1a1a] transition-colors active:scale-95"
+                className="p-2 -ml-2 rounded-full hover:bg-[var(--bg-hover)] transition-colors active:scale-95"
               >
-                <ChevronLeft className="w-6 h-6 text-white" />
+                <ChevronLeft className="w-6 h-6 text-[var(--text-primary)]" />
               </button>
               <input
                 type="text"
-                placeholder="Search conversations..."
+                placeholder={gt("Search conversations...")}
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
                 autoFocus
-                className="flex-1 bg-[#1a1a1a] border-0 rounded-xl px-4 py-2.5 text-white placeholder:text-neutral-500 text-base focus:outline-none focus:ring-2 focus:ring-[#8B5CF6]/50"
+                className="flex-1 bg-[var(--bg-card)] border-0 rounded-xl px-4 py-2.5 text-[var(--text-primary)] placeholder:text-[var(--text-muted)] text-base focus:outline-none focus:ring-2 focus:ring-[var(--app-accent)]/50"
               />
               {searchQuery && (
                 <button
                   onClick={() => setSearchQuery("")}
-                  className="p-2 rounded-full hover:bg-[#1a1a1a] transition-colors active:scale-95"
+                  className="p-2 rounded-full hover:bg-[var(--bg-hover)] transition-colors active:scale-95"
                 >
-                  <X className="w-5 h-5 text-neutral-400" />
+                  <X className="w-5 h-5 text-[var(--text-muted)]" />
                 </button>
               )}
             </div>
           ) : (
             <>
-              <h1 className="text-3xl font-bold text-white tracking-tight">Messages</h1>
+              <h1 className="text-3xl font-bold text-[var(--text-primary)] tracking-tight">{gt("Messages")}</h1>
               <div className="flex items-center gap-2">
                 <button 
                   onClick={() => setShowSearch(true)}
-                  className="p-2.5 rounded-full bg-[#1a1a1a] text-white hover:bg-[#252525] transition-all active:scale-95"
+                  className="p-2.5 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all active:scale-95"
                 >
                   <Search className="w-5 h-5" />
                 </button>
                 <button 
                   onClick={onAddFriend}
-                  className="p-2.5 rounded-full bg-[#1a1a1a] text-white hover:bg-[#252525] transition-all active:scale-95"
+                  className="p-2.5 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] hover:bg-[var(--bg-hover)] transition-all active:scale-95"
                 >
                   <UserPlus className="w-5 h-5" />
                 </button>
@@ -277,10 +296,10 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
 
       {/* Pinned/Favorites Section */}
       {pinnedMessages.length > 0 && (
-        <div className="px-5 py-3 border-b border-[#1a1a1a]">
-          <h2 className="text-xs font-bold text-neutral-500 uppercase tracking-widest mb-3 flex items-center gap-2">
+        <div className="px-5 py-3 border-b border-[var(--border-subtle)]">
+          <h2 className="text-xs font-bold text-[var(--text-muted)] uppercase tracking-widest mb-3 flex items-center gap-2">
             <Star className="w-3.5 h-3.5" />
-            Favorites
+            {gt("Favorites")}
           </h2>
           <div className="flex items-center gap-4 overflow-x-auto pb-2 scrollbar-hide -mx-1 px-1">
             {pinnedMessages.map((message) => (
@@ -291,24 +310,24 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
               >
                 <div className="relative transform transition-transform duration-150 group-active:scale-90">
                   {message.type === "group" && message.avatars ? (
-                    <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] relative overflow-hidden ring-2 ring-transparent group-focus:ring-[#8B5CF6] transition-all">
-                      <Avatar className="w-9 h-9 absolute top-1 left-1 border-2 border-[#0a0a0a]">
-                        <AvatarImage src={message.avatars[0]} />
-                        <AvatarFallback className="bg-[#8B5CF6]">
+                    <div className="w-16 h-16 rounded-2xl bg-[var(--bg-card)] relative overflow-hidden ring-2 ring-transparent group-focus:ring-[var(--app-accent)] transition-all">
+                      <Avatar className="w-9 h-9 absolute top-1 left-1 border-2 border-[var(--bg-app)]">
+                        <AvatarImage src={cdnImage(message.avatars[0])} />
+                        <AvatarFallback className="bg-[var(--app-accent)]">
                           {message.name.charAt(0)}
                         </AvatarFallback>
                       </Avatar>
                       {message.avatars[1] && (
-                        <Avatar className="w-9 h-9 absolute bottom-1 right-1 border-2 border-[#0a0a0a]">
-                          <AvatarImage src={message.avatars[1]} />
+                        <Avatar className="w-9 h-9 absolute bottom-1 right-1 border-2 border-[var(--bg-app)]">
+                          <AvatarImage src={cdnImage(message.avatars[1])} />
                           <AvatarFallback className="bg-[#6366F1]">+</AvatarFallback>
                         </Avatar>
                       )}
                     </div>
                   ) : (
-                    <Avatar className="w-16 h-16 rounded-2xl ring-2 ring-transparent group-focus:ring-[#8B5CF6] transition-all">
-                      <AvatarImage src={message.avatar} />
-                      <AvatarFallback className="bg-[#8B5CF6] text-white text-xl font-semibold">
+                    <Avatar className="w-16 h-16 rounded-2xl ring-2 ring-transparent group-focus:ring-[var(--app-accent)] transition-all">
+                      <AvatarImage src={cdnImage(message.avatar)} />
+                      <AvatarFallback className="bg-gradient-to-br from-[var(--app-accent)] to-[var(--app-accent)] text-white text-xl font-semibold">
                         {message.name.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
@@ -319,11 +338,11 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
                     </div>
                   )}
                   <div
-                    className="absolute bottom-0 right-0 w-4 h-4 rounded-full border-[3px] border-[#000000]"
+                    className="absolute bottom-0 right-0 w-4 h-4 rounded-full border-[3px] border-[var(--bg-app)]"
                     style={{ backgroundColor: statusColors[message.status || "offline"] }}
                   />
                 </div>
-                <span className="text-xs font-medium text-neutral-400 truncate max-w-[72px] group-hover:text-white transition-colors">
+                <span className="text-xs font-medium text-[var(--text-muted)] truncate max-w-[72px] group-hover:text-[var(--text-primary)] transition-colors">
                   {message.name.split(" ")[0]}
                 </span>
               </button>
@@ -345,108 +364,125 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
             <div className="space-y-3 p-2">
               {Array.from({ length: 8 }).map((_, i) => (
                 <div key={i} className="flex items-center gap-3 p-2">
-                  <div className="w-12 h-12 rounded-full bg-[#1a1a1a] animate-pulse" />
+                  <div className="w-12 h-12 rounded-full bg-[var(--bg-card)] animate-pulse" />
                   <div className="flex-1 space-y-2">
-                    <div className="h-4 w-28 rounded bg-[#1a1a1a] animate-pulse" />
-                    <div className="h-3 w-48 rounded bg-[#1a1a1a] animate-pulse" />
+                    <div className="h-4 w-28 rounded bg-[var(--bg-card)] animate-pulse" />
+                    <div className="h-3 w-48 rounded bg-[var(--bg-card)] animate-pulse" />
                   </div>
                 </div>
               ))}
             </div>
           ) : filteredMessages.length === 0 && searchQuery ? (
             <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
-              <div className="w-16 h-16 rounded-2xl bg-[#1a1a1a] flex items-center justify-center mb-4">
-                <Search className="w-8 h-8 text-neutral-500" />
+              <div className="w-16 h-16 rounded-2xl bg-[var(--bg-card)] flex items-center justify-center mb-4">
+                <Search className="w-8 h-8 text-[var(--text-muted)]" />
               </div>
-              <h3 className="text-lg font-semibold text-white mb-1">No results</h3>
-              <p className="text-neutral-500 text-sm">
-                Try searching for something else
+              <h3 className="text-lg font-semibold text-[var(--text-primary)] mb-1">{gt("No results")}</h3>
+              <p className="text-[var(--text-muted)] text-sm">
+                {gt("Try searching for something else")}
               </p>
             </div>
           ) : messages.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
-              <div className="w-20 h-20 rounded-3xl bg-[#1a1a1a] flex items-center justify-center mb-6">
-                <UserPlus className="w-10 h-10 text-neutral-500" />
+              <div className="w-20 h-20 rounded-3xl bg-[var(--bg-card)] flex items-center justify-center mb-6">
+                <UserPlus className="w-10 h-10 text-[var(--text-muted)]" />
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">No messages yet</h3>
-              <p className="text-neutral-500 text-base mb-6 max-w-[280px]">
-                Start a conversation by adding friends or joining a server
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">{gt("No messages yet")}</h3>
+              <p className="text-[var(--text-muted)] text-base mb-6 max-w-[280px]">
+                {gt("Start a conversation by adding friends or joining a server")}
               </p>
               <button 
                 onClick={onAddFriend}
-                className="px-8 py-3.5 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-bold rounded-2xl transition-all active:scale-95 shadow-lg shadow-purple-500/25"
+                className="px-8 py-3.5 bg-[var(--app-accent)] hover:opacity-90 text-white font-bold rounded-2xl transition-all active:scale-95 shadow-lg"
               >
-                Find Friends
+                {gt("Find Friends")}
               </button>
             </div>
           ) : (
             <div className="space-y-0.5">
-              {regularMessages.map((message, index) => (
+              {regularMessages.map((message, index) => {
+                const unread = isChannelUnread(message.id);
+                return (
                 <button
                   key={`${message.recipientId}-${index}`}
                   onClick={() => handleMessageClick(message)}
                   className={cn(
                     "w-full flex items-center gap-4 px-3 py-3.5 rounded-2xl transition-all duration-150",
-                    "hover:bg-[#1a1a1a]/60 active:bg-[#1a1a1a] active:scale-[0.98]"
+                    "hover:bg-[var(--bg-hover)]/60 active:bg-[var(--bg-hover)] active:scale-[0.98]"
                   )}
                 >
                   {/* Avatar with status */}
                   <div className="relative flex-shrink-0">
                     {message.type === "group" && message.avatars ? (
-                      <div className="w-12 h-12 rounded-full bg-[#1a1a1a] relative">
-                        <Avatar className="w-7 h-7 absolute top-0 left-0 ring-2 ring-[#0a0a0a]">
-                          <AvatarImage src={message.avatars[0]} />
-                          <AvatarFallback className="bg-[#8B5CF6] text-[10px]">
+                      <div className="w-12 h-12 rounded-full bg-[var(--bg-card)] relative">
+                        <Avatar className="w-7 h-7 absolute top-0 left-0 ring-2 ring-[var(--bg-app)]">
+                          <AvatarImage src={cdnImage(message.avatars[0])} />
+                          <AvatarFallback className="bg-[var(--app-accent)] text-[10px]">
                             {message.name.charAt(0)}
                           </AvatarFallback>
                         </Avatar>
                         {message.avatars[1] && (
-                          <Avatar className="w-7 h-7 absolute bottom-0 right-0 ring-2 ring-[#0a0a0a]">
-                            <AvatarImage src={message.avatars[1]} />
+                          <Avatar className="w-7 h-7 absolute bottom-0 right-0 ring-2 ring-[var(--bg-app)]">
+                            <AvatarImage src={cdnImage(message.avatars[1])} />
                             <AvatarFallback className="bg-[#6366F1] text-[10px]">+</AvatarFallback>
                           </Avatar>
                         )}
                       </div>
                     ) : (
                       <Avatar className="w-12 h-12">
-                        <AvatarImage src={message.avatar} />
-                        <AvatarFallback className="bg-gradient-to-br from-[#8B5CF6] to-[#6366F1] text-white text-base font-semibold">
+                        <AvatarImage src={cdnImage(message.avatar)} />
+                        <AvatarFallback className="bg-gradient-to-br from-[var(--app-accent)] to-[var(--app-accent)] text-white text-base font-semibold">
                           {message.name.charAt(0).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
                     )}
                     {/* Status indicator */}
                     <div
-                      className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full ring-[3px] ring-[#0a0a0a]"
+                      className="absolute -bottom-0.5 -right-0.5 w-4 h-4 rounded-full ring-[3px] ring-[var(--bg-app)]"
                       style={{ backgroundColor: statusColors[message.status || "offline"] }}
                     />
                   </div>
                   
                   <div className="flex-1 min-w-0 text-left">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="text-[17px] font-semibold text-white truncate leading-tight">
+                      <span className={cn(
+                        "text-[17px] truncate leading-tight text-[var(--text-primary)]",
+                        unread ? "font-bold" : "font-semibold"
+                      )}>
                         {message.name}
                       </span>
                       <span className={cn(
                         "text-xs flex-shrink-0",
-                        message.unreadCount && message.unreadCount > 0 ? "text-[#8B5CF6] font-medium" : "text-neutral-500"
+                        unread ? "text-[var(--app-accent)] font-medium" : "text-[var(--text-muted)]"
                       )}>
                         {message.timestamp}
                       </span>
                     </div>
-                    <p className="text-[15px] text-neutral-400 truncate leading-snug mt-0.5">
+                    <p className={cn(
+                      "text-[15px] line-clamp-2 break-words leading-snug mt-0.5",
+                      unread ? "text-[var(--text-secondary)]" : "text-[var(--text-muted)]"
+                    )}>
                       {message.lastMessage}
                     </p>
                   </div>
 
-                  {/* Unread badge */}
-                  {message.unreadCount && message.unreadCount > 0 && (
-                    <span className="min-w-[22px] h-[22px] px-1.5 flex items-center justify-center bg-[#ED4245] text-white text-xs font-bold rounded-full shadow-lg">
-                      {message.unreadCount > 99 ? "99+" : message.unreadCount}
-                    </span>
-                  )}
+                  {/* Unread badge — accent count pill, falling back to a dot. */}
+                  {(() => {
+                    const count = getMentionCount(message.id);
+                    if (count > 0) {
+                      return (
+                        <span className="min-w-[20px] h-5 px-1.5 flex-shrink-0 flex items-center justify-center rounded-full bg-[var(--app-accent)] text-[11px] font-bold text-[var(--text-on-accent)] leading-none shadow-lg">
+                          {count > 99 ? "99+" : count}
+                        </span>
+                      );
+                    }
+                    return unread ? (
+                      <span className="w-2.5 h-2.5 flex-shrink-0 bg-[var(--app-accent)] rounded-full shadow-lg" />
+                    ) : null;
+                  })()}
                 </button>
-              ))}
+                );
+              })}
             </div>
           )}
         </div>

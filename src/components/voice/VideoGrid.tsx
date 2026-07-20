@@ -6,9 +6,10 @@ import { MicOff, Monitor } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { voiceService, type VoiceParticipant } from "@/lib/services/voiceService";
 import { useSpeakingUsers } from "@/hooks/useSpeakingUsers";
-import { VoiceParticipantAvatar } from "@/components/voice/VoiceParticipantAvatar";
+import { useGT } from "gt-next";
 
 export function VideoGrid() {
+  const gt = useGT();
   const [participants, setParticipants] = useState<VoiceParticipant[]>([]);
   const [isVideoOn, setIsVideoOn] = useState(false);
   const [isScreenSharing, setIsScreenSharing] = useState(false);
@@ -59,8 +60,13 @@ export function VideoGrid() {
 
   if (!isConnected) return null;
 
-  const videoParticipants = participants.filter(p => p.video || p.screenShare);
-  const hasVideo = isVideoOn || videoParticipants.length > 0 || isScreenSharing;
+  // Camera tiles and screen-share tiles come from DIFFERENT streams, so a
+  // participant sharing their screen while on camera produces two tiles.
+  const myId = voiceService.myId;
+  const cameraParticipants = participants.filter((p) => p.userId !== myId && p.video && p.stream);
+  const screenParticipants = participants.filter((p) => p.userId !== myId && p.screenStream);
+  const remoteTileCount = cameraParticipants.length + screenParticipants.length;
+  const hasVideo = isVideoOn || remoteTileCount > 0 || isScreenSharing;
 
   if (!hasVideo) return null;
 
@@ -74,9 +80,9 @@ export function VideoGrid() {
       >
         <div className={cn(
           "grid gap-2",
-          videoParticipants.length === 0 && !isVideoOn && !isScreenSharing ? "grid-cols-1" :
-          videoParticipants.length <= 1 && !isVideoOn ? "grid-cols-1" :
-          videoParticipants.length <= 3 ? "grid-cols-2" :
+          remoteTileCount === 0 && !isVideoOn && !isScreenSharing ? "grid-cols-1" :
+          remoteTileCount <= 1 && !isVideoOn ? "grid-cols-1" :
+          remoteTileCount <= 3 ? "grid-cols-2" :
           "grid-cols-3"
         )}>
           {/* Local video */}
@@ -90,7 +96,7 @@ export function VideoGrid() {
                 className="w-full h-full object-cover video-mirror"
               />
               <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white">
-                You
+                {gt("You")}
               </div>
             </div>
           )}
@@ -107,14 +113,31 @@ export function VideoGrid() {
               />
               <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white flex items-center gap-1">
                 <Monitor className="w-3 h-3" />
-                Your Screen
+                {gt("Your Screen")}
               </div>
             </div>
           )}
 
-          {/* Remote participants */}
-          {videoParticipants.map((p) => (
-            <RemoteVideo key={p.userId} participant={p} speaking={speakingUsers.has(p.userId)} />
+          {/* Remote cameras */}
+          {cameraParticipants.map((p) => (
+            <RemoteVideo
+              key={`cam-${p.userId}`}
+              participant={p}
+              stream={p.stream!}
+              isScreen={false}
+              speaking={speakingUsers.has(p.userId)}
+            />
+          ))}
+
+          {/* Remote screen shares (separate stream/tile) */}
+          {screenParticipants.map((p) => (
+            <RemoteVideo
+              key={`screen-${p.userId}`}
+              participant={p}
+              stream={p.screenStream!}
+              isScreen
+              speaking={speakingUsers.has(p.userId)}
+            />
           ))}
         </div>
       </motion.div>
@@ -122,42 +145,48 @@ export function VideoGrid() {
   );
 }
 
-function RemoteVideo({ participant, speaking }: { participant: VoiceParticipant; speaking?: boolean }) {
+function RemoteVideo({
+  participant,
+  stream,
+  isScreen,
+  speaking,
+}: {
+  participant: VoiceParticipant;
+  stream: MediaStream;
+  isScreen: boolean;
+  speaking?: boolean;
+}) {
+  const gt = useGT();
   const videoRef = useRef<HTMLVideoElement>(null);
-  const hasVideo = participant.video || participant.screenShare;
 
   useEffect(() => {
-    if (videoRef.current && participant.stream) {
-      videoRef.current.srcObject = participant.stream;
+    if (videoRef.current && stream) {
+      videoRef.current.srcObject = stream;
     }
-  }, [participant.stream]);
+  }, [stream]);
 
   return (
     <div
       className={cn(
         "relative rounded-lg overflow-hidden bg-[#131a28] aspect-video min-h-[120px] transition-shadow duration-100",
-        participant.screenShare && "col-span-full",
-        speaking && participant.audio && "ring-2 ring-[#22c55e] shadow-[0_0_16px_rgba(34,197,94,0.4)]"
+        isScreen && "col-span-full",
+        !isScreen && speaking && participant.audio && "ring-2 ring-[#22c55e] shadow-[0_0_16px_rgba(34,197,94,0.4)]"
       )}
     >
-      {hasVideo ? (
-        <video
-          ref={videoRef}
-          autoPlay
-          muted
-          playsInline
-          className={cn("w-full h-full", participant.screenShare ? "object-contain" : "object-cover")}
-        />
-      ) : (
-        // No camera: show the avatar with a speaking ring instead of a blank tile.
-        <div className="absolute inset-0 flex items-center justify-center">
-          <VoiceParticipantAvatar participant={participant} speaking={speaking} size="lg" />
-        </div>
-      )}
+      <video
+        ref={videoRef}
+        autoPlay
+        muted
+        playsInline
+        className={cn("w-full h-full", isScreen ? "object-contain" : "object-cover")}
+      />
       <div className="absolute bottom-1 left-1 px-1.5 py-0.5 rounded bg-black/60 text-[10px] text-white flex items-center gap-1 max-w-[calc(100%-8px)]">
-        {participant.screenShare && <Monitor className="w-3 h-3 flex-shrink-0" />}
-        <span className="truncate">{participant.displayName || participant.username}</span>
-        {!participant.audio && <MicOff className="w-3 h-3 text-red-400 flex-shrink-0" />}
+        {isScreen && <Monitor className="w-3 h-3 flex-shrink-0" />}
+        <span className="truncate">
+          {participant.displayName || participant.username}
+          {isScreen ? gt("'s screen") : ""}
+        </span>
+        {!isScreen && !participant.audio && <MicOff className="w-3 h-3 text-red-400 flex-shrink-0" />}
       </div>
     </div>
   );

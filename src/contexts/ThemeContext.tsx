@@ -1,10 +1,13 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useState, ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useState, ReactNode } from "react";
+import { setUserNotificationSettings } from "@/lib/services/notificationUX";
+import { voiceService } from "@/lib/services/voiceService";
 
 export interface ThemeSettings {
   theme: "dark" | "midnight" | "light";
   accentColor: string;
+  textColor: string;
   fontSize: number;
   compactMode: boolean;
   showTimestamps: boolean;
@@ -14,11 +17,15 @@ export interface ThemeSettings {
   animatedAvatars: boolean;
   reducedMotion: boolean;
   saturation: number;
+  highContrast: boolean;
+  dyslexicFont: boolean;
+  messageSpacing: "compact" | "cozy";
 }
 
 const defaultSettings: ThemeSettings = {
   theme: "dark",
   accentColor: "#8B5CF6",
+  textColor: "",
   fontSize: 14,
   compactMode: false,
   showTimestamps: true,
@@ -28,6 +35,9 @@ const defaultSettings: ThemeSettings = {
   animatedAvatars: true,
   reducedMotion: false,
   saturation: 100,
+  highContrast: false,
+  dyslexicFont: false,
+  messageSpacing: "cozy",
 };
 
 function coerceTheme(theme: unknown): ThemeSettings["theme"] {
@@ -61,6 +71,7 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       ...prev,
       theme: coerceTheme(appearance.theme ?? appearance.themeStyle ?? prev.theme),
       accentColor: appearance.accentColor || prev.accentColor,
+      textColor: appearance.textColor ?? prev.textColor,
       fontSize: typeof appearance.fontSize === "number" ? appearance.fontSize : prev.fontSize,
       compactMode: typeof appearance.compactMode === "boolean" ? appearance.compactMode : prev.compactMode,
       showTimestamps: typeof appearance.showTimestamps === "boolean" ? appearance.showTimestamps : prev.showTimestamps,
@@ -68,6 +79,9 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       enableAnimations: typeof appearance.enableAnimations === "boolean" ? appearance.enableAnimations : prev.enableAnimations,
       saturation: typeof appearance.saturation === "number" ? appearance.saturation : prev.saturation,
       reducedMotion: typeof accessibility.reducedMotion === "boolean" ? accessibility.reducedMotion : prev.reducedMotion,
+      highContrast: typeof accessibility.highContrast === "boolean" ? accessibility.highContrast : prev.highContrast,
+      dyslexicFont: typeof accessibility.dyslexicFont === "boolean" ? accessibility.dyslexicFont : prev.dyslexicFont,
+      messageSpacing: accessibility.messageSpacing === "compact" || accessibility.messageSpacing === "cozy" ? accessibility.messageSpacing : prev.messageSpacing,
       animatedEmojis:
         typeof textImages.gifAutoplay === "boolean"
           ? textImages.gifAutoplay
@@ -110,6 +124,10 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       .then((data) => {
         if (!active || !data?.settings) return;
         applyUserSettingsPatch(data.settings);
+        setUserNotificationSettings(data.settings?.notifications);
+        if (typeof data.settings?.voiceVideo?.soundboardVolume === "number") {
+          voiceService.setSoundboardVolume(data.settings.voiceVideo.soundboardVolume);
+        }
       })
       .catch(() => {
         // optional hydration; ignore when unauthenticated
@@ -138,6 +156,15 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
     root.style.setProperty("--app-accent", settings.accentColor);
     root.style.setProperty("--accent", settings.accentColor);
     root.style.setProperty("--accent-hover", settings.accentColor);
+
+    // Custom text color (overrides theme default when set)
+    if (settings.textColor && settings.textColor.trim()) {
+      root.style.setProperty("--app-text", settings.textColor);
+    } else {
+      // Reset to theme default by removing the inline override
+      root.style.removeProperty("--app-text");
+      // Re-apply the theme class to restore defaults from CSS
+    }
     
     // Convert hex to HSL for Tailwind
     const hexToHsl = (hex: string) => {
@@ -201,23 +228,41 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
       root.classList.remove("no-animated-emojis");
     }
 
+    // High contrast
+    root.classList.toggle("high-contrast", settings.highContrast);
+
+    // Dyslexic font
+    root.classList.toggle("dyslexic-font", settings.dyslexicFont);
+
+    // Message spacing
+    root.classList.remove("message-spacing-compact", "message-spacing-cozy");
+    root.classList.add(`message-spacing-${settings.messageSpacing}`);
+
+    // Saturation filter (only apply class when not default 100 to avoid unnecessary filter)
+    root.classList.toggle("saturation-filter", settings.saturation !== 100);
+
   }, [settings, isLoaded]);
 
-  const updateSetting = <K extends keyof ThemeSettings>(key: K, value: ThemeSettings[K]) => {
+  const updateSetting = useCallback(<K extends keyof ThemeSettings>(key: K, value: ThemeSettings[K]) => {
     setSettings(prev => ({ ...prev, [key]: value }));
-  };
+  }, []);
 
-  const updateSettings = (patch: Partial<ThemeSettings>) => {
+  const updateSettings = useCallback((patch: Partial<ThemeSettings>) => {
     setSettings((prev) => ({ ...prev, ...patch }));
-  };
+  }, []);
 
-  const resetSettings = () => {
+  const resetSettings = useCallback(() => {
     setSettings(defaultSettings);
     localStorage.removeItem("serika-theme-settings");
-  };
+  }, []);
+
+  const value = useMemo(
+    () => ({ settings, updateSetting, updateSettings, applyUserSettingsPatch, resetSettings }),
+    [settings, updateSetting, updateSettings, applyUserSettingsPatch, resetSettings]
+  );
 
   return (
-    <ThemeContext.Provider value={{ settings, updateSetting, updateSettings, applyUserSettingsPatch, resetSettings }}>
+    <ThemeContext.Provider value={value}>
       {children}
     </ThemeContext.Provider>
   );

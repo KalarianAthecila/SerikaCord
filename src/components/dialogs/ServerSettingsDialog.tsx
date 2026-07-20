@@ -1,57 +1,64 @@
 "use client";
 
-import { AudioTrimmerDialog } from "@/components/dialogs/AudioTrimmerDialog";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-    DropdownMenu,
-    DropdownMenuCheckboxItem,
-    DropdownMenuContent,
-    DropdownMenuLabel,
-    DropdownMenuSeparator,
-    DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
-import { ImageCropper } from "@/components/ui/image-cropper";
-import { Input } from "@/components/ui/input";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { ServerTagBadge } from "@/components/ui/ServerTagBadge";
-import { Textarea } from "@/components/ui/textarea";
+import { useState, useEffect, useCallback, useRef, memo } from "react";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { UnsavedChangesBar } from "@/components/ui/unsaved-changes-bar";
-import { useAuth } from "@/contexts/AuthContext";
 import { useServer } from "@/contexts/ServerContext";
-import { useSettingsDraft, type SettingsDraft } from "@/hooks/useSettingsDraft";
+import { useAuth } from "@/contexts/AuthContext";
+import { usePermissions } from "@/hooks/usePermissions";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { Input } from "@/components/ui/input";
+import { Textarea } from "@/components/ui/textarea";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ImageCropper } from "@/components/ui/image-cropper";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuCheckboxItem,
+  DropdownMenuTrigger,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+} from "@/components/ui/dropdown-menu";
+import { toast } from "sonner";
+import {
+  X,
+  Settings,
+  Shield,
+  Users,
+  Smile,
+  Sticker,
+  Link2,
+  Ban,
+  FileText,
+  Folder,
+  Camera, 
+  Check,
+  Trash2,
+  Plus,
+  Copy,
+  ExternalLink,
+  Crown,
+  Volume2,
+  MoreHorizontal,
+  AlertTriangle,
+  GripVertical,
+  Search,
+  Play,
+  Lock,
+  Mail,
+  Globe,
+  ClipboardList,
+  Pencil,
+  Bot,
+  Sparkles,
+} from "lucide-react";
+import { cn, cdnImage } from "@/lib/utils";
 import { ROLE_PERMISSION_CATEGORIES } from "@/lib/constants/rolePermissions";
 import { hasPermissionBit, setPermissionBit } from "@/lib/roles/bitfield";
-import { cn } from "@/lib/utils";
-import {
-    AlertTriangle,
-    Ban,
-    Camera,
-    Check,
-    Copy,
-    Crown,
-    ExternalLink,
-    FileText,
-    Folder,
-    GripVertical,
-    Link2,
-    Loader2,
-    MoreHorizontal,
-    Play,
-    Plus,
-    Search,
-    Settings,
-    Shield,
-    Smile,
-    Sticker,
-    Tag,
-    Trash2,
-    Users,
-    Volume2,
-    X,
-} from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
-import { toast } from "sonner";
+import { useSettingsDraft, type SettingsDraft } from "@/hooks/useSettingsDraft";
+import { UnsavedChangesBar } from "@/components/ui/unsaved-changes-bar";
+import { AudioTrimmerDialog } from "@/components/dialogs/AudioTrimmerDialog";
+import { T, useGT } from "gt-next";
+import { Loader } from "@/components/ui/Loader";
 
 // Helper to get audio duration from a File
 function getAudioDuration(file: File): Promise<number> {
@@ -69,6 +76,29 @@ function getAudioDuration(file: File): Promise<number> {
   });
 }
 
+const ColorInput = memo(function ColorInput({
+  value,
+  onChange,
+  disabled,
+}: {
+  value: string;
+  onChange: (v: string) => void;
+  disabled?: boolean;
+}) {
+  const [localColor, setLocalColor] = useState(value);
+  useEffect(() => { setLocalColor(value); }, [value]);
+  return (
+    <input
+      type="color"
+      value={localColor}
+      onChange={(e) => setLocalColor(e.target.value)}
+      onBlur={() => onChange(localColor)}
+      disabled={disabled}
+      className="w-10 h-10 p-1 rounded bg-[#0a0a0a] border border-[#222222] disabled:opacity-60 cursor-pointer"
+    />
+  );
+});
+
 interface ServerSettingsDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -76,7 +106,6 @@ interface ServerSettingsDialogProps {
 
 type SettingsTab =
   | "overview"
-  | "server-tag"
   | "roles"
   | "emoji"
   | "stickers"
@@ -89,7 +118,10 @@ type SettingsTab =
   | "moderation"
   | "safety"
   | "members"
-  | "channels";
+  | "channels"
+  | "access"
+  | "applications"
+  | "app_discovery";
 
 /** Tabs whose content is a multi-column / table layout and needs full width. */
 const WIDE_SETTINGS_TABS = new Set<SettingsTab>([
@@ -161,7 +193,7 @@ interface ServerMember {
 }
 
 interface ServerEmoji {
-  _id: string;
+  id: string;
   name: string;
   imageUrl: string;
   animated: boolean;
@@ -174,7 +206,7 @@ interface ServerChannel {
 }
 
 interface ServerSticker {
-  _id: string;
+  id: string;
   name: string;
   description?: string;
   imageUrl: string;
@@ -193,9 +225,28 @@ interface AuditLogEntry {
   };
 }
 
+interface ServerApplication {
+  id: string;
+  user: {
+    id: string;
+    username: string;
+    displayName?: string;
+    avatar?: string;
+    createdAt: string;
+  };
+  status: "pending" | "approved" | "rejected" | "interviewed";
+  answers: { question: string; answer: string }[];
+  createdAt: string;
+  processedAt?: string;
+  rejectionReason?: string;
+}
+
 export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialogProps) {
   const { currentServer, fetchServers, channels } = useServer();
+  const gt = useGT();
   const { user } = useAuth();
+  const { can, isAdmin, loading: permsLoading } = usePermissions(currentServer?.id);
+  const canManageServer = can("MANAGE_SERVER") || isAdmin;
   const [activeTab, setActiveTab] = useState<SettingsTab>("overview");
   const [isSaving, setIsSaving] = useState(false);
   const iconInputRef = useRef<HTMLInputElement>(null);
@@ -247,17 +298,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [isReorderingRoles, setIsReorderingRoles] = useState(false);
   const [invites, setInvites] = useState<Invite[]>([]);
   // Vanity URL (partnered servers)
-  const [vanityInfo, setVanityInfo] = useState<{ code: string | null; uses: number; isPartnered: boolean } | null>(null);
+  const [vanityInfo, setVanityInfo] = useState<{ code: string | null; uses: number; isPartnered: boolean; lockToVanity: boolean } | null>(null);
   const [vanityDraft, setVanityDraft] = useState("");
   const [isSavingVanity, setIsSavingVanity] = useState(false);
   const [vanityError, setVanityError] = useState<string | null>(null);
-  // Server Tag state
-  const [tagText, setTagText] = useState("");
-  const [tagIcon, setTagIcon] = useState<string | null>(null);
-  const [tagAllowJoin, setTagAllowJoin] = useState(true);
-  const [isSavingTag, setIsSavingTag] = useState(false);
-  const [isUploadingTagIcon, setIsUploadingTagIcon] = useState(false);
-  const tagIconInputRef = useRef<HTMLInputElement>(null);
+  const [isTogglingLock, setIsTogglingLock] = useState(false);
   const [bans, setBans] = useState<BannedUser[]>([]);
   const [members, setMembers] = useState<ServerMember[]>([]);
   const [memberSearch, setMemberSearch] = useState("");
@@ -265,6 +310,10 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [stickers, setStickers] = useState<ServerSticker[]>([]);
   const [emojiSearch, setEmojiSearch] = useState("");
   const [stickerSearch, setStickerSearch] = useState("");
+  const [renamingEmojiId, setRenamingEmojiId] = useState<string | null>(null);
+  const [emojiRenameValue, setEmojiRenameValue] = useState("");
+  const [renamingStickerId, setRenamingStickerId] = useState<string | null>(null);
+  const [stickerRenameValue, setStickerRenameValue] = useState("");
   const [soundboardSounds, setSoundboardSounds] = useState<{ _id: string; name: string; url: string; emoji: string }[]>([]);
   const [isUploadingSound, setIsUploadingSound] = useState(false);
   const [trimmerOpen, setTrimmerOpen] = useState(false);
@@ -274,6 +323,84 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [auditLogs, setAuditLogs] = useState<AuditLogEntry[]>([]);
   const [textChannels, setTextChannels] = useState<ServerChannel[]>([]);
   const [isLoading, setIsLoading] = useState(false);
+  const [pendingAppCount, setPendingAppCount] = useState(0);
+  const [applications, setApplications] = useState<ServerApplication[]>([]);
+  const [applicationFilter, setApplicationFilter] = useState<"all" | "pending" | "approved" | "rejected" | "interviewed">("all");
+  const [discoverableApps, setDiscoverableApps] = useState<any[]>([]);
+  const [appSearch, setAppSearch] = useState("");
+
+  const [isSyncingDiscord, setIsSyncingDiscord] = useState(false);
+  const [isTriggeringTwitch, setIsTriggeringTwitch] = useState(false);
+  const [isTriggeringYoutube, setIsTriggeringYoutube] = useState(false);
+  const [isTriggeringDiscord, setIsTriggeringDiscord] = useState(false);
+
+  const handleDiscordSync = async () => {
+    if (!currentServer) return;
+    setIsSyncingDiscord(true);
+    try {
+      const mode = draftString("integrations.discordMode", "add");
+      const res = await fetch(`/api/servers/${currentServer.id}/integrations/discord/sync`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ mode }),
+      });
+      if (res.ok) {
+        const data = await res.json();
+        toast.success(`Synced Discord channels successfully! ${gt("Mode")}: ${data.details.mode}. ${gt("Created")}: ${data.details.created}, ${gt("Linked")}: ${data.details.linked}, ${gt("Deleted")}: ${data.details.deleted}.`);
+        await fetchServers();
+      } else {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || gt("Failed to sync Discord channels"));
+      }
+    } catch {
+      toast.error(gt("Failed to sync Discord channels"));
+    } finally {
+      setIsSyncingDiscord(false);
+    }
+  };
+
+  const handleMockTrigger = async (type: "twitch" | "youtube" | "discord") => {
+    if (!currentServer) return;
+    let channelId = "";
+    if (type === "twitch") {
+      channelId = draftString("integrations.twitchNotificationChannelId", "");
+      setIsTriggeringTwitch(true);
+    } else if (type === "youtube") {
+      channelId = draftString("integrations.youtubeNotificationChannelId", "");
+      setIsTriggeringYoutube(true);
+    } else if (type === "discord") {
+      channelId = textChannels[0]?.id || "";
+      setIsTriggeringDiscord(true);
+    }
+
+    if (!channelId) {
+      toast.error(gt("Please configure and select a notification channel first"));
+      setIsTriggeringTwitch(false);
+      setIsTriggeringYoutube(false);
+      setIsTriggeringDiscord(false);
+      return;
+    }
+
+    try {
+      const res = await fetch(`/api/servers/${currentServer.id}/integrations/${type}/mock-trigger`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ channelId }),
+      });
+      if (res.ok) {
+        toast.success(gt("Mock alert triggered successfully!"));
+      } else {
+        const err = await res.json().catch(() => null);
+        toast.error(err?.error || gt("Failed to trigger mock alert"));
+      }
+    } catch {
+      toast.error(gt("Failed to trigger mock alert"));
+    } finally {
+      setIsTriggeringTwitch(false);
+      setIsTriggeringYoutube(false);
+      setIsTriggeringDiscord(false);
+    }
+  };
 
   // Emoji upload refs
   const emojiInputRef = useRef<HTMLInputElement>(null);
@@ -315,19 +442,27 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         "safety.antiSpam": true,
         "safety.mentionSpamLimit": 5,
         "integrations.discord": false,
+        "integrations.discordRestrictUnconsented": false,
+        "integrations.discordGuildId": "",
+        "integrations.discordMode": "add",
         "integrations.twitch": false,
+        "integrations.twitchChannel": "",
+        "integrations.twitchNotificationChannelId": "",
         "integrations.youtube": false,
+        "integrations.youtubeChannel": "",
+        "integrations.youtubeNotificationChannelId": "",
         "integrations.webhooks": false,
         "soundboard.enabled": true,
         "soundboard.volume": 100,
+        "access.joinMode": "invite_only",
+        isAgeGated: false,
+        discoveryDescription: "",
+        discoveryCategories: [],
       };
       try {
-        const [settingsRes, tagRes] = await Promise.all([
-          fetch(`/api/servers/${currentServer.id}/settings`),
-          fetch(`/api/servers/${currentServer.id}/tag`),
-        ]);
-        if (settingsRes.ok) {
-          const data = await settingsRes.json();
+        const res = await fetch(`/api/servers/${currentServer.id}/settings`);
+        if (res.ok) {
+          const data = await res.json();
           const s = data.settings || {};
           base["widget.enabled"] = s.widget?.enabled ?? true;
           base["widget.channelId"] = s.widget?.channelId || null;
@@ -338,19 +473,22 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           base["safety.antiSpam"] = s.safety?.antiSpam ?? true;
           base["safety.mentionSpamLimit"] = s.safety?.mentionSpamLimit ?? 5;
           base["integrations.discord"] = Boolean(s.integrations?.discord);
+          base["integrations.discordRestrictUnconsented"] = Boolean(s.integrations?.discordRestrictUnconsented);
+          base["integrations.discordGuildId"] = s.integrations?.discordGuildId || "";
+          base["integrations.discordMode"] = s.integrations?.discordMode || "add";
           base["integrations.twitch"] = Boolean(s.integrations?.twitch);
+          base["integrations.twitchChannel"] = s.integrations?.twitchChannel || "";
+          base["integrations.twitchNotificationChannelId"] = s.integrations?.twitchNotificationChannelId || "";
           base["integrations.youtube"] = Boolean(s.integrations?.youtube);
+          base["integrations.youtubeChannel"] = s.integrations?.youtubeChannel || "";
+          base["integrations.youtubeNotificationChannelId"] = s.integrations?.youtubeNotificationChannelId || "";
           base["integrations.webhooks"] = Boolean(s.integrations?.webhooks);
           base["soundboard.enabled"] = s.soundboard?.enabled ?? true;
           base["soundboard.volume"] = s.soundboard?.volume ?? 100;
-        }
-        if (tagRes.ok) {
-          const td = await tagRes.json();
-          if (!cancelled) {
-            setTagText(td.tagText ?? "");
-            setTagIcon(td.tagIcon ?? null);
-            setTagAllowJoin(td.tagAllowJoin ?? true);
-          }
+          base["access.joinMode"] = s.access?.joinMode || "invite_only";
+          base.isAgeGated = Boolean(s.isAgeGated);
+          base.discoveryDescription = s.discoveryDescription || "";
+          base.discoveryCategories = s.discoveryCategories || [];
         }
       } catch {
         // Defaults stay in place; a failed load must not block the dialog
@@ -403,16 +541,6 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       setIsLoading(true);
       try {
         switch (activeTab) {
-          case "server-tag": {
-            const tagRes = await fetch(`/api/servers/${currentServer.id}/tag`);
-            if (tagRes.ok) {
-              const d = await tagRes.json();
-              setTagText(d.tagText ?? "");
-              setTagIcon(d.tagIcon ?? null);
-              setTagAllowJoin(d.tagAllowJoin ?? true);
-            }
-            break;
-          }
           case "roles":
             await fetchRolesData();
             break;
@@ -431,6 +559,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 code: data.code ?? null,
                 uses: data.uses ?? 0,
                 isPartnered: Boolean(data.isPartnered),
+                lockToVanity: Boolean(data.lockToVanity),
               });
               setVanityDraft(data.code ?? "");
               setVanityError(null);
@@ -451,14 +580,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             const emojisRes = await fetch(`/api/servers/${currentServer.id}/emojis`);
             if (emojisRes.ok) {
               const data = await emojisRes.json();
-              setEmojis(data.emojis || []);
+              setEmojis((data.emojis || []).map((e: any) => ({ id: e.id || e._id, name: e.name, imageUrl: e.imageUrl || e.url, animated: e.animated })));
             }
             break;
           case "stickers":
             const stickersRes = await fetch(`/api/servers/${currentServer.id}/stickers`);
             if (stickersRes.ok) {
               const data = await stickersRes.json();
-              setStickers(data.stickers || []);
+              setStickers((data.stickers || []).map((s: any) => ({ id: s.id || s._id, name: s.name, description: s.description, imageUrl: s.imageUrl || s.url, tags: s.tags })));
             }
             break;
           case "audit-log":
@@ -478,6 +607,22 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             }
             break;
           }
+          case "applications": {
+            const appsRes = await fetch(`/api/servers/${currentServer.id}/applications?status=${applicationFilter}`);
+            if (appsRes.ok) {
+              const appsData = await appsRes.json();
+              setApplications(appsData.applications || []);
+            }
+            break;
+          }
+          case "app_discovery": {
+            const discoverRes = await fetch(`/api/developers/discoverable-apps${appSearch ? `?search=${encodeURIComponent(appSearch)}` : ""}`);
+            if (discoverRes.ok) {
+              const discoverData = await discoverRes.json();
+              setDiscoverableApps(discoverData.apps || []);
+            }
+            break;
+          }
         }
       } catch (error) {
         console.error("Failed to fetch data:", error);
@@ -487,14 +632,29 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     };
 
     fetchData();
-  }, [activeTab, open, currentServer, fetchMembersData, fetchRolesData]);
+  }, [activeTab, open, currentServer, fetchMembersData, fetchRolesData, applicationFilter]);
 
   // Reset role draft init ref when dialog closes (so opening again starts fresh)
   useEffect(() => {
     if (!open) {
       roleDraftInitIdRef.current = null;
+      return;
     }
-  }, [open]);
+    if (!currentServer) return;
+
+    const fetchAppCount = async () => {
+      try {
+        const res = await fetch(`/api/servers/${currentServer.id}/applications/count`);
+        if (res.ok) {
+          const data = await res.json();
+          setPendingAppCount(data.count ?? 0);
+        }
+      } catch {
+        setPendingAppCount(0);
+      }
+    };
+    void fetchAppCount();
+  }, [open, currentServer]);
 
   // Track the last role ID we initialized the draft for, so updates to the
   // roles list (e.g. after a member role assignment) don't wipe unsaved edits.
@@ -539,13 +699,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
+      toast.error(gt("Please select an image file"));
       return;
     }
 
     // Validate file size (8MB max)
     if (file.size > 8 * 1024 * 1024) {
-      toast.error("Image must be less than 8MB");
+      toast.error(gt("Image must be less than 8MB"));
       return;
     }
 
@@ -569,12 +729,46 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     if (!file || !currentServer) return;
 
     if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
+      toast.error(gt("Please select an image file"));
+      return;
+    }
+
+    // GIFs bypass the cropper to preserve animation
+    if (file.type === "image/gif") {
+      if (file.size > 50 * 1024 * 1024) {
+        toast.error(gt("GIF must be less than 50MB"));
+        return;
+      }
+      setIsUploadingBanner(true);
+      const formData = new FormData();
+      formData.append("file", file, file.name);
+      try {
+        const response = await fetch(`/api/upload/server/${currentServer.id}/banner`, {
+          method: "POST",
+          body: formData,
+        });
+        if (response.ok) {
+          const data = await response.json();
+          setServerBanner(data.url);
+          toast.success(gt("Server banner updated!"));
+          await fetchServers();
+        } else {
+          const data = await response.json();
+          toast.error(data.error || gt("Failed to upload banner"));
+        }
+      } catch {
+        toast.error(gt("Failed to upload banner"));
+      } finally {
+        setIsUploadingBanner(false);
+      }
+      if (bannerInputRef.current) {
+        bannerInputRef.current.value = "";
+      }
       return;
     }
 
     if (file.size > 8 * 1024 * 1024) {
-      toast.error("Image must be less than 8MB");
+      toast.error(gt("Image must be less than 8MB"));
       return;
     }
 
@@ -616,14 +810,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       if (response.ok) {
         const data = await response.json();
         setImage(data.url);
-        toast.success(`Server ${cropperType} updated!`);
+        toast.success(gt("Server {type} updated!", { type: cropperType }));
         await fetchServers();
       } else {
         const data = await response.json();
-        toast.error(data.error || `Failed to upload ${cropperType}`);
+        toast.error(data.error || gt("Failed to upload {type}", { type: cropperType }));
       }
     } catch {
-      toast.error(`Failed to upload ${cropperType}`);
+      toast.error(gt("Failed to upload {type}", { type: cropperType }));
     } finally {
       setUploading(false);
     }
@@ -631,26 +825,28 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
   // Human-readable labels for server-side field errors
   const FIELD_LABELS: Record<string, string> = {
-    name: "Server name",
-    description: "Description",
-    systemChannelId: "System messages channel",
-    rulesChannelId: "Rules channel",
-    afkChannelId: "AFK channel",
-    afkTimeout: "AFK timeout",
-    "widget.enabled": "Widget",
-    "widget.channelId": "Widget invite channel",
-    "moderation.verificationLevel": "Verification level",
-    "moderation.explicitContentFilter": "Content filter",
-    "moderation.require2FA": "2FA requirement",
-    "safety.raidProtection": "Raid protection",
-    "safety.antiSpam": "Anti-spam",
-    "safety.mentionSpamLimit": "Mention spam limit",
-    "integrations.discord": "Discord integration",
-    "integrations.twitch": "Twitch integration",
-    "integrations.youtube": "YouTube integration",
-    "integrations.webhooks": "Webhooks integration",
-    "soundboard.enabled": "Soundboard",
-    "soundboard.volume": "Soundboard volume",
+    name: gt("Server name"),
+    description: gt("Description"),
+    systemChannelId: gt("System messages channel"),
+    rulesChannelId: gt("Rules channel"),
+    afkChannelId: gt("AFK channel"),
+    afkTimeout: gt("AFK timeout"),
+    "widget.enabled": gt("Widget"),
+    "widget.channelId": gt("Widget invite channel"),
+    "moderation.verificationLevel": gt("Verification level"),
+    "moderation.explicitContentFilter": gt("Content filter"),
+    "moderation.require2FA": gt("2FA requirement"),
+    "safety.raidProtection": gt("Raid protection"),
+    "safety.antiSpam": gt("Anti-spam"),
+    "safety.mentionSpamLimit": gt("Mention spam limit"),
+    "integrations.discord": gt("Discord integration"),
+    "integrations.twitch": gt("Twitch integration"),
+    "integrations.youtube": gt("YouTube integration"),
+    "integrations.webhooks": gt("Webhooks integration"),
+    "soundboard.enabled": gt("Soundboard"),
+    "soundboard.volume": gt("Soundboard volume"),
+    "access.joinMode": gt("Server access"),
+    isAgeGated: gt("Age-restricted server"),
   };
 
   // One atomic bulk save for every dirty field across all settings tabs.
@@ -668,21 +864,21 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       if (response.ok) {
         settingsDraft.markSaved();
-        toast.success("Settings saved");
+        toast.success(gt("Settings saved"));
         await fetchServers();
       } else if (response.status === 400 && data?.fieldErrors) {
         setFieldErrors(data.fieldErrors as Record<string, string>);
         const entries = Object.entries(data.fieldErrors as Record<string, string>);
         const [firstField, firstMessage] = entries[0];
         toast.error(`${FIELD_LABELS[firstField] || firstField}: ${firstMessage}`, {
-          description: entries.length > 1 ? `${entries.length - 1} more field${entries.length > 2 ? "s" : ""} need attention` : undefined,
+          description: entries.length > 1 ? gt("{count} more fields need attention", { count: entries.length - 1 }) : undefined,
         });
       } else {
-        toast.error(data?.error || "Failed to save settings");
+        toast.error(data?.error || gt("Failed to save settings"));
       }
     } catch (error) {
       console.error("Failed to save settings:", error);
-      toast.error("Failed to save settings. Check your connection and try again.");
+      toast.error(gt("Failed to save settings. Check your connection and try again."));
     } finally {
       setIsSaving(false);
     }
@@ -696,7 +892,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   // Closing with unsaved changes requires an explicit choice
   const handleRequestClose = useCallback(() => {
     if (settingsDraft.isDirty) {
-      const discard = window.confirm("You have unsaved changes. Discard them and close?");
+      const discard = window.confirm(gt("You have unsaved changes. Discard them and close?"));
       if (!discard) return;
       settingsDraft.reset();
       setFieldErrors({});
@@ -736,13 +932,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           return [...deduped, createdRole].sort((a, b) => b.position - a.position);
         });
         setSelectedRoleId(createdRole.id);
-        toast.success("Role created!");
+        toast.success(gt("Role created!"));
       } else {
-        toast.error("Failed to create role");
+        toast.error(gt("Failed to create role"));
       }
     } catch (error) {
       console.error("Failed to create role:", error);
-      toast.error("Failed to create role");
+      toast.error(gt("Failed to create role"));
     }
   };
 
@@ -760,14 +956,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         } else {
           setRoles(prev => prev.filter(r => r.id !== roleId));
         }
-        toast.success("Role deleted");
+        toast.success(gt("Role deleted"));
       } else {
         const data = await response.json();
-        toast.error(data.error || "Failed to delete role");
+        toast.error(data.error || gt("Failed to delete role"));
       }
     } catch (error) {
       console.error("Failed to delete role:", error);
-      toast.error("Failed to delete role");
+      toast.error(gt("Failed to delete role"));
     }
   };
 
@@ -816,14 +1012,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       if (!response.ok) {
         const data = await response.json().catch(() => null);
-        throw new Error(data?.error || "Failed to reorder roles");
+        throw new Error(data?.error || gt("Failed to reorder roles"));
       }
 
       const data = await response.json();
       setRoles((data.roles || []) as Role[]);
     } catch (error) {
       setRoles(previous);
-      toast.error(error instanceof Error ? error.message : "Failed to reorder roles");
+      toast.error(error instanceof Error ? error.message : gt("Failed to reorder roles"));
     } finally {
       setIsReorderingRoles(false);
       setDraggingRoleId(null);
@@ -869,9 +1065,9 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       );
       // Re-sync draft from saved data by resetting the init ref
       roleDraftInitIdRef.current = null;
-      toast.success("Role updated");
+      toast.success(gt("Role updated"));
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Failed to update role");
+      toast.error(error instanceof Error ? error.message : gt("Failed to update role"));
     } finally {
       setIsSavingRole(false);
     }
@@ -937,7 +1133,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     } catch (error) {
       setMembers(previousMembers);
       setRoles(previousRoles);
-      toast.error(error instanceof Error ? error.message : "Failed to update member roles");
+      toast.error(error instanceof Error ? error.message : gt("Failed to update member roles"));
     }
   };
 
@@ -947,13 +1143,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
     // Validate file type
     if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
+      toast.error(gt("Please select an image file"));
       return;
     }
 
     // Validate file size (256KB max for emoji)
     if (file.size > 256 * 1024) {
-      toast.error("Emoji must be less than 256KB");
+      toast.error(gt("Emoji must be less than 256KB"));
       return;
     }
 
@@ -990,15 +1186,16 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       if (response.ok) {
         const data = await response.json();
-        setEmojis(prev => [...prev, data.emoji]);
-        toast.success("Emoji uploaded!");
+        const e = data.emoji;
+        setEmojis(prev => [...prev, { id: e.id || e._id, name: e.name, imageUrl: e.imageUrl || e.url, animated: e.animated }]);
+        toast.success(gt("Emoji uploaded!"));
       } else {
         const data = await response.json();
-        toast.error(data.error || "Failed to create emoji");
+        toast.error(data.error || gt("Failed to create emoji"));
       }
     } catch (error) {
       console.error("Failed to upload emoji:", error);
-      toast.error("Failed to upload emoji");
+      toast.error(gt("Failed to upload emoji"));
     } finally {
       setIsUploadingEmoji(false);
       if (emojiInputRef.current) {
@@ -1015,14 +1212,60 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       });
 
       if (response.ok) {
-        setEmojis(prev => prev.filter(e => e._id !== emojiId));
-        toast.success("Emoji deleted");
+        setEmojis(prev => prev.filter(e => e.id !== emojiId));
+        toast.success(gt("Emoji deleted"));
       } else {
-        toast.error("Failed to delete emoji");
+        toast.error(gt("Failed to delete emoji"));
       }
     } catch (error) {
       console.error("Failed to delete emoji:", error);
-      toast.error("Failed to delete emoji");
+      toast.error(gt("Failed to delete emoji"));
+    }
+  };
+
+  const handleRenameEmoji = async (emojiId: string) => {
+    if (!currentServer || !emojiRenameValue.trim()) return;
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/emojis/${emojiId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: emojiRenameValue.trim() }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setEmojis(prev => prev.map(e => e.id === emojiId ? { ...e, name: data.emoji.name } : e));
+        toast.success(gt("Emoji renamed"));
+        setRenamingEmojiId(null);
+        setEmojiRenameValue("");
+      } else {
+        const data = await response.json().catch(() => null);
+        toast.error(data?.error || gt("Failed to rename emoji"));
+      }
+    } catch {
+      toast.error(gt("Failed to rename emoji"));
+    }
+  };
+
+  const handleRenameSticker = async (stickerId: string) => {
+    if (!currentServer || !stickerRenameValue.trim()) return;
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/stickers/${stickerId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: stickerRenameValue.trim() }),
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setStickers(prev => prev.map(s => s.id === stickerId ? { ...s, name: data.sticker.name } : s));
+        toast.success(gt("Sticker renamed"));
+        setRenamingStickerId(null);
+        setStickerRenameValue("");
+      } else {
+        const data = await response.json().catch(() => null);
+        toast.error(data?.error || gt("Failed to rename sticker"));
+      }
+    } catch {
+      toast.error(gt("Failed to rename sticker"));
     }
   };
 
@@ -1031,12 +1274,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     if (!file || !currentServer) return;
 
     if (!file.type.startsWith("image/")) {
-      toast.error("Please select an image file");
+      toast.error(gt("Please select an image file"));
       return;
     }
 
     if (file.size > 512 * 1024) {
-      toast.error("Sticker must be less than 512KB");
+      toast.error(gt("Sticker must be less than 512KB"));
       return;
     }
 
@@ -1069,15 +1312,16 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       if (createRes.ok) {
         const data = await createRes.json();
-        setStickers((prev) => [data.sticker, ...prev]);
-        toast.success("Sticker uploaded");
+        const s = data.sticker;
+        setStickers((prev) => [{ id: s.id || s._id, name: s.name, description: s.description, imageUrl: s.imageUrl || s.url, tags: s.tags }, ...prev]);
+        toast.success(gt("Sticker uploaded"));
       } else {
         const data = await createRes.json();
-        toast.error(data.error || "Failed to save sticker");
+        toast.error(data.error || gt("Failed to save sticker"));
       }
     } catch (error) {
       console.error("Failed to upload sticker:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to upload sticker");
+      toast.error(error instanceof Error ? error.message : gt("Failed to upload sticker"));
     } finally {
       setIsUploadingSticker(false);
       if (stickerInputRef.current) {
@@ -1093,14 +1337,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         method: "DELETE",
       });
       if (response.ok) {
-        setStickers((prev) => prev.filter((sticker) => sticker._id !== stickerId));
-        toast.success("Sticker deleted");
+        setStickers((prev) => prev.filter((sticker) => sticker.id !== stickerId));
+        toast.success(gt("Sticker deleted"));
       } else {
-        toast.error("Failed to delete sticker");
+        toast.error(gt("Failed to delete sticker"));
       }
     } catch (error) {
       console.error("Failed to delete sticker:", error);
-      toast.error("Failed to delete sticker");
+      toast.error(gt("Failed to delete sticker"));
     }
   };
 
@@ -1138,14 +1382,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       if (response.ok) {
         const data = await response.json();
         setSoundboardSounds((prev) => [...prev, data.sound]);
-        toast.success("Sound added!");
+        toast.success(gt("Sound added!"));
       } else {
         const data = await response.json();
-        toast.error(data.error || "Failed to add sound");
+        toast.error(data.error || gt("Failed to add sound"));
       }
     } catch (error) {
       console.error("Failed to upload sound:", error);
-      toast.error(error instanceof Error ? error.message : "Failed to upload sound");
+      toast.error(error instanceof Error ? error.message : gt("Failed to upload sound"));
     } finally {
       setIsUploadingSound(false);
       if (soundInputRef.current) {
@@ -1159,12 +1403,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     if (!file || !currentServer) return;
 
     if (!file.type.startsWith("audio/")) {
-      toast.error("File must be an audio file");
+      toast.error(gt("File must be an audio file"));
       return;
     }
 
     if (file.size > 20 * 1024 * 1024) {
-      toast.error("Sound must be less than 20MB");
+      toast.error(gt("Sound must be less than 20MB"));
       return;
     }
 
@@ -1190,12 +1434,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       });
       if (response.ok) {
         setSoundboardSounds((prev) => prev.filter((s) => s._id !== soundId));
-        toast.success("Sound deleted");
+        toast.success(gt("Sound deleted"));
       } else {
-        toast.error("Failed to delete sound");
+        toast.error(gt("Failed to delete sound"));
       }
     } catch {
-      toast.error("Failed to delete sound");
+      toast.error(gt("Failed to delete sound"));
     }
   };
 
@@ -1203,7 +1447,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     const audio = new Audio(sound.url);
     // Audio.volume caps at 1.0; values above 100% previously threw IndexSizeError
     audio.volume = Math.min(Math.max(draftNumber("soundboard.volume", 100), 0) / 100, 1);
-    audio.play().catch(() => toast.error("Failed to play sound"));
+    audio.play().catch(() => toast.error(gt("Failed to play sound")));
     setPlayingSoundId(sound._id);
     audio.onended = () => setPlayingSoundId(null);
   };
@@ -1223,13 +1467,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       if (response.ok) {
         const data = await response.json();
         setInvites(prev => [data.invite, ...prev]);
-        toast.success("Invite created!");
+        toast.success(gt("Invite created!"));
       } else {
-        toast.error("Failed to create invite");
+        toast.error(gt("Failed to create invite"));
       }
     } catch (error) {
       console.error("Failed to create invite:", error);
-      toast.error("Failed to create invite");
+      toast.error(gt("Failed to create invite"));
     }
   };
 
@@ -1240,10 +1484,10 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         method: "DELETE",
       });
       setInvites(prev => prev.filter(i => i.code !== code));
-      toast.success("Invite deleted");
+      toast.success(gt("Invite deleted"));
     } catch (error) {
       console.error("Failed to delete invite:", error);
-      toast.error("Failed to delete invite");
+      toast.error(gt("Failed to delete invite"));
     }
   };
 
@@ -1254,17 +1498,17 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         method: "DELETE",
       });
       setBans(prev => prev.filter(b => b.id !== userId));
-      toast.success("User unbanned");
+      toast.success(gt("User unbanned"));
     } catch (error) {
       console.error("Failed to unban user:", error);
-      toast.error("Failed to unban user");
+      toast.error(gt("Failed to unban user"));
     }
   };
 
   const handleDeleteServer = async () => {
     if (!currentServer) return;
     const confirmed = window.confirm(
-      `Are you sure you want to delete "${currentServer.name}"? This action cannot be undone.`
+      gt("Are you sure you want to delete \"{name}\"? This action cannot be undone.", { name: currentServer.name })
     );
     if (!confirmed) return;
 
@@ -1274,7 +1518,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       });
 
       if (response.ok) {
-        toast.success("Server deleted");
+        toast.success(gt("Server deleted"));
         onOpenChange(false);
         window.location.href = "/channels/me";
       }
@@ -1285,10 +1529,74 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
   const copyToClipboard = (text: string) => {
     navigator.clipboard.writeText(text);
-    toast.success("Copied to clipboard!");
+    toast.success(gt("Copied to clipboard!"));
+  };
+
+  const handleReviewApplication = async (
+    applicationId: string,
+    status: "approved" | "rejected" | "interviewed",
+    rejectionReason?: string
+  ) => {
+    if (!currentServer) return;
+    try {
+      const response = await fetch(`/api/servers/${currentServer.id}/applications/${applicationId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status, rejectionReason }),
+      });
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        toast.error(data?.error || gt("Failed to update application"));
+        return;
+      }
+
+      setApplications((prev) =>
+        prev.map((app) =>
+          app.id === applicationId
+            ? { ...app, status, processedAt: new Date().toISOString(), rejectionReason }
+            : app
+        )
+      );
+      if (status === "approved") {
+        setPendingAppCount((prev) => Math.max(0, prev - 1));
+        toast.success(gt("Application approved. User has been added to the server."));
+      } else if (status === "rejected") {
+        setPendingAppCount((prev) => Math.max(0, prev - 1));
+        toast.success(gt("Application rejected."));
+      } else {
+        toast.success(gt("Application marked for interview."));
+      }
+    } catch (error) {
+      console.error("Failed to review application:", error);
+      toast.error(gt("Failed to update application"));
+    }
   };
 
   if (!open || !currentServer) return null;
+
+  // Permission guard: non-admin users cannot access server settings UI
+  if (!permsLoading && !canManageServer) {
+    return (
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Access denied"
+        className="fixed inset-0 z-50 bg-[#0a0a0a] flex items-center justify-center"
+      >
+        <div className="text-center p-8">
+          <p className="text-lg font-semibold text-white mb-2"><T>Access Denied</T></p>
+          <p className="text-sm text-[#888] mb-4"><T>You don&apos;t have permission to view server settings.</T></p>
+          <button
+            onClick={() => onOpenChange(false)}
+            className="px-4 py-2 rounded-lg bg-[var(--app-accent)] text-white text-sm hover:brightness-110 transition"
+          >
+            <T>Close</T>
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   const isOwner = currentServer.ownerId === user?.id;
 
@@ -1296,30 +1604,37 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     {
       title: currentServer.name,
       items: [
-        { id: "overview" as SettingsTab, label: "Overview", icon: Settings },
-        { id: "server-tag" as SettingsTab, label: "Server Tag", icon: Tag },
-        { id: "roles" as SettingsTab, label: "Roles", icon: Shield },
-        { id: "emoji" as SettingsTab, label: "Emoji", icon: Smile },
-        { id: "stickers" as SettingsTab, label: "Stickers", icon: Sticker },
-        { id: "soundboard" as SettingsTab, label: "Soundboard", icon: Volume2 },
-        { id: "widget" as SettingsTab, label: "Widget", icon: ExternalLink },
+        { id: "overview" as SettingsTab, label: gt("Overview"), icon: Settings },
+        { id: "roles" as SettingsTab, label: gt("Roles"), icon: Shield },
+        { id: "emoji" as SettingsTab, label: gt("Emoji"), icon: Smile },
+        { id: "stickers" as SettingsTab, label: gt("Stickers"), icon: Sticker },
+        { id: "soundboard" as SettingsTab, label: gt("Soundboard"), icon: Volume2 },
+        { id: "widget" as SettingsTab, label: gt("Widget"), icon: ExternalLink },
       ],
     },
     {
-      title: "Moderation",
+      title: gt("Moderation"),
       items: [
-        { id: "safety" as SettingsTab, label: "Safety Setup", icon: Shield },
-        { id: "moderation" as SettingsTab, label: "Moderation", icon: AlertTriangle },
-        { id: "audit-log" as SettingsTab, label: "Audit Log", icon: FileText },
-        { id: "bans" as SettingsTab, label: "Bans", icon: Ban },
+        { id: "safety" as SettingsTab, label: gt("Safety Setup"), icon: Shield },
+        { id: "moderation" as SettingsTab, label: gt("Moderation"), icon: AlertTriangle },
+        { id: "audit-log" as SettingsTab, label: gt("Audit Log"), icon: FileText },
+        { id: "bans" as SettingsTab, label: gt("Bans"), icon: Ban },
       ],
     },
     {
-      title: "User Management",
+      title: gt("User Management"),
       items: [
-        { id: "members" as SettingsTab, label: "Members", icon: Users },
-        { id: "invites" as SettingsTab, label: "Invites", icon: Link2 },
-        { id: "integrations" as SettingsTab, label: "Integrations", icon: Folder },
+        { id: "members" as SettingsTab, label: gt("Members"), icon: Users },
+        { id: "applications" as SettingsTab, label: gt("Applications"), icon: ClipboardList },
+        { id: "app_discovery" as SettingsTab, label: gt("App Discovery"), icon: Bot },
+        { id: "invites" as SettingsTab, label: gt("Invites"), icon: Link2 },
+        { id: "integrations" as SettingsTab, label: gt("Integrations"), icon: Folder },
+      ],
+    },
+    {
+      title: gt("Access"),
+      items: [
+        { id: "access" as SettingsTab, label: gt("Access"), icon: Lock },
       ],
     },
   ];
@@ -1327,8 +1642,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const renderOverview = () => (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Server Overview</h2>
-        <p className="text-sm text-[#888888]">Customize your server&apos;s identity</p>
+        <h2 className="text-xl font-bold text-white mb-1"><T>Server Overview</T></h2>
+        <p className="text-sm text-[#888888]"><T>Customize your server&apos;s identity</T></p>
       </div>
 
       {/* Hidden file inputs */}
@@ -1353,7 +1668,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         <div className="flex flex-col items-center gap-2">
           <div className="relative group">
             <Avatar className="w-24 h-24 rounded-2xl">
-              <AvatarImage src={serverIcon || undefined} />
+              <AvatarImage src={cdnImage(serverIcon || undefined)} />
               <AvatarFallback className="bg-[#8B5CF6] text-white text-3xl rounded-2xl">
                 {(draftString("name") || currentServer?.name || "?").charAt(0).toUpperCase()}
               </AvatarFallback>
@@ -1364,20 +1679,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-2xl disabled:cursor-not-allowed"
             >
               {isUploadingIcon ? (
-                <Loader2 className="w-8 h-8 text-white animate-spin" />
+                <Loader size={32} />
               ) : (
                 <Camera className="w-8 h-8 text-white" />
               )}
             </button>
           </div>
-          <span className="text-xs text-[#666666]">Server Icon</span>
+          <span className="text-xs text-[#666666]"><T>Server Icon</T></span>
         </div>
 
         {/* Banner */}
         <div className="flex-1">
           <div className="relative group aspect-[2/1] max-h-40 rounded-lg overflow-hidden bg-gradient-to-r from-[#8B5CF6] to-[#6366F1]">
             {serverBanner && (
-              <img src={serverBanner} alt="Banner" className="w-full h-full object-cover" />
+              <img src={cdnImage(serverBanner)} alt="Banner" className="w-full h-full object-cover" />
             )}
             <button
               onClick={() => bannerInputRef.current?.click()}
@@ -1385,20 +1700,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity disabled:cursor-not-allowed"
             >
               {isUploadingBanner ? (
-                <Loader2 className="w-8 h-8 text-white animate-spin" />
+                <Loader size={32} />
               ) : (
                 <Camera className="w-8 h-8 text-white" />
               )}
             </button>
           </div>
-          <span className="text-xs text-[#666666] mt-1 block">Server Banner</span>
+          <span className="text-xs text-[#666666] mt-1 block"><T>Server Banner</T></span>
         </div>
       </div>
 
       {/* Server Name */}
       <div>
         <label className="block text-sm font-medium text-[#888888] mb-2">
-          SERVER NAME
+          <T>SERVER NAME</T>
         </label>
         <Input
           value={draftString("name")}
@@ -1408,7 +1723,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             "bg-[#111111] border-[#222222] text-white",
             fieldErrors.name && "border-red-500 focus-visible:ring-red-500"
           )}
-          placeholder="Enter server name"
+          placeholder={gt("Enter server name")}
         />
         {fieldErrors.name && <p className="text-xs text-red-400 mt-1">{fieldErrors.name}</p>}
       </div>
@@ -1416,7 +1731,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       {/* Description */}
       <div>
         <label className="block text-sm font-medium text-[#888888] mb-2">
-          SERVER DESCRIPTION
+          <T>SERVER DESCRIPTION</T>
         </label>
         <Textarea
           value={draftString("description")}
@@ -1426,7 +1741,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             "bg-[#111111] border-[#222222] text-white min-h-[100px]",
             fieldErrors.description && "border-red-500 focus-visible:ring-red-500"
           )}
-          placeholder="Describe what your server is about"
+          placeholder={gt("Describe what your server is about")}
         />
         {fieldErrors.description && <p className="text-xs text-red-400 mt-1">{fieldErrors.description}</p>}
       </div>
@@ -1434,7 +1749,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       {/* System Messages Channel */}
       <div>
         <label className="block text-sm font-medium text-[#888888] mb-2">
-          SYSTEM MESSAGES CHANNEL
+          <T>SYSTEM MESSAGES CHANNEL</T>
         </label>
         <select
           value={draftString("systemChannelId", "") || ""}
@@ -1442,7 +1757,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           aria-label="System messages channel"
           className="w-full h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white"
         >
-          <option value="">No system messages</option>
+          <option value="">{gt("No system messages")}</option>
           {textChannels.map((ch) => (
             <option key={ch.id} value={ch.id}>
               #{ch.name}
@@ -1450,14 +1765,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           ))}
         </select>
         <p className="text-xs text-[#666666] mt-1">
-          Where system messages like welcome messages are sent
+          <T>Where system messages like welcome messages are sent</T>
         </p>
       </div>
 
       {/* Rules Channel */}
       <div>
         <label className="block text-sm font-medium text-[#888888] mb-2">
-          RULES CHANNEL
+          <T>RULES CHANNEL</T>
         </label>
         <select
           value={draftString("rulesChannelId", "") || ""}
@@ -1465,7 +1780,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           aria-label="Rules channel"
           className="w-full h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white"
         >
-          <option value="">No rules channel</option>
+          <option value="">{gt("No rules channel")}</option>
           {textChannels.map((ch) => (
             <option key={ch.id} value={ch.id}>
               #{ch.name}
@@ -1473,20 +1788,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           ))}
         </select>
         <p className="text-xs text-[#666666] mt-1">
-          Display your server rules in Community servers
+          <T>Display your server rules in Community servers</T>
         </p>
       </div>
 
       {/* Danger Zone */}
       {isOwner && (
         <div className="pt-6 border-t border-[#222222]">
-          <h3 className="text-lg font-semibold text-red-500 mb-4">Danger Zone</h3>
+          <h3 className="text-lg font-semibold text-red-500 mb-4"><T>Danger Zone</T></h3>
           <button
             onClick={handleDeleteServer}
             className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/50 rounded-md flex items-center gap-2"
           >
             <Trash2 className="w-4 h-4" />
-            Delete Server
+            <T>Delete Server</T>
           </button>
         </div>
       )}
@@ -1512,21 +1827,21 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white mb-1">Roles</h2>
-          <p className="text-sm text-[#888888]">Manage role order, display, and permissions</p>
+          <h2 className="text-xl font-bold text-white mb-1"><T>Roles</T></h2>
+          <p className="text-sm text-[#888888]"><T>Manage role order, display, and permissions</T></p>
         </div>
         <button
           onClick={handleCreateRole}
           className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
-          Create Role
+          <T>Create Role</T>
         </button>
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <Loader size={32} />
         </div>
       ) : (
         <div className="grid grid-cols-1 lg:grid-cols-[280px_1fr] gap-6">
@@ -1539,7 +1854,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   type="text"
                   value={roleSearch}
                   onChange={(e) => setRoleSearch(e.target.value)}
-                  placeholder="Search roles..."
+                  placeholder={gt("Search roles...")}
                   className="w-full pl-9 pr-3 py-2 bg-[#111111] border border-[#222222] rounded-md text-sm text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
                 />
               </div>
@@ -1598,8 +1913,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               })}
             {isReorderingRoles && (
               <p className="text-xs text-[#888888] flex items-center gap-1.5">
-                <Loader2 className="w-3 h-3 animate-spin" />
-                Saving role order...
+                <Loader size={undefined} />
+                <T>Saving role order...</T>
               </p>
             )}
           </div>
@@ -1608,7 +1923,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <div className="rounded-lg bg-[#111111] border border-[#222222] flex flex-col max-h-[calc(100vh-220px)]">
             {!selectedRole || !roleDraft ? (
               <div className="flex items-center justify-center py-16 text-sm text-[#888888]">
-                Select a role to edit.
+                <T>Select a role to edit.</T>
               </div>
             ) : (
               <>
@@ -1617,19 +1932,19 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   <div className="w-4 h-4 rounded-full" style={{ backgroundColor: roleDraft.color || "#888888" }} />
                   <h3 className="text-lg text-white font-semibold">{selectedRole.name}</h3>
                   {selectedRole.isDefault && (
-                    <span className="text-xs px-2 py-0.5 rounded bg-[#1f1f1f] text-[#9b9b9b]">Default</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-[#1f1f1f] text-[#9b9b9b]"><T>Default</T></span>
                   )}
                   {selectedRole.managed && (
-                    <span className="text-xs px-2 py-0.5 rounded bg-[#1f1f1f] text-[#9b9b9b]">Managed</span>
+                    <span className="text-xs px-2 py-0.5 rounded bg-[#1f1f1f] text-[#9b9b9b]"><T>Managed</T></span>
                   )}
                 </div>
 
                 {/* Scrollable content */}
                 <div className="flex-1 overflow-y-auto p-4 space-y-5">
-                  {/* Name + Color */}
+                  {/* Name + Colour */}
                   <div className="grid sm:grid-cols-[1fr_auto] gap-3 items-end">
                     <div>
-                      <label className="block text-xs text-[#888888] mb-1.5">Role Name</label>
+                      <label className="block text-xs text-[#888888] mb-1.5"><T>Role Name</T></label>
                       <Input
                         value={roleDraft.name}
                         onChange={(event) => setRoleDraft((prev) => (prev ? { ...prev, name: event.target.value } : prev))}
@@ -1638,16 +1953,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                       />
                     </div>
                     <div>
-                      <label className="block text-xs text-[#888888] mb-1.5">Color</label>
+                      <label className="block text-xs text-[#888888] mb-1.5"><T>Colour</T></label>
                       <div className="flex items-center gap-2">
-                        <input
-                          type="color"
+                        <ColorInput
                           value={roleDraft.color}
-                          onChange={(event) =>
-                            setRoleDraft((prev) => (prev ? { ...prev, color: event.target.value } : prev))
+                          onChange={(color) =>
+                            setRoleDraft((prev) => (prev ? { ...prev, color } : prev))
                           }
                           disabled={selectedRole.managed}
-                          className="w-10 h-10 p-1 rounded bg-[#0a0a0a] border border-[#222222] disabled:opacity-60 cursor-pointer"
                         />
                         <span className="text-sm text-[#888888] font-mono">{roleDraft.color}</span>
                       </div>
@@ -1658,8 +1971,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   <div className="grid sm:grid-cols-2 gap-3">
                     <label className="flex items-center justify-between p-3 rounded-lg bg-[#0a0a0a] border border-[#222222] cursor-pointer hover:border-[#333333] transition-colors">
                       <div>
-                        <span className="text-sm text-white">Display separately</span>
-                        <p className="text-xs text-[#666666] mt-0.5">Show members with this role separately</p>
+                        <span className="text-sm text-white"><T>Display separately</T></span>
+                        <p className="text-xs text-[#666666] mt-0.5"><T>Show members with this role separately</T></p>
                       </div>
                       <ToggleSwitch
                         size="sm"
@@ -1673,8 +1986,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     </label>
                     <label className="flex items-center justify-between p-3 rounded-lg bg-[#0a0a0a] border border-[#222222] cursor-pointer hover:border-[#333333] transition-colors">
                       <div>
-                        <span className="text-sm text-white">Allow mention</span>
-                        <p className="text-xs text-[#666666] mt-0.5">Anyone can mention this role</p>
+                        <span className="text-sm text-white"><T>Allow mention</T></span>
+                        <p className="text-xs text-[#666666] mt-0.5"><T>Anyone can mention this role</T></p>
                       </div>
                       <ToggleSwitch
                         size="sm"
@@ -1691,20 +2004,20 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   {/* Permissions */}
                   <div className="space-y-3">
                     <div className="flex items-center justify-between gap-3">
-                      <h4 className="text-sm font-semibold text-white">Permissions</h4>
+                      <h4 className="text-sm font-semibold text-white"><T>Permissions</T></h4>
                       <div className="relative flex-1 max-w-[240px]">
                         <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-[#666666]" />
                         <input
                           type="text"
                           value={permissionSearch}
                           onChange={(e) => setPermissionSearch(e.target.value)}
-                          placeholder="Filter permissions..."
+                          placeholder={gt("Filter permissions...")}
                           className="w-full pl-8 pr-3 py-1.5 bg-[#0a0a0a] border border-[#222222] rounded-md text-xs text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
                         />
                       </div>
                     </div>
                     {filteredCategories.length === 0 ? (
-                      <p className="text-sm text-[#666666] text-center py-4">No permissions match your search.</p>
+                      <p className="text-sm text-[#666666] text-center py-4"><T>No permissions match your search.</T></p>
                     ) : (
                       filteredCategories.map((category) => (
                         <div key={category.id} className="rounded-lg border border-[#222222] bg-[#0a0a0a] p-3 space-y-2">
@@ -1737,7 +2050,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 {/* Sticky save bar */}
                 <div className="flex items-center justify-between p-3 border-t border-[#222222] flex-shrink-0 bg-[#0d0d0d] rounded-b-lg">
                   <p className="text-xs text-[#666666]">
-                    {hasUnsavedRoleChanges ? "You have unsaved changes" : "All changes saved"}
+                    {hasUnsavedRoleChanges ? gt("You have unsaved changes") : gt("All changes saved")}
                   </p>
                   <button
                     onClick={() => void handleSaveRole()}
@@ -1749,8 +2062,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                         : "bg-[#222222] text-[#666666]"
                     )}
                   >
-                    {isSavingRole && <Loader2 className="w-4 h-4 animate-spin" />}
-                    {hasUnsavedRoleChanges ? "Save Changes" : "Saved"}
+                    {isSavingRole && <Loader size={16} />}
+                    {hasUnsavedRoleChanges ? gt("Save Changes") : gt("Saved")}
                   </button>
                 </div>
               </>
@@ -1775,20 +2088,45 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       });
       const data = await res.json();
       if (!res.ok) {
-        setVanityError(data.error || "Failed to update custom invite");
+        setVanityError(data.error || gt("Failed to update custom invite"));
         return;
       }
       setVanityInfo((prev) => ({
         code: data.code ?? null,
         uses: data.uses ?? 0,
         isPartnered: prev?.isPartnered ?? true,
+        lockToVanity: data.lockToVanity ?? prev?.lockToVanity ?? false,
       }));
       setVanityDraft(data.code ?? "");
-      toast.success(data.code ? "Custom invite link updated!" : "Custom invite link removed");
+      toast.success(data.code ? gt("Custom invite link updated!") : gt("Custom invite link removed"));
     } catch {
-      setVanityError("Something went wrong. Please try again.");
+      setVanityError(gt("Something went wrong. Please try again."));
     } finally {
       setIsSavingVanity(false);
+    }
+  };
+
+  const handleToggleLockVanity = async () => {
+    if (!currentServer || !vanityInfo) return;
+    const next = !vanityInfo.lockToVanity;
+    setIsTogglingLock(true);
+    try {
+      const res = await fetch(`/api/servers/${currentServer.id}/vanity-url/lock`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ locked: next }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        toast.error(data.error || gt("Failed to update invite lock"));
+        return;
+      }
+      setVanityInfo((prev) => prev ? { ...prev, lockToVanity: next } : prev);
+      toast.success(next ? gt("Server invites locked to custom link") : gt("Server invites unlocked"));
+    } catch {
+      toast.error(gt("Something went wrong. Please try again."));
+    } finally {
+      setIsTogglingLock(false);
     }
   };
 
@@ -1801,14 +2139,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <div>
             <h3 className="text-white font-semibold flex items-center gap-2">
               <Crown className="w-4 h-4 text-[#F0B232]" />
-              Custom Invite Link
+              <T>Custom Invite Link</T>
             </h3>
             <p className="text-xs text-[#888888] mt-0.5">
-              As a partnered server, you can claim a personalized invite link.
+              <T>As a partnered server, you can claim a personalized invite link.</T>
             </p>
           </div>
           {vanityInfo.code && (
-            <span className="text-xs text-[#888888]">{vanityInfo.uses} uses</span>
+            <span className="text-xs text-[#888888]">{vanityInfo.uses} {gt('uses')}</span>
           )}
         </div>
         <div className="flex gap-2">
@@ -1831,8 +2169,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             disabled={isSavingVanity || !vanityDirty}
             className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] disabled:opacity-50 disabled:cursor-not-allowed text-white rounded-md flex items-center gap-2 text-sm font-medium transition-colors"
           >
-            {isSavingVanity ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-            Save
+            {isSavingVanity ? <Loader size={16} /> : <Check className="w-4 h-4" />}
+            <T>Save</T>
           </button>
           {vanityInfo.code && (
             <button
@@ -1848,8 +2186,22 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           <p className="text-xs text-red-400">{vanityError}</p>
         ) : (
           <p className="text-xs text-[#666666]">
-            3-32 characters. Lowercase letters, numbers, and hyphens only. Leave empty and save to remove.
+            <T>3-32 characters. Lowercase letters, numbers, and hyphens only. Leave empty and save to remove.</T>
           </p>
+        )}
+        {vanityInfo.code && (
+          <div className="flex items-center justify-between pt-3 border-t border-[#222222]">
+            <div>
+              <span className="text-sm text-white"><T>Lock to Custom Invite</T></span>
+              <p className="text-xs text-[#666666] mt-0.5"><T>Only allow joins through this custom invite link. Hides all other invite links.</T></p>
+            </div>
+            <ToggleSwitch
+              checked={vanityInfo.lockToVanity}
+              onCheckedChange={handleToggleLockVanity}
+              disabled={isTogglingLock}
+              aria-label="Lock invites to custom link"
+            />
+          </div>
         )}
       </div>
     );
@@ -1859,15 +2211,15 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white mb-1">Server Invites</h2>
-          <p className="text-sm text-[#888888]">Create and manage invite links</p>
+          <h2 className="text-xl font-bold text-white mb-1"><T>Server Invites</T></h2>
+          <p className="text-sm text-[#888888]"><T>Create and manage invite links</T></p>
         </div>
         <button
           onClick={handleCreateInvite}
           className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2"
         >
           <Plus className="w-4 h-4" />
-          Create Invite
+          <T>Create Invite</T>
         </button>
       </div>
 
@@ -1875,13 +2227,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <Loader size={32} />
         </div>
       ) : invites.length === 0 ? (
         <div className="text-center py-12">
           <Link2 className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">No invites yet</h3>
-          <p className="text-[#888888] text-sm">Create an invite link to share with others</p>
+          <h3 className="text-lg font-semibold text-white mb-2"><T>No invites yet</T></h3>
+          <p className="text-[#888888] text-sm"><T>Create an invite link to share with others</T></p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1904,15 +2256,15 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   </button>
                 </div>
                 <div className="flex items-center gap-4 mt-1 text-xs text-[#666666]">
-                  <span>#{invite.channel?.name || 'deleted-channel'}</span>
-                  <span>{invite.uses} uses</span>
+                  <span>#{invite.channel?.name || gt('deleted-channel')}</span>
+                  <span>{invite.uses} {gt('uses')}</span>
                   {invite.expiresAt && (
-                    <span>Expires {new Date(invite.expiresAt).toLocaleDateString()}</span>
+                    <span>{gt('Expires')} {new Date(invite.expiresAt).toLocaleDateString()}</span>
                   )}
                 </div>
               </div>
               <Avatar className="w-8 h-8">
-                <AvatarImage src={invite.createdBy?.avatar} />
+                <AvatarImage src={cdnImage(invite.createdBy?.avatar)} />
                 <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
                   {invite.createdBy?.username?.charAt(0) || "?"}
                 </AvatarFallback>
@@ -1933,19 +2285,19 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const renderBans = () => (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Server Bans</h2>
-        <p className="text-sm text-[#888888]">View and manage banned users</p>
+        <h2 className="text-xl font-bold text-white mb-1"><T>Server Bans</T></h2>
+        <p className="text-sm text-[#888888]"><T>View and manage banned users</T></p>
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <Loader size={32} />
         </div>
       ) : bans.length === 0 ? (
         <div className="text-center py-12">
           <Ban className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">No bans</h3>
-          <p className="text-[#888888] text-sm">There are no banned users in this server</p>
+          <h3 className="text-lg font-semibold text-white mb-2"><T>No bans</T></h3>
+          <p className="text-[#888888] text-sm"><T>There are no banned users in this server</T></p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -1955,7 +2307,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               className="flex items-center gap-4 p-4 rounded-lg bg-[#111111] border border-[#222222]"
             >
               <Avatar className="w-10 h-10">
-                <AvatarImage src={ban.avatar} />
+                <AvatarImage src={cdnImage(ban.avatar)} />
                 <AvatarFallback className="bg-[#8B5CF6] text-white">
                   {ban.username.charAt(0)}
                 </AvatarFallback>
@@ -1970,7 +2322,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 onClick={() => handleUnban(ban.id)}
                 className="px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222222] text-white text-sm rounded-md transition-colors"
               >
-                Revoke Ban
+                <T>Revoke Ban</T>
               </button>
             </div>
           ))}
@@ -1983,11 +2335,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white mb-1">Server Members</h2>
-          <p className="text-sm text-[#888888]">{members.length} members</p>
+          <h2 className="text-xl font-bold text-white mb-1"><T>Server Members</T></h2>
+          <p className="text-sm text-[#888888]">{members.length} {gt('members')}</p>
         </div>
         <Input
-          placeholder="Search members..."
+          placeholder={gt("Search members...")}
           value={memberSearch}
           onChange={(event) => setMemberSearch(event.target.value)}
           className="w-64 bg-[#111111] border-[#222222] text-white"
@@ -1996,7 +2348,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <Loader size={32} />
         </div>
       ) : (
         <div className="space-y-1">
@@ -2014,7 +2366,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 className="flex items-center gap-3 p-3 rounded-lg hover:bg-[#111111] transition-colors border border-transparent hover:border-[#222222]"
               >
                 <Avatar className="w-10 h-10">
-                  <AvatarImage src={member.avatar || undefined} />
+                  <AvatarImage src={cdnImage(member.avatar || undefined)} />
                   <AvatarFallback className="bg-[#8B5CF6] text-white">
                     {(member.displayName || member.username || '?').charAt(0)}
                   </AvatarFallback>
@@ -2049,13 +2401,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     )}
                     <DropdownMenu>
                       <DropdownMenuTrigger asChild>
-                        <button className="p-0.5 text-[#888888] hover:text-[#8B5CF6] transition-colors" title="Assign roles">
+                        <button className="p-0.5 text-[#888888] hover:text-[#8B5CF6] transition-colors" title={gt("Assign roles")}>
                           <Plus className="w-3.5 h-3.5" />
                         </button>
                       </DropdownMenuTrigger>
                       <DropdownMenuContent className="w-56 bg-[#111111] border-[#222222] text-[#888888]">
                         <DropdownMenuLabel className="text-xs font-bold text-[#666666] uppercase">
-                          Manage Roles
+                          <T>Manage Roles</T>
                         </DropdownMenuLabel>
                         <DropdownMenuSeparator className="bg-[#222222]" />
                         <ScrollArea className="h-[200px]">
@@ -2093,7 +2445,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                     <MoreHorizontal className="w-4 h-4" />
                   </summary>
                   <div className="absolute right-0 mt-2 z-20 w-64 rounded-lg bg-[#0c0c0c] border border-[#222222] p-3 shadow-xl">
-                    <p className="text-xs uppercase tracking-wide text-[#888888] mb-2">Assign Roles</p>
+                    <p className="text-xs uppercase tracking-wide text-[#888888] mb-2"><T>Assign Roles</T></p>
                     <div className="max-h-52 overflow-y-auto space-y-1 pr-1">
                       {roles
                         .slice()
@@ -2134,8 +2486,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white mb-1">Server Emoji</h2>
-          <p className="text-sm text-[#888888]">Upload custom emoji for your server ({emojis.length}/50)</p>
+          <h2 className="text-xl font-bold text-white mb-1"><T>Server Emoji</T></h2>
+          <p className="text-sm text-[#888888]"><T>Upload custom emoji for your server</T> ({emojis.length}/500)</p>
         </div>
         <button
           onClick={() => emojiInputRef.current?.click()}
@@ -2143,11 +2495,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 disabled:opacity-50"
         >
           {isUploadingEmoji ? (
-            <Loader2 className="w-4 h-4 animate-spin" />
+            <Loader size={16} />
           ) : (
             <Plus className="w-4 h-4" />
           )}
-          Upload Emoji
+          <T>Upload Emoji</T>
         </button>
       </div>
 
@@ -2168,7 +2520,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             type="text"
             value={emojiSearch}
             onChange={(e) => setEmojiSearch(e.target.value)}
-            placeholder="Search emoji by name..."
+            placeholder={gt("Search emoji by name...")}
             className="w-full pl-9 pr-3 py-2 bg-[#111111] border border-[#222222] rounded-md text-sm text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
           />
         </div>
@@ -2176,35 +2528,35 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <Loader size={32} />
         </div>
       ) : emojis.length === 0 ? (
         <div className="text-center py-12 border-2 border-dashed border-[#222222] rounded-lg">
           <Smile className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">No custom emoji yet</h3>
-          <p className="text-[#888888] text-sm mb-4">Upload emoji to use in your server</p>
+          <h3 className="text-lg font-semibold text-white mb-2"><T>No custom emoji yet</T></h3>
+          <p className="text-[#888888] text-sm mb-4"><T>Upload emoji to use in your server</T></p>
           <button
             onClick={() => emojiInputRef.current?.click()}
             disabled={isUploadingEmoji}
             className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md disabled:opacity-50"
           >
-            Upload Emoji
+            <T>Upload Emoji</T>
           </button>
         </div>
       ) : filteredEmojis.length === 0 ? (
         <div className="text-center py-8 text-[#888888] text-sm">
-          No emoji matching &quot;{emojiSearch}&quot;
+          {gt("No emoji matching")} "{emojiSearch}"
         </div>
       ) : (
         <div className="grid grid-cols-4 sm:grid-cols-6 md:grid-cols-8 gap-2">
           {filteredEmojis.map((emoji) => (
             <div
-              key={emoji._id}
+              key={emoji.id}
               className="relative group aspect-square bg-[#111111] border border-[#222222] rounded-lg p-2 flex flex-col items-center justify-center hover:border-[#8B5CF6]/50 transition-colors"
               title={`:${emoji.name}:`}
             >
               <img
-                src={emoji.imageUrl}
+                src={cdnImage(emoji.imageUrl)}
                 alt={`:${emoji.name}:`}
                 className="w-8 h-8 object-contain"
               />
@@ -2212,14 +2564,55 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                 <span className="absolute top-1 left-1 px-1 py-0.5 text-[8px] font-bold bg-[#8B5CF6] text-white rounded">GIF</span>
               )}
               <button
-                onClick={() => handleDeleteEmoji(emoji._id)}
+                onClick={() => handleDeleteEmoji(emoji.id)}
                 className="absolute top-1 right-1 p-1 bg-red-500/80 hover:bg-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity"
               >
                 <X className="w-3 h-3 text-white" />
               </button>
-              <span className="absolute bottom-0 left-0 right-0 text-xs text-center text-[#888888] truncate px-1">
-                :{emoji.name}:
-              </span>
+              <button
+                onClick={() => {
+                  setRenamingEmojiId(emoji.id);
+                  setEmojiRenameValue(emoji.name);
+                }}
+                className="absolute top-1 right-7 p-1 bg-[#8B5CF6]/80 hover:bg-[#8B5CF6] rounded opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Pencil className="w-3 h-3 text-white" />
+              </button>
+              {renamingEmojiId === emoji.id ? (
+                <div className="absolute inset-0 bg-[#111111] flex flex-col items-center justify-center gap-1 p-2 z-10">
+                  <input
+                    type="text"
+                    value={emojiRenameValue}
+                    onChange={(e) => setEmojiRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRenameEmoji(emoji.id);
+                      if (e.key === "Escape") { setRenamingEmojiId(null); setEmojiRenameValue(""); }
+                    }}
+                    autoFocus
+                    maxLength={32}
+                    className="w-full text-xs bg-[#222222] text-white rounded px-1.5 py-1 text-center border border-[#8B5CF6]/50 focus:outline-none focus:border-[#8B5CF6]"
+                    placeholder="Name"
+                  />
+                  <div className="flex gap-1">
+                    <button
+                      onClick={() => handleRenameEmoji(emoji.id)}
+                      className="p-1 bg-[#8B5CF6] hover:bg-[#7C3AED] rounded"
+                    >
+                      <Check className="w-3 h-3 text-white" />
+                    </button>
+                    <button
+                      onClick={() => { setRenamingEmojiId(null); setEmojiRenameValue(""); }}
+                      className="p-1 bg-[#333333] hover:bg-[#444444] rounded"
+                    >
+                      <X className="w-3 h-3 text-white" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <span className="absolute bottom-0 left-0 right-0 text-xs text-center text-[#888888] truncate px-1">
+                  :{emoji.name}:
+                </span>
+              )}
             </div>
           ))}
         </div>
@@ -2236,16 +2629,16 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     <div className="space-y-6">
       <div className="flex items-center justify-between">
         <div>
-          <h2 className="text-xl font-bold text-white mb-1">Server Stickers</h2>
-          <p className="text-sm text-[#888888]">Upload custom stickers for your server ({stickers.length}/15)</p>
+          <h2 className="text-xl font-bold text-white mb-1"><T>Server Stickers</T></h2>
+          <p className="text-sm text-[#888888]"><T>Upload custom stickers for your server</T> ({stickers.length}/500)</p>
         </div>
         <button
           onClick={() => stickerInputRef.current?.click()}
           disabled={isUploadingSticker}
           className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 disabled:opacity-50"
         >
-          {isUploadingSticker ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-          {isUploadingSticker ? "Uploading..." : "Upload Sticker"}
+          {isUploadingSticker ? <Loader size={16} /> : <Plus className="w-4 h-4" />}
+          {isUploadingSticker ? gt("Uploading...") : gt("Upload Sticker")}
         </button>
       </div>
 
@@ -2265,7 +2658,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             type="text"
             value={stickerSearch ?? ""}
             onChange={(e) => setStickerSearch(e.target.value)}
-            placeholder="Search stickers by name..."
+            placeholder={gt("Search stickers by name...")}
             className="w-full pl-9 pr-3 py-2 bg-[#111111] border border-[#222222] rounded-md text-sm text-white placeholder:text-[#666666] focus:outline-none focus:border-[#8B5CF6]"
           />
         </div>
@@ -2273,44 +2666,85 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <Loader size={32} />
         </div>
       ) : stickers.length === 0 ? (
         <div className="text-center py-12 border-2 border-dashed border-[#222222] rounded-lg">
           <Sticker className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">No stickers yet</h3>
-          <p className="text-[#888888] text-sm mb-4">Upload stickers to use in messages</p>
+          <h3 className="text-lg font-semibold text-white mb-2"><T>No stickers yet</T></h3>
+          <p className="text-[#888888] text-sm mb-4"><T>Upload stickers to use in messages</T></p>
           <button
             onClick={() => stickerInputRef.current?.click()}
             className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
           >
-            Upload First Sticker
+            <T>Upload First Sticker</T>
           </button>
         </div>
       ) : filteredStickers.length === 0 ? (
         <div className="text-center py-8 text-[#888888] text-sm">
-          No stickers matching &quot;{stickerSearch}&quot;
+          {gt("No stickers matching")} "{stickerSearch}"
         </div>
       ) : (
         <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-6 gap-3">
           {filteredStickers.map((sticker) => (
             <div
-              key={sticker._id}
+              key={sticker.id}
               className="relative group rounded-lg bg-[#111111] border border-[#222222] p-2 hover:border-[#8B5CF6]/50 transition-colors"
               title={sticker.name}
             >
               <img
-                src={sticker.imageUrl}
+                src={cdnImage(sticker.imageUrl)}
                 alt={sticker.name}
                 className="w-full aspect-square object-contain rounded"
               />
               <button
-                onClick={() => handleDeleteSticker(sticker._id)}
+                onClick={() => handleDeleteSticker(sticker.id)}
                 className="absolute top-1 right-1 p-1 bg-red-500/80 hover:bg-red-500 rounded opacity-0 group-hover:opacity-100 transition-opacity"
               >
                 <X className="w-3 h-3 text-white" />
               </button>
-              <p className="text-xs text-center text-[#888888] mt-1 truncate">{sticker.name}</p>
+              <button
+                onClick={() => {
+                  setRenamingStickerId(sticker.id);
+                  setStickerRenameValue(sticker.name);
+                }}
+                className="absolute top-1 right-7 p-1 bg-[#8B5CF6]/80 hover:bg-[#8B5CF6] rounded opacity-0 group-hover:opacity-100 transition-opacity"
+              >
+                <Pencil className="w-3 h-3 text-white" />
+              </button>
+              {renamingStickerId === sticker.id ? (
+                <div className="mt-2 flex flex-col gap-1">
+                  <input
+                    type="text"
+                    value={stickerRenameValue}
+                    onChange={(e) => setStickerRenameValue(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter") handleRenameSticker(sticker.id);
+                      if (e.key === "Escape") { setRenamingStickerId(null); setStickerRenameValue(""); }
+                    }}
+                    autoFocus
+                    maxLength={30}
+                    className="w-full text-xs bg-[#222222] text-white rounded px-1.5 py-1 text-center border border-[#8B5CF6]/50 focus:outline-none focus:border-[#8B5CF6]"
+                    placeholder="Name"
+                  />
+                  <div className="flex gap-1 justify-center">
+                    <button
+                      onClick={() => handleRenameSticker(sticker.id)}
+                      className="p-1 bg-[#8B5CF6] hover:bg-[#7C3AED] rounded"
+                    >
+                      <Check className="w-3 h-3 text-white" />
+                    </button>
+                    <button
+                      onClick={() => { setRenamingStickerId(null); setStickerRenameValue(""); }}
+                      className="p-1 bg-[#333333] hover:bg-[#444444] rounded"
+                    >
+                      <X className="w-3 h-3 text-white" />
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-center text-[#888888] mt-1 truncate">{sticker.name}</p>
+              )}
             </div>
           ))}
         </div>
@@ -2319,16 +2753,395 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     );
   };
 
+  const renderAccess = () => {
+    const joinMode = draftString("access.joinMode", "invite_only");
+    const options = [
+      {
+        key: "invite_only",
+        icon: Lock,
+        title: gt("Invite Only"),
+        description: gt("People can join your server directly with an invite"),
+      },
+      {
+        key: "apply_to_join",
+        icon: Mail,
+        title: gt("Apply to Join"),
+        description: gt("People must submit an application and be approved to join"),
+      },
+      {
+        key: "discoverable",
+        icon: Globe,
+        title: gt("Discoverable"),
+        description: gt("Anyone can join your server directly through Server Discovery"),
+      },
+    ] as const;
+
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-white mb-1"><T>Access</T></h2>
+          <p className="text-sm text-[#888888]"><T>Control how people join your server</T></p>
+        </div>
+
+        <div className="space-y-3">
+          <h3 className="text-white font-medium"><T>How can people join your server?</T></h3>
+          <p className="text-sm text-[#888888]">
+            <T>Keep your server private, or open it up for more people to join.</T>{" "}
+            <a
+              href="https://support.discord.com/hc/en-us/articles/29729107418519-Server-Member-Applications"
+              target="_blank"
+              rel="noreferrer"
+              className="text-[#8B5CF6] hover:underline"
+            >
+              <T>Learn More</T>
+            </a>
+          </p>
+
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+            {options.map((option) => {
+              const Icon = option.icon;
+              const selected = joinMode === option.key;
+              return (
+                <button
+                  key={option.key}
+                  onClick={() => settingsDraft.update("access.joinMode", option.key)}
+                  className={cn(
+                    "flex flex-col items-center text-center p-4 rounded-xl border transition-colors",
+                    selected
+                      ? "bg-[#8B5CF6]/10 border-[#8B5CF6]/50"
+                      : "bg-[#111111] border-[#222222] hover:border-[#333333]"
+                  )}
+                >
+                  <div className={cn("p-2 rounded-full mb-2", selected ? "text-[#8B5CF6]" : "text-[#888888]")}>
+                    <Icon className="w-5 h-5" />
+                  </div>
+                  <span className={cn("font-medium", selected ? "text-white" : "text-[#aaaaaa]")}>
+                    {option.title}
+                  </span>
+                  <span className="text-xs text-[#888888] mt-1">{option.description}</span>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {joinMode === "discoverable" && (
+          <div className="space-y-4 p-4 rounded-lg bg-[#111111] border border-[#222222] animate-in fade-in slide-in-from-top-2 duration-200">
+            <div className="space-y-2">
+              <label className="text-white font-medium text-sm"><T>Discovery Description</T></label>
+              <Textarea
+                placeholder={gt("A brief description of your server shown in Server Discovery...")}
+                value={draftString("discoveryDescription")}
+                onChange={(e) => settingsDraft.update("discoveryDescription", e.target.value)}
+                maxLength={1024}
+                className="bg-[#0a0d15] border-[#222222] text-white placeholder-[#555555] focus:border-[#8B5CF6] min-h-[80px]"
+              />
+              <p className="text-xs text-[#888888] text-right">
+                {draftString("discoveryDescription").length}/1024
+              </p>
+            </div>
+
+            <div className="space-y-2">
+              <label className="text-white font-medium text-sm"><T>Discovery Categories</T></label>
+              <p className="text-xs text-[#888888]"><T>Select up to 3 categories that best describe your server</T></p>
+              <div className="flex flex-wrap gap-2 pt-1">
+                {[
+                  { id: "gaming", name: gt("Gaming") },
+                  { id: "music", name: gt("Music") },
+                  { id: "tech", name: gt("Tech & Programming") },
+                  { id: "art", name: gt("Art & Design") },
+                  { id: "education", name: gt("Education") },
+                  { id: "entertainment", name: gt("Entertainment") },
+                  { id: "anime", name: gt("Anime & Manga") },
+                  { id: "science", name: gt("Science") },
+                  { id: "sports", name: gt("Sports & Fitness") },
+                  { id: "food", name: gt("Food & Drink") },
+                  { id: "travel", name: gt("Travel") },
+                  { id: "languages", name: gt("Languages") },
+                  { id: "photography", name: gt("Photography") },
+                  { id: "business", name: gt("Business") },
+                  { id: "lifestyle", name: gt("Lifestyle") },
+                ].map((cat) => {
+                  const selectedCats = (settingsDraft.draft.discoveryCategories as string[]) || [];
+                  const isSelected = selectedCats.includes(cat.id);
+                  return (
+                    <button
+                      key={cat.id}
+                      type="button"
+                      onClick={() => {
+                        const nextCats = [...selectedCats];
+                        const idx = nextCats.indexOf(cat.id);
+                        if (idx > -1) {
+                          nextCats.splice(idx, 1);
+                        } else {
+                          if (nextCats.length >= 3) {
+                            toast.error(gt("You can select up to 3 categories"));
+                            return;
+                          }
+                          nextCats.push(cat.id);
+                        }
+                        settingsDraft.update("discoveryCategories", nextCats);
+                      }}
+                      className={cn(
+                        "px-3 py-1.5 rounded-full text-xs font-medium border transition-all active:scale-95",
+                        isSelected
+                          ? "bg-[#8B5CF6] border-[#8B5CF6] text-white shadow-md shadow-[#8B5CF6]/20"
+                          : "bg-[#0a0d15] border-[#222222] text-[#888888] hover:border-[#333333] hover:text-[#d5d9e8]"
+                      )}
+                    >
+                      {cat.name}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
+
+        <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
+          <div className="flex items-center justify-between">
+            <div>
+              <span className="text-white font-medium"><T>Age-Restricted Server</T></span>
+              <p className="text-sm text-[#888888] mt-1">
+                <T>Users will need to confirm they are over the legal age to view the content in this server.</T>{" "}
+                <a
+                  href="https://support.discord.com/hc/en-us/articles/115000084051"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="text-[#8B5CF6] hover:underline"
+                >
+                  <T>Learn more</T>
+                </a>
+              </p>
+            </div>
+            <ToggleSwitch
+              checked={draftBool("isAgeGated")}
+              onCheckedChange={(checked) => {
+                settingsDraft.update("isAgeGated", checked);
+                if (checked) {
+                  settingsDraft.update("access.joinMode", "invite_only");
+                }
+              }}
+              aria-label="Age-restricted server"
+            />
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  const renderApplications = () => {
+    const filtered = applicationFilter === "all"
+      ? applications
+      : applications.filter((app) => app.status === applicationFilter);
+
+    const statusBadge = (status: ServerApplication["status"]) => {
+      const styles = {
+        pending: "bg-yellow-500/10 text-yellow-500",
+        approved: "bg-green-500/10 text-green-500",
+        rejected: "bg-red-500/10 text-red-500",
+        interviewed: "bg-blue-500/10 text-blue-500",
+      };
+      return (
+        <span className={cn("px-2 py-0.5 rounded text-xs font-medium", styles[status])}>
+          {status.charAt(0).toUpperCase() + status.slice(1)}
+        </span>
+      );
+    };
+
+    return (
+      <div className="space-y-6">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-bold text-white mb-1"><T>Member Applications</T></h2>
+            <p className="text-sm text-[#888888]"><T>Review and manage server member applications</T></p>
+          </div>
+          <select
+            value={applicationFilter}
+            onChange={(e) => setApplicationFilter(e.target.value as typeof applicationFilter)}
+            className="h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white text-sm"
+          >
+            <option value="all">{gt("All Types")}</option>
+            <option value="pending">{gt("Pending")}</option>
+            <option value="approved">{gt("Approved")}</option>
+            <option value="rejected">{gt("Rejected")}</option>
+            <option value="interviewed">{gt("Interviewed")}</option>
+          </select>
+        </div>
+
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader size={32} />
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="text-center py-12">
+            <ClipboardList className="w-12 h-12 text-[#666666] mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-white mb-2"><T>No applications</T></h3>
+            <p className="text-[#888888] text-sm">
+              {applicationFilter === "all"
+                ? gt("There are no member applications to review")
+                : gt("No {filter} applications", { filter: applicationFilter })}
+            </p>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filtered.map((app) => (
+              <div
+                key={app.id}
+                className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-3"
+              >
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <Avatar className="w-10 h-10">
+                      <AvatarImage src={cdnImage(app.user.avatar)} />
+                      <AvatarFallback className="bg-[#8B5CF6] text-white">
+                        {(app.user.displayName || app.user.username || "?").charAt(0)}
+                      </AvatarFallback>
+                    </Avatar>
+                    <div>
+                      <p className="text-white font-medium">
+                        {app.user.displayName || app.user.username}
+                      </p>
+                      <p className="text-xs text-[#888888]">@{app.user.username}</p>
+                    </div>
+                  </div>
+                  {statusBadge(app.status)}
+                </div>
+
+                <div className="space-y-2">
+                  {app.answers.map((answer, index) => (
+                    <div key={index}>
+                      <p className="text-xs text-[#888888] uppercase">{answer.question}</p>
+                      <p className="text-sm text-white">{answer.answer}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {app.status === "pending" && (
+                  <div className="flex flex-wrap gap-2 pt-2">
+                    <button
+                      onClick={() => handleReviewApplication(app.id, "approved")}
+                      className="px-3 py-1.5 bg-green-600 hover:bg-green-700 text-white text-sm rounded-md"
+                    >
+                      <T>Approve</T>
+                    </button>
+                    <button
+                      onClick={() => handleReviewApplication(app.id, "interviewed")}
+                      className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-md"
+                    >
+                      <T>Interview</T>
+                    </button>
+                    <button
+                      onClick={() => {
+                        const reason = window.prompt(gt("Rejection reason (optional):"));
+                        if (reason === null) return;
+                        void handleReviewApplication(app.id, "rejected", reason || undefined);
+                      }}
+                      className="px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-sm rounded-md"
+                    >
+                      <T>Reject</T>
+                    </button>
+                  </div>
+                )}
+
+                {app.rejectionReason && (
+                  <p className="text-xs text-red-400">{gt("Reason")}: {app.rejectionReason}</p>
+                )}
+
+                <p className="text-xs text-[#666666]">
+                  {gt("Submitted")} {new Date(app.createdAt).toLocaleString()}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const renderAppDiscovery = () => {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-white mb-1"><T>App Discovery</T></h2>
+          <p className="text-sm text-[#888888]"><T>Browse and add public bots to your server</T></p>
+        </div>
+
+        <div className="relative">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#666666]" />
+          <Input
+            value={appSearch}
+            onChange={(e) => setAppSearch(e.target.value)}
+            placeholder={gt("Search bots and apps...")}
+            className="pl-10 bg-[#111111] border-[#222222] text-white placeholder:text-[#555555] focus-visible:ring-[#8B5CF6]"
+          />
+        </div>
+
+        {isLoading ? (
+          <div className="text-center py-10 text-sm text-[#888888]"><Loader size={20} className="mx-auto" /></div>
+        ) : discoverableApps.length === 0 ? (
+          <div className="text-center py-12 border border-dashed border-[#222222] rounded-xl bg-[#111111]">
+            <Bot className="w-10 h-10 text-[#666666] mx-auto mb-3 opacity-50" />
+            <p className="text-sm text-[#888888]">
+              {appSearch ? gt("No bots found matching your search") : gt("No public bots available yet")}
+            </p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            {discoverableApps.map((app) => (
+              <div
+                key={app.id}
+                className="flex items-start gap-3 p-4 rounded-xl border border-[#222222] bg-[#111111] hover:border-[#333333] transition-colors"
+              >
+                <div className="w-12 h-12 rounded-xl bg-[#8B5CF6]/20 flex items-center justify-center shrink-0 overflow-hidden">
+                  {app.icon ? (
+                    <img src={cdnImage(app.icon)} alt={app.name} className="w-full h-full object-cover" />
+                  ) : (
+                    <Bot className="w-6 h-6 text-[#8B5CF6]" />
+                  )}
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-1.5">
+                    <span className="font-semibold text-sm text-white truncate">{app.name}</span>
+                    {app.botId && <Sparkles className="w-3 h-3 text-[#8B5CF6] shrink-0" />}
+                  </div>
+                  <p className="text-xs text-[#888888] line-clamp-2 mt-0.5">
+                    {app.description || gt("No description")}
+                  </p>
+                  {app.tags && Array.isArray(app.tags) && app.tags.length > 0 && (
+                    <div className="flex gap-1 mt-2 flex-wrap">
+                      {app.tags.slice(0, 3).map((tag: string) => (
+                        <span key={tag} className="px-1.5 py-0.5 text-[10px] rounded bg-[#8B5CF6]/10 text-[#8B5CF6] font-medium">
+                          {tag}
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                </div>
+                <a
+                  href={`/api/developers/applications/${app.id}/add?server_id=${currentServer?.id}`}
+                  className="shrink-0 px-3 py-1.5 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] text-white text-xs font-semibold transition-colors"
+                >
+                  {gt("Add")}
+                </a>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const renderWidget = () => (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Server Widget</h2>
-        <p className="text-sm text-[#888888]">Embed your server on your website</p>
+        <h2 className="text-xl font-bold text-white mb-1"><T>Server Widget</T></h2>
+        <p className="text-sm text-[#888888]"><T>Embed your server on your website</T></p>
       </div>
 
       <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
         <div className="flex items-center justify-between mb-4">
-          <span className="text-white font-medium">Enable Server Widget</span>
+          <span className="text-white font-medium"><T>Enable Server Widget</T></span>
           <button
             onClick={() => settingsDraft.update("widget.enabled", !draftBool("widget.enabled", true))}
             role="switch"
@@ -2343,13 +3156,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           </button>
         </div>
         <p className="text-sm text-[#888888]">
-          Allow people to embed your server info on their websites
+          <T>Allow people to embed your server info on their websites</T>
         </p>
       </div>
 
       <div>
         <label className="block text-sm font-medium text-[#888888] mb-2">
-          INVITE CHANNEL
+          <T>INVITE CHANNEL</T>
         </label>
         <select
           value={draftString("widget.channelId", "") || ""}
@@ -2357,7 +3170,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           aria-label="Widget invite channel"
           className="w-full h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white"
         >
-          <option value="">Select a channel</option>
+          <option value="">{gt("Select a channel")}</option>
           {textChannels.map((channel) => (
             <option key={channel.id} value={channel.id}>#{channel.name}</option>
           ))}
@@ -2369,7 +3182,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
       <div>
         <label className="block text-sm font-medium text-[#888888] mb-2">
-          WIDGET CODE
+          <T>WIDGET CODE</T>
         </label>
         <div className="p-3 rounded-md bg-[#111111] border border-[#222222] font-mono text-sm text-[#888888]">
           {`<iframe src="https://serika.chat/widget/${currentServer.id}" width="350" height="500" />`}
@@ -2379,7 +3192,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           className="mt-2 text-sm text-[#8B5CF6] hover:underline flex items-center gap-1"
         >
           <Copy className="w-4 h-4" />
-          Copy Code
+          <T>Copy Code</T>
         </button>
       </div>
     </div>
@@ -2388,34 +3201,34 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const renderAuditLog = () => (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Audit Log</h2>
-        <p className="text-sm text-[#888888]">View a record of all changes made to your server</p>
+        <h2 className="text-xl font-bold text-white mb-1"><T>Audit Log</T></h2>
+        <p className="text-sm text-[#888888]"><T>View a record of all changes made to your server</T></p>
       </div>
 
       <div className="flex gap-4 mb-4">
         <select className="h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white">
-          <option value="">All users</option>
+          <option value="">{gt("All users")}</option>
         </select>
         <select className="h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white">
-          <option value="">All actions</option>
-          <option value="channel_create">Channel Created</option>
-          <option value="channel_delete">Channel Deleted</option>
-          <option value="role_create">Role Created</option>
-          <option value="role_delete">Role Deleted</option>
-          <option value="member_ban">Member Banned</option>
-          <option value="member_kick">Member Kicked</option>
+          <option value="">{gt("All actions")}</option>
+          <option value="channel_create">{gt("Channel Created")}</option>
+          <option value="channel_delete">{gt("Channel Deleted")}</option>
+          <option value="role_create">{gt("Role Created")}</option>
+          <option value="role_delete">{gt("Role Deleted")}</option>
+          <option value="member_ban">{gt("Member Banned")}</option>
+          <option value="member_kick">{gt("Member Kicked")}</option>
         </select>
       </div>
 
       {isLoading ? (
         <div className="flex items-center justify-center py-12">
-          <Loader2 className="w-8 h-8 text-[#8B5CF6] animate-spin" />
+          <Loader size={32} />
         </div>
       ) : auditLogs.length === 0 ? (
         <div className="text-center py-12">
           <FileText className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-          <h3 className="text-lg font-semibold text-white mb-2">No audit log entries</h3>
-          <p className="text-[#888888] text-sm">Actions taken in your server will appear here</p>
+          <h3 className="text-lg font-semibold text-white mb-2"><T>No audit log entries</T></h3>
+          <p className="text-[#888888] text-sm"><T>Actions taken in your server will appear here</T></p>
         </div>
       ) : (
         <div className="space-y-2">
@@ -2424,17 +3237,17 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
               <div className="flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2">
                   <Avatar className="w-7 h-7">
-                    <AvatarImage src={log.admin?.avatar} />
+                    <AvatarImage src={cdnImage(log.admin?.avatar)} />
                     <AvatarFallback className="bg-[#8B5CF6] text-white text-xs">
                       {(log.admin?.username || "?").charAt(0)}
                     </AvatarFallback>
                   </Avatar>
-                  <span className="text-sm text-white font-medium">{log.admin?.username || "System"}</span>
+                  <span className="text-sm text-white font-medium">{log.admin?.username || gt("System")}</span>
                   <span className="text-xs text-[#888888] uppercase">{log.action.replace(/_/g, " ")}</span>
                 </div>
                 <span className="text-xs text-[#666666]">{new Date(log.createdAt).toLocaleString()}</span>
               </div>
-              {log.reason && <p className="text-xs text-[#888888] mt-1">Reason: {log.reason}</p>}
+              {log.reason && <p className="text-xs text-[#888888] mt-1">{gt("Reason")}: {log.reason}</p>}
             </div>
           ))}
         </div>
@@ -2445,14 +3258,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const renderModeration = () => (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Moderation</h2>
-        <p className="text-sm text-[#888888]">Configure moderation settings for your server</p>
+        <h2 className="text-xl font-bold text-white mb-1"><T>Moderation</T></h2>
+        <p className="text-sm text-[#888888]"><T>Configure moderation settings for your server</T></p>
       </div>
 
       <div className="space-y-4">
         <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-white font-medium">Verification Level</span>
+            <span className="text-white font-medium"><T>Verification Level</T></span>
           </div>
           <select
             value={draftString("moderation.verificationLevel", "none")}
@@ -2460,17 +3273,17 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             aria-label="Verification level"
             className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
           >
-            <option value="none">None - Unrestricted</option>
-            <option value="low">Low - Must have verified email</option>
-            <option value="medium">Medium - Registered for 5+ minutes</option>
-            <option value="high">High - Member for 10+ minutes</option>
-            <option value="very_high">Highest - Must have verified phone</option>
+            <option value="none">{gt("None - Unrestricted")}</option>
+            <option value="low">{gt("Low - Must have verified email")}</option>
+            <option value="medium">{gt("Medium - Registered for 5+ minutes")}</option>
+            <option value="high">{gt("High - Member for 10+ minutes")}</option>
+            <option value="very_high">{gt("Highest - Must have verified phone")}</option>
           </select>
         </div>
 
         <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-white font-medium">Explicit Media Content Filter</span>
+            <span className="text-white font-medium"><T>Explicit Media Content Filter</T></span>
           </div>
           <select
             value={draftString("moderation.explicitContentFilter", "disabled")}
@@ -2478,18 +3291,18 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             aria-label="Explicit media content filter"
             className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
           >
-            <option value="disabled">Don&apos;t scan any media content</option>
-            <option value="members_without_roles">Scan content from members without roles</option>
-            <option value="all_members">Scan content from all members</option>
+            <option value="disabled">{gt("Don&apos;t scan any media content")}</option>
+            <option value="members_without_roles">{gt("Scan content from members without roles")}</option>
+            <option value="all_members">{gt("Scan content from all members")}</option>
           </select>
         </div>
 
         <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-white font-medium">2FA Requirement</span>
+              <span className="text-white font-medium"><T>2FA Requirement</T></span>
               <p className="text-sm text-[#888888] mt-1">
-                Require moderators to have 2FA enabled
+                <T>Require moderators to have 2FA enabled</T>
               </p>
             </div>
             <button
@@ -2510,8 +3323,8 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
           <div className="flex items-center justify-between">
             <div>
-              <span className="text-white font-medium">Raid Protection</span>
-              <p className="text-sm text-[#888888] mt-1">Auto-enable stricter checks during suspicious joins</p>
+              <span className="text-white font-medium"><T>Raid Protection</T></span>
+              <p className="text-sm text-[#888888] mt-1"><T>Auto-enable stricter checks during suspicious joins</T></p>
             </div>
             <button
               onClick={() => settingsDraft.update("safety.raidProtection", !draftBool("safety.raidProtection"))}
@@ -2530,7 +3343,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
 
         <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-white font-medium">Mention Spam Limit</span>
+            <span className="text-white font-medium"><T>Mention Spam Limit</T></span>
             <span className="text-sm text-[#888888]">{draftNumber("safety.mentionSpamLimit", 5)}</span>
           </div>
           <input
@@ -2543,7 +3356,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
             className="w-full accent-[#8B5CF6]"
           />
           <label className="mt-3 flex items-center justify-between cursor-pointer">
-            <span className="text-sm text-[#888888]">Enable anti-spam checks</span>
+            <span className="text-sm text-[#888888]"><T>Enable anti-spam checks</T></span>
             <ToggleSwitch size="sm" checked={draftBool("safety.antiSpam", true)} onCheckedChange={(checked) => settingsDraft.update("safety.antiSpam", checked)} />
           </label>
         </div>
@@ -2554,50 +3367,36 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const renderSoundboard = () => (
     <div className="space-y-6">
       <div>
-        <h2 className="text-xl font-bold text-white mb-1">Soundboard</h2>
-        <p className="text-sm text-[#888888]">Configure soundboard availability and playback volume</p>
+        <h2 className="text-xl font-bold text-white mb-1"><T>Soundboard</T></h2>
+        <p className="text-sm text-[#888888]"><T>Configure soundboard availability</T></p>
       </div>
 
       <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
-        <div className="flex items-center justify-between mb-4">
-          <span className="text-white font-medium">Enable Soundboard</span>
+        <div className="flex items-center justify-between">
+          <span className="text-white font-medium"><T>Enable Soundboard</T></span>
           <ToggleSwitch
             checked={draftBool("soundboard.enabled", true)}
             onCheckedChange={(checked) => settingsDraft.update("soundboard.enabled", checked)}
             aria-label="Enable soundboard"
           />
         </div>
-        <div>
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-sm text-[#888888]">Playback Volume</span>
-            <span className="text-sm text-white">{draftNumber("soundboard.volume", 100)}%</span>
-          </div>
-          <input
-            type="range"
-            min={0}
-            max={200}
-            value={draftNumber("soundboard.volume", 100)}
-            onChange={(e) => settingsDraft.update("soundboard.volume", Number(e.target.value))}
-            aria-label="Soundboard playback volume"
-            className="w-full accent-[#8B5CF6]"
-          />
-        </div>
+        <p className="text-xs text-[#666666] mt-2"><T>Playback volume is now a personal preference in User Settings → Voice &amp; Video.</T></p>
       </div>
 
       {/* Sound list */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
-            <h3 className="text-lg font-semibold text-white">Sounds ({soundboardSounds.length}/20)</h3>
-            <p className="text-xs text-[#888888]">Upload audio files (max 20MB, 30s, mp3/wav/ogg)</p>
+            <h3 className="text-lg font-semibold text-white"><T>Sounds</T> ({soundboardSounds.length}/500)</h3>
+            <p className="text-xs text-[#888888]"><T>Upload audio files (max 20MB, 30s, mp3/wav/ogg)</T></p>
           </div>
           <button
             onClick={() => soundInputRef.current?.click()}
             disabled={isUploadingSound}
             className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md flex items-center gap-2 disabled:opacity-50"
           >
-            {isUploadingSound ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
-            Upload Sound
+            {isUploadingSound ? <Loader size={16} /> : <Plus className="w-4 h-4" />}
+            <T>Upload Sound</T>
           </button>
         </div>
 
@@ -2612,13 +3411,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         {soundboardSounds.length === 0 ? (
           <div className="text-center py-12 border-2 border-dashed border-[#222222] rounded-lg">
             <Volume2 className="w-12 h-12 text-[#666666] mx-auto mb-4" />
-            <h3 className="text-lg font-semibold text-white mb-2">No sounds yet</h3>
-            <p className="text-[#888888] text-sm mb-4">Upload audio files to use in voice channels</p>
+            <h3 className="text-lg font-semibold text-white mb-2"><T>No sounds yet</T></h3>
+            <p className="text-[#888888] text-sm mb-4"><T>Upload audio files to use in voice channels</T></p>
             <button
               onClick={() => soundInputRef.current?.click()}
               className="px-4 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white rounded-md"
             >
-              Upload First Sound
+              <T>Upload First Sound</T>
             </button>
           </div>
         ) : (
@@ -2633,7 +3432,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   className="flex-shrink-0 w-10 h-10 rounded-full bg-[#8B5CF6] hover:bg-[#7C3AED] flex items-center justify-center transition-colors"
                 >
                   {playingSoundId === sound._id ? (
-                    <Loader2 className="w-5 h-5 text-white animate-spin" />
+                    <Loader size={20} />
                   ) : (
                     <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
                   )}
@@ -2657,168 +3456,298 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     </div>
   );
 
-  const renderIntegrations = () => (
-    <div className="space-y-6">
-      <div>
-        <h2 className="text-xl font-bold text-white mb-1">Integrations</h2>
-        <p className="text-sm text-[#888888]">Enable or disable external integrations for your server</p>
-      </div>
-
-      <div className="space-y-3">
-        {[
-          { key: "discord", label: "Discord Bridge", description: "Sync webhook announcements from Discord channels" },
-          { key: "twitch", label: "Twitch", description: "Announce stream go-live events in your server" },
-          { key: "youtube", label: "YouTube", description: "Post new video notifications to announcement channels" },
-          { key: "webhooks", label: "Custom Webhooks", description: "Allow inbound/outbound webhook automations" },
-        ].map((integration) => (
-          <div key={integration.key} className="p-4 rounded-lg bg-[#111111] border border-[#222222] flex items-center justify-between gap-4">
-            <div>
-              <p className="text-white font-medium">{integration.label}</p>
-              <p className="text-sm text-[#888888]">{integration.description}</p>
-            </div>
-            <ToggleSwitch
-              checked={draftBool(`integrations.${integration.key}`)}
-              onCheckedChange={(checked) => settingsDraft.update(`integrations.${integration.key}`, checked)}
-              aria-label={integration.label}
-            />
-          </div>
-        ))}
-      </div>
-
-    </div>
-  );
-
-  const renderServerTag = () => {
-    const handleTagIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-      const file = e.target.files?.[0];
-      if (!file || !currentServer) return;
-      if (!file.type.startsWith("image/")) { toast.error("Please select an image file"); return; }
-      if (file.size > 256 * 1024) { toast.error("Tag icon must be less than 256KB"); return; }
-      setIsUploadingTagIcon(true);
-      const fd = new FormData();
-      fd.append("file", file);
-      try {
-        const res = await fetch(`/api/upload/server/${currentServer.id}/tag-icon`, { method: "POST", body: fd });
-        const d = await res.json();
-        if (!res.ok) { toast.error(d.error || "Failed to upload tag icon"); return; }
-        setTagIcon(d.url);
-        toast.success("Tag icon updated");
-      } catch { toast.error("Failed to upload tag icon"); }
-      finally { setIsUploadingTagIcon(false); if (tagIconInputRef.current) tagIconInputRef.current.value = ""; }
-    };
-
-    const handleSaveTag = async () => {
-      if (!currentServer) return;
-      setIsSavingTag(true);
-      try {
-        const normalized = tagText.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
-        const res = await fetch(`/api/servers/${currentServer.id}/tag`, {
-          method: "PATCH",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ tagText: normalized || null, tagAllowJoin }),
-        });
-        const d = await res.json();
-        if (!res.ok) { toast.error(d.error || "Failed to save tag"); return; }
-        setTagText(d.tagText ?? "");
-        toast.success("Tag saved");
-      } catch { toast.error("Failed to save tag"); }
-      finally { setIsSavingTag(false); }
-    };
-
-    const handleRemoveTagIcon = async () => {
-      if (!currentServer) return;
-      try {
-        await fetch(`/api/servers/${currentServer.id}/tag/icon`, { method: "DELETE" });
-        setTagIcon(null);
-        toast.success("Tag icon removed");
-      } catch { toast.error("Failed to remove tag icon"); }
-    };
+  const renderIntegrations = () => {
+    const isDiscordEnabled = draftBool("integrations.discord");
+    const isTwitchEnabled = draftBool("integrations.twitch");
+    const isYoutubeEnabled = draftBool("integrations.youtube");
+    const isWebhooksEnabled = draftBool("integrations.webhooks");
 
     return (
       <div className="space-y-6">
         <div>
-          <h2 className="text-xl font-bold text-white mb-1">Server Tag</h2>
-          <p className="text-sm text-[#888888]">A short identifier shown next to usernames in your server</p>
+          <h2 className="text-xl font-bold text-white mb-1">Integrations</h2>
+          <p className="text-sm text-[#888888]">Enable or disable external integrations for your server</p>
         </div>
 
-        <input type="file" ref={tagIconInputRef} onChange={handleTagIconUpload} accept="image/*" className="hidden" />
-
-        {/* Preview */}
-        {tagText && (
-          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
-            <p className="text-xs text-[#888888] uppercase mb-2">Preview</p>
-            <div className="flex items-center gap-2">
-              <span className="text-white font-semibold text-sm">Username</span>
-              <ServerTagBadge tagText={tagText} tagIcon={tagIcon} serverId={currentServer?.id ?? ""} noPopup />
+        <div className="space-y-4">
+          {/* Discord Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-lg bg-[#5865F2]/15 flex items-center justify-center shrink-0">
+                  <svg viewBox="0 0 24 24" className="w-5 h-5 fill-[#5865F2]" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.872-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.009c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.077.077 0 0 0-.041.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.028 19.839 19.839 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.06.06 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.956-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/>
+                  </svg>
+                </div>
+                <div>
+                  <p className="text-white font-semibold flex items-center gap-2">
+                    <T>Discord Bridge</T>
+                  </p>
+                  <p className="text-sm text-[#888888]"><T>Sync channels, roles, and messages bidirectionally with Discord</T></p>
+                </div>
+              </div>
+              <ToggleSwitch
+                checked={isDiscordEnabled}
+                onCheckedChange={(checked) => settingsDraft.update("integrations.discord", checked)}
+                aria-label="Discord Bridge"
+              />
             </div>
-          </div>
-        )}
 
-        {/* Tag icon */}
-        <div>
-          <label className="block text-sm font-medium text-[#888888] mb-2 uppercase">Tag Icon</label>
-          <div className="flex items-center gap-4">
-            <div className="relative group w-16 h-16 rounded-xl bg-[#111111] border border-[#222222] flex items-center justify-center overflow-hidden">
-              {tagIcon ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img src={tagIcon} alt="Tag icon" className="w-full h-full object-cover" />
-              ) : (
-                <Tag className="w-6 h-6 text-[#555]" />
-              )}
-              <button
-                onClick={() => tagIconInputRef.current?.click()}
-                disabled={isUploadingTagIcon}
-                className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl"
-              >
-                {isUploadingTagIcon ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <Camera className="w-5 h-5 text-white" />}
-              </button>
+            {isDiscordEnabled && (
+              <div className="pt-4 border-t border-[#222222] space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                {/* Bot Status & Invite */}
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-[#0d0d0d] border border-[#1e1e1e]">
+                  <div className="w-2.5 h-2.5 rounded-full bg-green-500 shrink-0 shadow-[0_0_8px_rgba(34,197,94,0.6)]" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs font-semibold text-white"><T>SerikaCord Bot</T></p>
+                    <p className="text-[11px] text-[#888888]"><T>Online and listening for messages via Gateway</T></p>
+                  </div>
+                  <a
+                    href="https://discord.com/oauth2/authorize?client_id=1524469730256355421&permissions=8&scope=bot"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 text-xs text-white font-semibold bg-[#5865F2] hover:bg-[#4752c4] rounded-md h-8 px-3 transition-colors shrink-0"
+                  >
+                    <T>Invite Bot</T> <ExternalLink className="w-3 h-3" />
+                  </a>
+                </div>
+
+                {/* Guild ID Input */}
+                <div>
+                  <label className="block text-xs font-semibold text-[#888888] mb-2"><T>DISCORD SERVER (GUILD) ID</T></label>
+                  <Input
+                    type="text"
+                    placeholder={gt("e.g. 1161608848428236902")}
+                    value={draftString("integrations.discordGuildId", "")}
+                    onChange={(e) => settingsDraft.update("integrations.discordGuildId", e.target.value)}
+                    className="bg-[#0a0a0a] border-[#222222] text-white font-mono text-sm"
+                  />
+                  <p className="text-[11px] text-[#666666] mt-1.5">
+                    <T>Right-click your Discord server &gt; Copy Server ID (enable Developer Mode in Discord settings)</T>
+                  </p>
+                </div>
+
+                {/* Consent enforcement */}
+                <div className="flex items-start justify-between gap-4 p-3 rounded-lg bg-[#0d0d0d] border border-[#1e1e1e]">
+                  <div className="min-w-0">
+                    <p className="text-xs font-semibold text-white"><T>Restrict members who haven&apos;t agreed</T></p>
+                    <p className="text-[11px] text-[#888888] mt-0.5">
+                      <T>Discord members who decline data processing by Serika are timed out for 1 week (re-applied weekly) until they agree. Their messages are never synced regardless of this setting.</T>
+                    </p>
+                  </div>
+                  <ToggleSwitch
+                    checked={draftBool("integrations.discordRestrictUnconsented")}
+                    onCheckedChange={(checked) => settingsDraft.update("integrations.discordRestrictUnconsented", checked)}
+                    aria-label="Restrict unconsented members"
+                  />
+                </div>
+
+                {/* Advanced Sync Controls */}
+                <div className="bg-[#181818] p-4 rounded-md border border-[#2c2c2c] space-y-3">
+                  <div className="flex items-center gap-2">
+                    <p className="text-sm font-semibold text-white"><T>Channel &amp; Role Sync</T></p>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2"><T>SYNC MODE</T></label>
+                    <select
+                      value={draftString("integrations.discordMode", "add")}
+                      onChange={(e) => settingsDraft.update("integrations.discordMode", e.target.value)}
+                      className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+                    >
+                      <option value="add">{gt("Keep existing channels, add Discord channels alongside")}</option>
+                      <option value="delete">{gt("Replace all channels with Discord channels (destructive)")}</option>
+                    </select>
+                  </div>
+
+                  <div className="flex gap-3 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleDiscordSync}
+                      disabled={isSyncingDiscord}
+                      className="px-4 h-9 bg-[#5865F2] hover:bg-[#4752c4] disabled:bg-[#5865F2]/50 text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                    >
+                      {isSyncingDiscord ? (
+                        <>
+                          <Loader size={undefined} />
+                          <T>Syncing...</T>
+                        </>
+                      ) : (
+                        gt("Sync Channels & Roles")
+                      )}
+                    </button>
+
+                    <button
+                      type="button"
+                      onClick={() => handleMockTrigger("discord")}
+                      disabled={isTriggeringDiscord}
+                      className="px-4 h-9 bg-neutral-700 hover:bg-neutral-600 disabled:bg-neutral-800 text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                    >
+                      {isTriggeringDiscord ? (
+                        <>
+                          <Loader size={undefined} />
+                          <T>Testing...</T>
+                        </>
+                      ) : (
+                        gt("Send Test Message")
+                      )}
+                    </button>
+                  </div>
+                </div>
+
+                {/* Info Banner */}
+                <div className="flex items-start gap-2 p-3 rounded-md bg-[#5865F2]/8 border border-[#5865F2]/20">
+                  <Check className="w-3.5 h-3.5 text-[#5865F2] shrink-0 mt-0.5" />
+                  <p className="text-[11px] text-[#a8b1ff] leading-relaxed">
+                    <T>Messages from Discord appear in SerikaCord with the author&apos;s Discord username and tag. Messages sent in SerikaCord are relayed back to Discord via the bot. Webhooks are auto-provisioned during sync.</T>
+                  </p>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Twitch Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-white font-medium flex items-center gap-2">
+                  <span className="text-[#a970ff] font-semibold"><T>Twitch Integration</T></span>
+                </p>
+                <p className="text-sm text-[#888888]"><T>Post stream notifications automatically</T></p>
+              </div>
+              <ToggleSwitch
+                checked={isTwitchEnabled}
+                onCheckedChange={(checked) => settingsDraft.update("integrations.twitch", checked)}
+                aria-label="Twitch"
+              />
             </div>
-            <div className="space-y-1">
-              <button onClick={() => tagIconInputRef.current?.click()} disabled={isUploadingTagIcon} className="px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-white text-sm rounded-md transition-colors disabled:opacity-50">
-                {isUploadingTagIcon ? "Uploading…" : "Upload Icon"}
-              </button>
-              {tagIcon && (
-                <button onClick={() => void handleRemoveTagIcon()} className="block px-3 py-1.5 text-red-400 hover:text-red-300 text-sm transition-colors">
-                  Remove
-                </button>
-              )}
-              <p className="text-xs text-[#555]">Max 256KB · PNG, GIF, WebP, JPEG</p>
+
+            {isTwitchEnabled && (
+              <div className="pt-4 border-t border-[#222222] space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2"><T>TWITCH CHANNEL NAME</T></label>
+                    <Input
+                      type="text"
+                      placeholder={gt("e.g. shroud")}
+                      value={draftString("integrations.twitchChannel", "")}
+                      onChange={(e) => settingsDraft.update("integrations.twitchChannel", e.target.value)}
+                      className="bg-[#0a0a0a] border-[#222222] text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2"><T>NOTIFICATION CHANNEL</T></label>
+                    <select
+                      value={draftString("integrations.twitchNotificationChannelId", "")}
+                      onChange={(e) => settingsDraft.update("integrations.twitchNotificationChannelId", e.target.value)}
+                      className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+                    >
+                      <option value="">{gt("Select a channel")}</option>
+                      {textChannels.map((channel) => (
+                        <option key={channel.id} value={channel.id}>#{channel.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleMockTrigger("twitch")}
+                    disabled={isTriggeringTwitch}
+                    className="px-4 h-9 bg-[#a970ff] hover:bg-[#b88cff] disabled:bg-[#7e55bf] text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                  >
+                    {isTriggeringTwitch ? (
+                      <>
+                        <Loader size={undefined} />
+                        <T>Triggering...</T>
+                      </>
+                    ) : (
+                      gt("Trigger Mock Stream Live Alert")
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* YouTube Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] space-y-4">
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-white font-medium flex items-center gap-2">
+                  <span className="text-[#FF0000] font-semibold"><T>YouTube Integration</T></span>
+                </p>
+                <p className="text-sm text-[#888888]"><T>Post notifications for new uploads and videos</T></p>
+              </div>
+              <ToggleSwitch
+                checked={isYoutubeEnabled}
+                onCheckedChange={(checked) => settingsDraft.update("integrations.youtube", checked)}
+                aria-label="YouTube"
+              />
             </div>
+
+            {isYoutubeEnabled && (
+              <div className="pt-4 border-t border-[#222222] space-y-4 animate-in fade-in slide-in-from-top-2 duration-200">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2"><T>YOUTUBE CHANNEL ID OR NAME</T></label>
+                    <Input
+                      type="text"
+                      placeholder={gt("e.g. MrBeast")}
+                      value={draftString("integrations.youtubeChannel", "")}
+                      onChange={(e) => settingsDraft.update("integrations.youtubeChannel", e.target.value)}
+                      className="bg-[#0a0a0a] border-[#222222] text-white"
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-[#888888] mb-2"><T>NOTIFICATION CHANNEL</T></label>
+                    <select
+                      value={draftString("integrations.youtubeNotificationChannelId", "")}
+                      onChange={(e) => settingsDraft.update("integrations.youtubeNotificationChannelId", e.target.value)}
+                      className="w-full h-10 px-3 rounded-md bg-[#0a0a0a] border border-[#222222] text-white"
+                    >
+                      <option value="">{gt("Select a channel")}</option>
+                      {textChannels.map((channel) => (
+                        <option key={channel.id} value={channel.id}>#{channel.name}</option>
+                      ))}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="pt-2">
+                  <button
+                    type="button"
+                    onClick={() => handleMockTrigger("youtube")}
+                    disabled={isTriggeringYoutube}
+                    className="px-4 h-9 bg-[#FF0000] hover:bg-[#ff3333] disabled:bg-[#cc0000] text-white text-xs font-semibold rounded-md flex items-center gap-2 transition-colors"
+                  >
+                    {isTriggeringYoutube ? (
+                      <>
+                        <Loader size={undefined} />
+                        <T>Triggering...</T>
+                      </>
+                    ) : (
+                      gt("Trigger Mock Video Upload Alert")
+                    )}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Webhooks Card */}
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] flex items-center justify-between gap-4">
+            <div>
+              <p className="text-white font-medium"><T>Custom Webhooks</T></p>
+              <p className="text-sm text-[#888888]"><T>Allow inbound/outbound webhook automations</T></p>
+            </div>
+            <ToggleSwitch
+              checked={isWebhooksEnabled}
+              onCheckedChange={(checked) => settingsDraft.update("integrations.webhooks", checked)}
+              aria-label="Custom Webhooks"
+            />
           </div>
         </div>
-
-        {/* Tag text */}
-        <div>
-          <label className="block text-sm font-medium text-[#888888] mb-2 uppercase">Tag Text</label>
-          <input
-            type="text"
-            value={tagText}
-            maxLength={5}
-            onChange={(e) => setTagText(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5))}
-            placeholder="e.g. ALPHA"
-            className="w-40 h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white font-mono tracking-widest focus:border-[#8B5CF6] focus:outline-none transition-colors"
-          />
-          <p className="text-xs text-[#555] mt-1">Up to 5 characters · letters and numbers only · auto-capitalized</p>
-        </div>
-
-        {/* Allow join from tag */}
-        <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] flex items-center justify-between gap-4">
-          <div>
-            <p className="text-white font-medium text-sm">Allow joining from tag</p>
-            <p className="text-xs text-[#888888] mt-0.5">When enabled, anyone who clicks the tag can join this server</p>
-          </div>
-          <ToggleSwitch checked={tagAllowJoin} onCheckedChange={setTagAllowJoin} aria-label="Allow joining from tag" />
-        </div>
-
-        {/* Save */}
-        <button
-          onClick={() => void handleSaveTag()}
-          disabled={isSavingTag}
-          className="px-5 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
-        >
-          {isSavingTag && <Loader2 className="w-4 h-4 animate-spin" />}
-          Save Tag
-        </button>
       </div>
     );
   };
@@ -2827,8 +3756,6 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     switch (activeTab) {
       case "overview":
         return renderOverview();
-      case "server-tag":
-        return renderServerTag();
       case "roles":
         return renderRoles();
       case "invites":
@@ -2852,6 +3779,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         return renderModeration();
       case "integrations":
         return renderIntegrations();
+      case "access":
+        return renderAccess();
+      case "applications":
+        return renderApplications();
+      case "app_discovery":
+        return renderAppDiscovery();
       default:
         return renderOverview();
     }
@@ -2861,7 +3794,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     <div
       role="dialog"
       aria-modal="true"
-      aria-label={`Server settings for ${currentServer.name}`}
+      aria-label={gt("Server settings for {name}", { name: currentServer.name })}
       className="fixed inset-0 z-50 bg-[#0a0a0a] flex"
     >
       {/* Sidebar */}
@@ -2874,21 +3807,29 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
                   {section.title}
                 </h3>
                 <div className="space-y-0.5">
-                  {section.items.map((item) => (
-                    <button
-                      key={item.id}
-                      onClick={() => setActiveTab(item.id)}
-                      className={cn(
-                        "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
-                        activeTab === item.id
-                          ? "bg-[#8B5CF6]/10 text-white"
-                          : "text-[#888888] hover:bg-[#111111] hover:text-white"
-                      )}
-                    >
-                      <item.icon className="w-4 h-4 flex-shrink-0" />
-                      <span className="truncate">{item.label}</span>
-                    </button>
-                  ))}
+                  {section.items.map((item) => {
+                    const showBadge = pendingAppCount > 0 && (item.id === "applications" || item.id === "members");
+                    return (
+                      <button
+                        key={item.id}
+                        onClick={() => setActiveTab(item.id)}
+                        className={cn(
+                          "w-full flex items-center gap-2 px-3 py-2 rounded-md text-sm transition-colors",
+                          activeTab === item.id
+                            ? "bg-[#8B5CF6]/10 text-white"
+                            : "text-[#888888] hover:bg-[#111111] hover:text-white"
+                        )}
+                      >
+                        <item.icon className="w-4 h-4 flex-shrink-0" />
+                        <span className="truncate flex-1 text-left">{item.label}</span>
+                        {showBadge && (
+                          <span className="ml-auto px-1.5 py-0.5 bg-red-500 text-white text-[10px] font-bold rounded-full min-w-[18px] text-center">
+                            {pendingAppCount > 99 ? "99+" : pendingAppCount}
+                          </span>
+                        )}
+                      </button>
+                    );
+                  })}
                 </div>
               </div>
             ))}
@@ -2902,7 +3843,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         <div className="h-14 flex items-center justify-end px-4 border-b border-[#1a1a1a]">
           <button
             onClick={handleRequestClose}
-            aria-label="Close server settings"
+            aria-label={gt("Close server settings")}
             className="p-2 rounded-full hover:bg-[#1a1a1a] text-[#888888] hover:text-white transition-colors focus-visible:outline-2 focus-visible:outline-[#8B5CF6]"
           >
             <X className="w-5 h-5" />
@@ -2946,11 +3887,11 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         imageUrl={cropperImage}
         aspectRatio={cropperType === "icon" ? 1 : 2}
         onCropComplete={handleCropComplete}
-        title={cropperType === "icon" ? "Crop Server Icon" : "Crop Server Banner"}
+        title={cropperType === "icon" ? gt("Crop Server Icon") : gt("Crop Server Banner")}
         description={
           cropperType === "icon"
-            ? "Adjust the crop area to select the portion of the image for your server icon."
-            : "Adjust the crop area to select the portion of the image for your server banner."
+            ? gt("Adjust the crop area to select the portion of the image for your server icon.")
+            : gt("Adjust the crop area to select the portion of the image for your server banner.")
         }
         circular={cropperType === "icon"}
       />

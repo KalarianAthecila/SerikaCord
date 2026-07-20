@@ -12,18 +12,20 @@ import {
   Clock,
   Users,
   ChevronDown,
-  Settings,
-  Loader2,
+  Settings, 
   Share2,
   RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
+import { T, useGT } from "gt-next";
+import { Loader } from "@/components/ui/Loader";
 
 interface InviteDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   channelId?: string;
+  serverId?: string | null;
 }
 
 const EXPIRE_OPTIONS = [
@@ -46,8 +48,14 @@ const MAX_USES_OPTIONS = [
   { value: 100, label: "100 uses" },
 ];
 
-export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProps) {
-  const { currentServer, channels } = useServer();
+export function InviteDialog({ open, onOpenChange, channelId, serverId }: InviteDialogProps) {
+  const { currentServer, channels: contextChannels, servers } = useServer();
+  // When serverId is provided (e.g. right-click on a different server in the rail),
+  // use that server instead of the currentServer from context.
+  const activeServer = serverId
+    ? servers.find((s) => s.id === serverId) || currentServer
+    : currentServer;
+  const gt = useGT();
   const [inviteCode, setInviteCode] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [copied, setCopied] = useState(false);
@@ -55,13 +63,59 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
   const [maxAge, setMaxAge] = useState(604800); // 7 days
   const [maxUses, setMaxUses] = useState(0); // Unlimited
   const [selectedChannel, setSelectedChannel] = useState(channelId || "");
+  const [vanityInfo, setVanityInfo] = useState<{ code: string | null; lockToVanity: boolean } | null>(null);
+  const [localChannels, setLocalChannels] = useState<typeof contextChannels>([]);
+
+  // When serverId targets a different server, fetch its channels locally
+  // so we don't clobber the context channel list.
+  const channels = serverId && serverId !== currentServer?.id ? localChannels : contextChannels;
+
+  useEffect(() => {
+    if (!open || !serverId || serverId === currentServer?.id) return;
+    let active = true;
+    fetch(`/api/servers/${serverId}/channels`)
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (active && Array.isArray(data?.channels)) {
+          setLocalChannels(data.channels);
+          const firstText = data.channels.find((c: any) => c.type === "text");
+          if (firstText) setSelectedChannel(firstText.id);
+        }
+      })
+      .catch(() => {});
+    return () => { active = false; };
+  }, [open, serverId, currentServer?.id]);
 
   // Generate invite on open
   useEffect(() => {
-    if (open && currentServer) {
-      generateInvite();
+    if (open && activeServer) {
+      // Fetch vanity info first; only create a real invite when the server
+      // isn't locked to its custom (vanity) link.
+      (async () => {
+        const locked = await fetchVanityInfo();
+        if (!locked) {
+          generateInvite();
+        }
+      })();
     }
-  }, [open, currentServer]);
+  }, [open, activeServer]);
+
+  const fetchVanityInfo = async (): Promise<boolean> => {
+    if (!activeServer) return false;
+    try {
+      const res = await fetch(`/api/servers/${activeServer.id}/vanity-url`);
+      if (res.ok) {
+        const data = await res.json();
+        const code = data.code ?? null;
+        const lockToVanity = Boolean(data.lockToVanity);
+        setVanityInfo({ code, lockToVanity });
+        return lockToVanity && Boolean(code);
+      }
+    } catch {
+      // ignore — vanity info is optional
+    }
+    return false;
+  };
 
   // Set initial channel
   useEffect(() => {
@@ -74,10 +128,10 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
   }, [channels, selectedChannel]);
 
   const generateInvite = async () => {
-    if (!currentServer) return;
+    if (!activeServer) return;
     setIsLoading(true);
     try {
-      const response = await fetch(`/api/servers/${currentServer.id}/invites`, {
+      const response = await fetch(`/api/servers/${activeServer.id}/invites`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
@@ -92,36 +146,41 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
         setInviteCode(data.invite?.code || data.code || "");
       } else {
         const data = await response.json().catch(() => null);
-        setInviteCode("");
-        toast.error(data?.error || "Failed to create invite link");
+        const errMsg = data?.error || "";
+        if (errMsg.toLowerCase().includes("custom invite link")) {
+          await fetchVanityInfo();
+        } else {
+          setInviteCode("");
+          toast.error(errMsg || gt("Failed to create invite link"));
+        }
       }
     } catch (error) {
       console.error("Failed to create invite:", error);
       setInviteCode("");
-      toast.error("Failed to create invite link. Check your connection and try again.");
+      toast.error(gt("Failed to create invite link. Check your connection and try again."));
     } finally {
       setIsLoading(false);
     }
   };
 
   const handleCopy = async () => {
-    const inviteUrl = `https://serika.cc/${inviteCode}`;
+    const inviteUrl = `https://serika.cc/${effectiveCode}`;
     await navigator.clipboard.writeText(inviteUrl);
     setCopied(true);
-    toast.success("Invite link copied!");
+    toast.success(gt("Invite link copied!"));
     setTimeout(() => setCopied(false), 2000);
   };
 
   const handleShare = async () => {
-    const inviteUrl = `https://serika.cc/${inviteCode}`;
+    const inviteUrl = `https://serika.cc/${effectiveCode}`;
     if (navigator.share) {
       try {
         await navigator.share({
-          title: `Join ${currentServer?.name} on SerikaCord`,
-          text: `Come chat with us on SerikaCord!`,
+          title: gt("Join {server} on SerikaCord", { server: activeServer?.name || "" }),
+          text: gt("Come chat with us on SerikaCord!"),
           url: inviteUrl,
         });
-        toast.success("Shared!");
+        toast.success(gt("Shared!"));
       } catch {
         // User cancelled or share failed
       }
@@ -155,9 +214,11 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
     }
   }, [open]);
 
-  if (!open || !currentServer) return null;
+  if (!open || !activeServer) return null;
 
-  const inviteUrl = `serika.cc/${inviteCode}`;
+  const isLockedToVanity = vanityInfo?.lockToVanity && vanityInfo?.code;
+  const effectiveCode = isLockedToVanity ? vanityInfo!.code : inviteCode;
+  const inviteUrl = `serika.cc/${effectiveCode}`;
   const textChannels = channels.filter(c => c.type === "text");
 
   return (
@@ -173,7 +234,7 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
         ref={dialogRef}
         role="dialog"
         aria-modal="true"
-        aria-label={`Invite friends to ${currentServer.name}`}
+        aria-label={`Invite friends to ${activeServer.name}`}
         tabIndex={-1}
         className="relative w-full max-w-md mx-4 bg-[#111111] rounded-lg shadow-xl animate-in fade-in zoom-in-95 duration-200 outline-none"
       >
@@ -181,14 +242,14 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
         <div className="flex items-center justify-between p-4 border-b border-[#222222]">
           <div className="flex items-center gap-3">
             <Avatar className="w-10 h-10">
-              <AvatarImage src={(currentServer as { icon?: string }).icon} />
+              <AvatarImage src={(activeServer as { icon?: string }).icon} />
               <AvatarFallback className="bg-[#8B5CF6] text-white">
-                {currentServer.name.charAt(0)}
+                {activeServer.name.charAt(0)}
               </AvatarFallback>
             </Avatar>
             <div>
-              <h2 className="text-white font-semibold">Invite friends to {currentServer.name}</h2>
-              <p className="text-xs text-[#888888]">Share this link to invite others</p>
+              <h2 className="text-white font-semibold">{gt("Invite friends to")} {activeServer.name}</h2>
+              <p className="text-xs text-[#888888]"><T>Share this link to invite others</T></p>
             </div>
           </div>
           <button
@@ -202,9 +263,10 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
         {/* Content */}
         <div className="p-4 space-y-4">
           {/* Channel Selector */}
+          {!isLockedToVanity && (
           <div>
             <label className="block text-xs font-semibold uppercase text-[#888888] mb-2">
-              INVITE TO CHANNEL
+              {gt("INVITE TO CHANNEL")}
             </label>
             <div className="relative">
               <select
@@ -221,26 +283,27 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
               <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888] pointer-events-none" />
             </div>
           </div>
+          )}
 
           {/* Invite Link */}
           <div>
             <label className="block text-xs font-semibold uppercase text-[#888888] mb-2">
-              INVITE LINK
+              {gt("INVITE LINK")}
             </label>
             <div className="flex gap-2">
               <div className="flex-1 relative">
                 <Input
-                  value={isLoading ? "Generating..." : inviteCode ? inviteUrl : "Could not create invite"}
+                  value={isLoading ? gt("Generating...") : effectiveCode ? inviteUrl : gt("Could not create invite")}
                   readOnly
                   className="bg-[#0a0a0a] border-[#222222] text-white pr-10 font-mono text-sm"
                 />
                 {isLoading && (
-                  <Loader2 className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-[#888888] animate-spin" />
+                  <Loader size={16} className="absolute right-3 top-1/2 -translate-y-1/2" />
                 )}
               </div>
               <button
                 onClick={handleCopy}
-                disabled={isLoading || !inviteCode}
+                disabled={isLoading || !effectiveCode}
                 className={cn(
                   "px-4 py-2 rounded-md font-medium transition-colors flex items-center gap-2",
                   copied
@@ -251,12 +314,12 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
                 {copied ? (
                   <>
                     <Check className="w-4 h-4" />
-                    Copied
+                    {gt("Copied")}
                   </>
                 ) : (
                   <>
                     <Copy className="w-4 h-4" />
-                    Copy
+                    {gt("Copy")}
                   </>
                 )}
               </button>
@@ -270,31 +333,33 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
               className="w-full py-2.5 rounded-md bg-[#1a1a1a] hover:bg-[#222222] text-white font-medium transition-colors flex items-center justify-center gap-2"
             >
               <Share2 className="w-4 h-4" />
-              Share Invite Link
+              {gt("Share Invite Link")}
             </button>
           )}
 
           {/* Settings Toggle */}
+          {!isLockedToVanity && (
           <button
             onClick={() => setShowSettings(!showSettings)}
             className="flex items-center gap-2 text-sm text-[#888888] hover:text-white transition-colors"
           >
             <Settings className="w-4 h-4" />
-            Edit invite link
+            {gt("Edit invite link")}
             <ChevronDown className={cn(
               "w-4 h-4 transition-transform",
               showSettings && "rotate-180"
             )} />
           </button>
+          )}
 
           {/* Settings Panel */}
-          {showSettings && (
+          {showSettings && !isLockedToVanity && (
             <div className="space-y-4 p-4 rounded-lg bg-[#0a0a0a] border border-[#222222]">
               {/* Expire After */}
               <div>
                 <label className="flex items-center gap-2 text-xs font-semibold uppercase text-[#888888] mb-2">
                   <Clock className="w-3 h-3" />
-                  EXPIRE AFTER
+                  {gt("EXPIRE AFTER")}
                 </label>
                 <select
                   value={maxAge}
@@ -313,7 +378,7 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
               <div>
                 <label className="flex items-center gap-2 text-xs font-semibold uppercase text-[#888888] mb-2">
                   <Users className="w-3 h-3" />
-                  MAX NUMBER OF USES
+                  {gt("MAX NUMBER OF USES")}
                 </label>
                 <select
                   value={maxUses}
@@ -335,7 +400,7 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
                 className="w-full py-2 rounded-md bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
-                Generate New Link
+                {gt("Generate New Link")}
               </button>
             </div>
           )}
@@ -343,10 +408,16 @@ export function InviteDialog({ open, onOpenChange, channelId }: InviteDialogProp
 
         {/* Footer */}
         <div className="p-4 border-t border-[#222222] bg-[#0a0a0a] rounded-b-lg">
-          <p className="text-xs text-[#666666] text-center">
-            Your invite link expires in {EXPIRE_OPTIONS.find(o => o.value === maxAge)?.label || "7 days"}.
-            {maxUses > 0 && ` Limited to ${maxUses} uses.`}
-          </p>
+          {isLockedToVanity ? (
+            <p className="text-xs text-[#666666] text-center">
+              <T>This server only allows invites through its custom invite link.</T>
+            </p>
+          ) : (
+            <p className="text-xs text-[#666666] text-center">
+              {gt("Your invite link expires in")} {EXPIRE_OPTIONS.find(o => o.value === maxAge)?.label || gt("7 days")}.
+              {maxUses > 0 && ` ${gt("Limited to")} ${maxUses} ${gt("uses")}.`}
+            </p>
+          )}
         </div>
       </div>
     </div>

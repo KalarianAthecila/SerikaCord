@@ -34,6 +34,7 @@ export function normalizeIncomingMessage<M extends ChatMessage>(raw: RawMessageP
     authorId,
     author,
     attachments: raw.attachments || [],
+    embeds: raw.embeds || [],
     reactions: raw.reactions || [],
     customEmojis: raw.customEmojis || [],
     mentionEveryone: Boolean(raw.mentionEveryone),
@@ -76,22 +77,28 @@ export function groupMessages<M extends ChatMessage>(messages: M[]): MessageGrou
 }
 
 /** "Today at 3:41 PM" / "Yesterday at ..." / "Mar 4, 2026 at ..." */
-export function formatMessageTimestamp(timestamp: string): string {
+export function formatMessageTimestamp(
+  timestamp: string,
+  gt?: (msg: string, opts?: Record<string, unknown>) => string,
+  locale?: string,
+): string {
   const date = new Date(timestamp);
   const now = new Date();
-  const time = date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const loc = locale || undefined;
+  const time = date.toLocaleTimeString(loc, { hour: "numeric", minute: "2-digit" });
 
   if (date.toDateString() === now.toDateString()) {
-    return `Today at ${time}`;
+    return gt ? gt("Today at {time}", { time }) : `Today at ${time}`;
   }
 
   const yesterday = new Date(now);
   yesterday.setDate(yesterday.getDate() - 1);
   if (date.toDateString() === yesterday.toDateString()) {
-    return `Yesterday at ${time}`;
+    return gt ? gt("Yesterday at {time}", { time }) : `Yesterday at ${time}`;
   }
 
-  return `${date.toLocaleDateString([], { month: "short", day: "numeric", year: "numeric" })} at ${time}`;
+  const dateStr = date.toLocaleDateString(loc, { month: "short", day: "numeric", year: "numeric" });
+  return gt ? gt("{date} at {time}", { date: dateStr, time }) : `${dateStr} at ${time}`;
 }
 
 export function formatFileSize(bytes?: number): string {
@@ -137,7 +144,7 @@ export function applyReactionToMessages<M extends ChatMessage>(
 
     if (index === -1) {
       if (!isAdd) return msg;
-      const customMatch = emoji.match(/^<(a)?:([a-zA-Z0-9_]+):([a-f0-9]{24})>$/);
+      const customMatch = emoji.match(/^<(a)?:([a-zA-Z0-9_]+):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>$/);
       let emojiObj: MessageReaction["emoji"];
       if (customMatch) {
         const [, animated, name, id] = customMatch;

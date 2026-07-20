@@ -3,6 +3,7 @@
 import { useRouter } from "next/navigation";
 import { ChevronLeft, Settings, Menu, MoreVertical } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useGT } from "gt-next";
 
 interface MobileHeaderProps {
     title: string;
@@ -32,6 +33,7 @@ export function MobileHeader({
     className,
 }: MobileHeaderProps) {
     const router = useRouter();
+    const gt = useGT();
 
     const handleBack = () => {
         if (onBack) {
@@ -46,7 +48,7 @@ export function MobileHeader({
     return (
         <header
             className={cn(
-                "flex items-center justify-between px-4 h-14 bg-[#0a0a0a]/95 backdrop-blur-lg border-b border-white/5 flex-shrink-0 safe-area-top",
+                "flex items-center justify-between px-4 h-14 bg-[var(--bg-app)]/95 backdrop-blur-lg border-b border-[var(--border-subtle)] flex-shrink-0 safe-area-top",
                 className
             )}
         >
@@ -54,29 +56,29 @@ export function MobileHeader({
                 {showMenu && (
                     <button
                         onClick={onMenuClick}
-                        className="p-2 -ml-2 rounded-xl hover:bg-white/5 active:bg-white/10 transition-colors mobile-touch-target"
-                        aria-label="Open menu"
+                        className="p-2 -ml-2 rounded-xl hover:bg-[var(--bg-hover)] active:bg-[var(--bg-active)] transition-colors mobile-touch-target"
+                        aria-label={gt("Open menu")}
                     >
-                        <Menu className="w-5 h-5 text-white" />
+                        <Menu className="w-5 h-5 text-[var(--text-primary)]" />
                     </button>
                 )}
 
                 {showBackButton && (
                     <button
                         onClick={handleBack}
-                        className="p-2 -ml-2 rounded-xl hover:bg-white/5 active:bg-white/10 transition-colors mobile-touch-target"
-                        aria-label="Go back"
+                        className="p-2 -ml-2 rounded-xl hover:bg-[var(--bg-hover)] active:bg-[var(--bg-active)] transition-colors mobile-touch-target"
+                        aria-label={gt("Go back")}
                     >
-                        <ChevronLeft className="w-5 h-5 text-white" />
+                        <ChevronLeft className="w-5 h-5 text-[var(--text-primary)]" />
                     </button>
                 )}
 
                 <div className="min-w-0 flex-1">
-                    <h1 className="text-lg font-bold text-white truncate leading-tight">
+                    <h1 className="text-lg font-bold text-[var(--text-primary)] truncate leading-tight">
                         {title}
                     </h1>
                     {subtitle && (
-                        <p className="text-xs text-neutral-400 truncate">{subtitle}</p>
+                        <p className="text-xs text-[var(--text-muted)] truncate">{subtitle}</p>
                     )}
                 </div>
             </div>
@@ -87,10 +89,10 @@ export function MobileHeader({
                 {showSettings && (
                     <button
                         onClick={onSettingsClick}
-                        className="p-2.5 rounded-xl hover:bg-white/5 active:bg-white/10 transition-colors mobile-touch-target"
-                        aria-label="Settings"
+                        className="p-2.5 rounded-xl hover:bg-[var(--bg-hover)] active:bg-[var(--bg-active)] transition-colors mobile-touch-target"
+                        aria-label={gt("Settings")}
                     >
-                        <Settings className="w-5 h-5 text-neutral-400" />
+                        <Settings className="w-5 h-5 text-[var(--text-muted)]" />
                     </button>
                 )}
             </div>

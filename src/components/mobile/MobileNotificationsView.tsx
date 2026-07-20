@@ -14,7 +14,8 @@ import {
   Check,
   X,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, cdnImage } from "@/lib/utils";
+import { useGT } from "gt-next";
 
 interface Notification {
   id: string;
@@ -31,6 +32,7 @@ interface Notification {
 
 export function MobileNotificationsView() {
   const router = useRouter();
+  const gt = useGT();
   const [notifications, setNotifications] = useState<Notification[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [filter, setFilter] = useState<"all" | "mentions" | "unread">("all");
@@ -63,10 +65,10 @@ export function MobileNotificationsView() {
     const hours = Math.floor(minutes / 60);
     const days = Math.floor(hours / 24);
 
-    if (minutes < 1) return "Just now";
-    if (minutes < 60) return `${minutes}m ago`;
-    if (hours < 24) return `${hours}h ago`;
-    if (days < 7) return `${days}d ago`;
+    if (minutes < 1) return gt("Just now");
+    if (minutes < 60) return gt("{minutes}m ago", { minutes });
+    if (hours < 24) return gt("{hours}h ago", { hours });
+    if (days < 7) return gt("{days}d ago", { days });
     return d.toLocaleDateString();
   };
 
@@ -113,14 +115,14 @@ export function MobileNotificationsView() {
   const unreadCount = notifications.filter(n => !n.isRead).length;
 
   return (
-    <div className="flex flex-col h-full bg-[#0a0a0a]">
+    <div className="flex flex-col h-full bg-[var(--bg-app)]">
       {/* Header */}
       <header className="flex-shrink-0 px-4 pt-3 pb-2 safe-area-top">
         <div className="flex items-center justify-between mb-3">
-          <h1 className="text-2xl font-bold text-white">Notifications</h1>
+          <h1 className="text-2xl font-bold text-[var(--text-primary)]">{gt("Notifications")}</h1>
           <button
             onClick={() => router.push("/channels/settings/notifications")}
-            className="flex items-center justify-center w-10 h-10 rounded-full bg-[#1a1a1a] text-white active:scale-95 active:bg-[#252525] transition-all touch-manipulation"
+            className="flex items-center justify-center w-10 h-10 rounded-full bg-[var(--bg-card)] text-[var(--text-primary)] active:scale-95 active:bg-[var(--bg-hover)] transition-all touch-manipulation"
           >
             <Settings className="w-5 h-5" />
           </button>
@@ -133,33 +135,33 @@ export function MobileNotificationsView() {
             className={cn(
               "px-4 py-2 rounded-full text-sm font-semibold transition-all whitespace-nowrap active:scale-95 touch-manipulation",
               filter === "all"
-                ? "bg-[#8B5CF6] text-white"
-                : "bg-[#1a1a1a] text-neutral-400"
+                ? "bg-[var(--app-accent)] text-white"
+                : "bg-[var(--bg-card)] text-[var(--text-muted)]"
             )}
           >
-            All
+            {gt("All")}
           </button>
           <button
             onClick={() => setFilter("mentions")}
             className={cn(
               "px-4 py-2 rounded-full text-sm font-semibold transition-all whitespace-nowrap active:scale-95 touch-manipulation",
               filter === "mentions"
-                ? "bg-[#8B5CF6] text-white"
-                : "bg-[#1a1a1a] text-neutral-400"
+                ? "bg-[var(--app-accent)] text-white"
+                : "bg-[var(--bg-card)] text-[var(--text-muted)]"
             )}
           >
-            Mentions
+            {gt("Mentions")}
           </button>
           <button
             onClick={() => setFilter("unread")}
             className={cn(
               "px-4 py-2 rounded-full text-sm font-semibold transition-all whitespace-nowrap flex items-center gap-1.5 active:scale-95 touch-manipulation",
               filter === "unread"
-                ? "bg-[#8B5CF6] text-white"
-                : "bg-[#1a1a1a] text-neutral-400"
+                ? "bg-[var(--app-accent)] text-white"
+                : "bg-[var(--bg-card)] text-[var(--text-muted)]"
             )}
           >
-            Unread
+            {gt("Unread")}
             {unreadCount > 0 && (
               <span className="min-w-[18px] h-[18px] px-1 flex items-center justify-center bg-[#ED4245] text-white text-[10px] font-bold rounded-full">
                 {unreadCount}
@@ -174,10 +176,10 @@ export function MobileNotificationsView() {
         <div className="px-5 mb-2">
           <button
             onClick={handleMarkAllRead}
-            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[#1a1a1a] text-neutral-400 hover:text-white transition-all active:scale-95 border border-white/5"
+            className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl bg-[var(--bg-card)] text-[var(--text-muted)] hover:text-[var(--text-primary)] transition-all active:scale-95 border border-[var(--border-subtle)]"
           >
             <Check className="w-4 h-4" />
-            <span className="text-sm font-medium">Mark all as read</span>
+            <span className="text-sm font-medium">{gt("Mark all as read")}</span>
           </button>
         </div>
       )}
@@ -187,20 +189,20 @@ export function MobileNotificationsView() {
         <div className="pb-24 pt-2">
           {isLoading ? (
             <div className="flex items-center justify-center py-20">
-              <div className="w-10 h-10 border-4 border-[#8B5CF6] border-t-transparent rounded-full animate-spin" />
+              <div className="w-10 h-10 border-4 border-[var(--app-accent)] border-t-transparent rounded-full animate-spin" />
             </div>
           ) : filteredNotifications.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
-              <div className="w-20 h-20 rounded-3xl bg-[#1a1a1a] flex items-center justify-center mb-6">
-                <Bell className="w-10 h-10 text-neutral-500" />
+              <div className="w-20 h-20 rounded-3xl bg-[var(--bg-card)] flex items-center justify-center mb-6">
+                <Bell className="w-10 h-10 text-[var(--text-muted)]" />
               </div>
-              <h3 className="text-xl font-bold text-white mb-2">
-                {filter === "all" ? "No notifications" : `No ${filter} notifications`}
+              <h3 className="text-xl font-bold text-[var(--text-primary)] mb-2">
+                {filter === "all" ? gt("No notifications") : gt("No {filter} notifications", { filter })}
               </h3>
-              <p className="text-neutral-500 text-base">
+              <p className="text-[var(--text-muted)] text-base">
                 {filter === "all"
-                  ? "When you receive notifications, they'll appear here"
-                  : `You don't have any ${filter} notifications`}
+                  ? gt("When you receive notifications, they'll appear here")
+                  : gt("You don't have any {filter} notifications", { filter })}
               </p>
             </div>
           ) : (
@@ -210,18 +212,18 @@ export function MobileNotificationsView() {
                   key={notification.id}
                   onClick={() => handleNotificationClick(notification)}
                   className={cn(
-                    "w-full flex items-start gap-4 px-4 py-4 hover:bg-[#1a1a1a]/50 active:bg-[#1a1a1a] rounded-2xl transition-all text-left group",
-                    !notification.isRead && "bg-[#8B5CF6]/5 border border-[#8B5CF6]/20"
+                    "w-full flex items-start gap-4 px-4 py-4 hover:bg-[var(--bg-hover)]/50 active:bg-[var(--bg-hover)] rounded-2xl transition-all text-left group",
+                    !notification.isRead && "bg-[var(--app-accent)]/5 border border-[var(--app-accent)]/20"
                   )}
                 >
                   <div className="relative flex-shrink-0 mt-0.5">
-                    <Avatar className="w-12 h-12 border border-white/5">
-                      <AvatarImage src={notification.avatar} />
-                      <AvatarFallback className="bg-[#8B5CF6] text-white font-bold">
+                    <Avatar className="w-12 h-12 border border-[var(--border-subtle)]">
+                      <AvatarImage src={cdnImage(notification.avatar)} />
+                      <AvatarFallback className="bg-[var(--app-accent)] text-white font-bold">
                         {notification.title.charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
-                    <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#111111] flex items-center justify-center shadow-sm border border-black">
+                    <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[var(--bg-card)] flex items-center justify-center shadow-sm border border-[var(--border-subtle)]">
                       {getNotificationIcon(notification.type)}
                     </div>
                   </div>
@@ -230,17 +232,17 @@ export function MobileNotificationsView() {
                     <div className="flex items-start justify-between gap-3">
                       <span className={cn(
                         "font-semibold truncate text-[16px] leading-tight",
-                        notification.isRead ? "text-neutral-400" : "text-white"
+                        notification.isRead ? "text-[var(--text-muted)]" : "text-[var(--text-primary)]"
                       )}>
                         {notification.title}
                       </span>
-                      <span className="text-xs font-medium text-neutral-600 flex-shrink-0 whitespace-nowrap">
+                      <span className="text-xs font-medium text-[var(--text-muted)] flex-shrink-0 whitespace-nowrap">
                         {formatTimestamp(notification.timestamp)}
                       </span>
                     </div>
                     <p className={cn(
                       "text-[15px] leading-snug mt-1 line-clamp-2",
-                      notification.isRead ? "text-neutral-500" : "text-neutral-300"
+                      notification.isRead ? "text-[var(--text-muted)]" : "text-[var(--text-secondary)]"
                     )}>
                       {notification.description}
                     </p>
@@ -255,7 +257,7 @@ export function MobileNotificationsView() {
                             // Add accept logic
                           }}
                         >
-                          <Check className="w-4 h-4 mr-1" /> Accept
+                          <Check className="w-4 h-4 mr-1" /> {gt("Accept")}
                         </button>
                         <button
                           className="flex items-center justify-center px-4 py-2 rounded-lg bg-[#ED4245] hover:bg-[#C03537] text-white transition-all active:scale-95 font-bold text-xs"
@@ -264,14 +266,14 @@ export function MobileNotificationsView() {
                             // Add deny logic
                           }}
                         >
-                          <X className="w-4 h-4 mr-1" /> Decline
+                          <X className="w-4 h-4 mr-1" /> {gt("Decline")}
                         </button>
                       </div>
                     )}
                   </div>
 
                   {!notification.isRead && (
-                    <div className="w-2.5 h-2.5 rounded-full bg-[#8B5CF6] flex-shrink-0 mt-2 shadow-[0_0_10px_rgba(139,92,246,0.5)]" />
+                    <div className="w-2.5 h-2.5 rounded-full bg-[var(--app-accent)] flex-shrink-0 mt-2" />
                   )}
                 </button>
               ))}

@@ -1,17 +1,30 @@
 import { Elysia, t } from 'elysia';
 import { User } from '@/lib/models/User';
 import { Server } from '@/lib/models/Server';
+import { ServerMember } from '@/lib/models/ServerMember';
 import { Message } from '@/lib/models/Message';
-import { AdminLog, type AdminActionType, type IAdminLog } from '@/lib/models/AdminLog';
-import { PlatformSettings, getPlatformSettings, updatePlatformSettings } from '@/lib/models/PlatformSettings';
-import type { Types } from 'mongoose';
+import { AdminLog, type AdminActionType } from '@/lib/models/AdminLog';
+import { getPlatformSettings, updatePlatformSettings } from '@/lib/models/PlatformSettings';
+import { TtsSound } from '@/lib/models/TtsSound';
+import { BugReport } from '@/lib/models/BugReport';
+import { checkRateLimit } from '@/lib/security';
 
 // System user ID for Serika Broadcast
-export const SERIKA_BROADCAST_ID = '000000000000000000000000';
+export const SERIKA_BROADCAST_ID = '00000000-0000-0000-0000-000000000001';
 
-// Helper function for admin auth
-async function getAdminAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
-  // Import getAuth from index to avoid circular dependency
+/**
+ * Multi-layer admin auth verification:
+ * 1. Authenticate the user (JWT/cookie)
+ * 2. Re-fetch user from DB to ensure fresh staff status (not stale JWT)
+ * 3. Verify user has admin or developer privileges (NOT moderator/staff)
+ * 4. Rate-limit admin API access
+ * 5. Log access attempts for audit trail
+ */
+async function getAdminAuth(
+  headers: Record<string, string | undefined>,
+  cookie: Record<string, { value?: unknown }>,
+  request?: { url?: string }
+) {
   const { authenticateRequest } = await import('@/lib/services/auth');
   const authHeader = headers.authorization ?? null;
   const authToken = cookie.auth_token?.value;
@@ -20,15 +33,51 @@ async function getAdminAuth(headers: Record<string, string | undefined>, cookie:
     cookies.auth_token = authToken;
   }
   const { user, error } = await authenticateRequest(authHeader, cookies);
-  
+
   if (!user) {
-    return { user: null, error: error || 'Unauthorized', isAdmin: false };
+    return { user: null, error: error || 'Unauthorized', isAdmin: false, status: 401 as const };
   }
-  
-  // Check if user is staff with admin permissions
-  const isAdmin = user.isStaff && (user.staffRole === 'admin' || user.badges?.includes('admin') || user.badges?.includes('staff'));
-  
-  return { user, error: null, isAdmin };
+
+  // Layer 2: Re-fetch user from DB to ensure staff status is current
+  const dbUser = await User.findById(user.id);
+  if (!dbUser) {
+    return { user: null, error: 'User not found', isAdmin: false, status: 401 as const };
+  }
+
+  // Layer 3: Check if user is banned
+  if (dbUser.isBanned) {
+    return { user: null, error: 'Account banned', isAdmin: false, status: 403 as const };
+  }
+
+  // Layer 4: Verify admin or developer privileges (NOT moderator/staff)
+  const badges = (dbUser.badges || []) as string[];
+  const isAdminRole = dbUser.isStaff && dbUser.staffRole === 'admin';
+  const hasAdminBadge = badges.includes('admin');
+  const hasDevBadge = badges.includes('serikacord_developer');
+  const isAdmin = isAdminRole || hasAdminBadge || hasDevBadge;
+
+  if (!isAdmin) {
+    // Log unauthorized admin access attempt
+    try {
+      await AdminLog.create({
+        adminId: dbUser.id,
+        action: 'update_settings' as AdminActionType, // Reuse existing enum value for access denied
+        targetType: 'platform',
+        targetId: 'admin_panel',
+        details: { denied: true, reason: 'insufficient_privileges', endpoint: request?.url },
+      });
+    } catch { /* best-effort */ }
+    return { user: null, error: 'Admin access required', isAdmin: false, status: 403 as const };
+  }
+
+  // Layer 5: Rate-limit admin API calls (stricter than normal)
+  const rateKey = `admin:${dbUser.id}`;
+  const rateLimit = await checkRateLimit('admin', rateKey);
+  if (!rateLimit.success) {
+    return { user: null, error: 'Rate limited', isAdmin: false, status: 429 as const };
+  }
+
+  return { user: dbUser, error: null, isAdmin: true, status: 200 as const };
 }
 
 // Log admin action
@@ -59,9 +108,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
   
   // Search users
   .get('/users/search', async ({ headers, cookie, query, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -70,26 +119,23 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const searchQuery = q ? {
-      $or: [
-        { username: { $regex: q, $options: 'i' } },
-        { email: { $regex: q, $options: 'i' } },
-        { displayName: { $regex: q, $options: 'i' } },
-      ]
-    } : {};
-
-    const [users, total] = await Promise.all([
-      User.find(searchQuery)
-        .select('_id username displayName email avatar badges isVerified isBanned isStaff createdAt')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      User.countDocuments(searchQuery)
-    ]);
+    const allUsers = await User.find({});
+    let filtered = allUsers.filter(u => !u.username?.startsWith('discord-'));
+    if (q) {
+      const lowerQ = q.toLowerCase();
+      filtered = filtered.filter(u => 
+        u.username?.toLowerCase().includes(lowerQ) ||
+        u.email?.toLowerCase().includes(lowerQ) ||
+        u.displayName?.toLowerCase().includes(lowerQ)
+      );
+    }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const users = filtered.slice(skip, skip + limitNum);
 
     return {
       users: users.map(u => ({
-        id: u._id,
+        id: u.id,
         username: u.username,
         displayName: u.displayName,
         email: u.email,
@@ -111,33 +157,30 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Get user details
   .get('/users/:userId', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
-    const targetUser = await User.findById(params.userId)
-      .select('-passwordHash -verificationToken -resetToken');
+    const targetUser = await User.findById(params.userId);
     
     if (!targetUser) {
       set.status = 404;
       return { error: 'User not found' };
     }
 
-    // Get server count
-    const serverCount = await Server.countDocuments({ 
-      $or: [
-        { ownerId: targetUser._id },
-        { 'members.userId': targetUser._id }
-      ]
-    });
+    // Get server count - owned servers + servers where user is a member
+    const ownedServers = await Server.find({ ownerId: targetUser.id });
+    const memberships = await ServerMember.find({ userId: targetUser.id });
+    const serverCount = ownedServers.length + memberships.length;
 
     // Get message count
-    const messageCount = await Message.countDocuments({ authorId: targetUser._id });
+    const messages = await Message.find({ authorId: targetUser.id });
+    const messageCount = messages.length;
 
     return {
-      id: targetUser._id,
+      id: targetUser.id,
       username: targetUser.username,
       displayName: targetUser.displayName,
       email: targetUser.email,
@@ -166,9 +209,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Ban user
   .post('/users/:userId/ban', async ({ headers, cookie, params, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -186,20 +229,29 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Cannot ban staff members' };
     }
 
-    targetUser.isBanned = true;
-    targetUser.banReason = reason || 'No reason provided';
-    await targetUser.save();
+    await User.updateById(targetUser.id, {
+      isBanned: true,
+      banReason: reason || 'No reason provided',
+    });
+
+    // Notify the user, then immediately kill all of their sessions so they're
+    // signed out on every device on their next request. Order matters: DM first
+    // (while their session still resolves for delivery), then revoke.
+    const { notifySuspension } = await import('@/lib/services/systemNotify');
+    const { revokeAllUserSessions } = await import('@/lib/services/auth');
+    await notifySuspension(targetUser.id, reason).catch(() => {});
+    const revoked = await revokeAllUserSessions(targetUser.id).catch(() => 0);
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'ban_user',
       'user',
-      targetUser._id.toString(),
-      { username: targetUser.username },
+      targetUser.id,
+      { username: targetUser.username, sessionsRevoked: revoked },
       reason
     );
 
-    return { success: true, message: 'User banned' };
+    return { success: true, message: 'User banned', sessionsRevoked: revoked };
   }, {
     params: t.Object({
       userId: t.String(),
@@ -211,9 +263,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Unban user
   .post('/users/:userId/unban', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -223,15 +275,22 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'User not found' };
     }
 
-    targetUser.isBanned = false;
-    targetUser.banReason = undefined;
-    await targetUser.save();
+    await User.updateById(targetUser.id, {
+      isBanned: false,
+      banReason: null,
+    });
+    // Clear the cached (banned) user record so they can authenticate again.
+    const { cache } = await import('@/lib/db');
+    await cache.del(`user:${targetUser.id}`).catch(() => {});
+
+    const { notifyUnsuspension } = await import('@/lib/services/systemNotify');
+    await notifyUnsuspension(targetUser.id).catch(() => {});
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'unban_user',
       'user',
-      targetUser._id.toString(),
+      targetUser.id,
       { username: targetUser.username }
     );
 
@@ -244,9 +303,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Update user badges
   .patch('/users/:userId/badges', async ({ headers, cookie, params, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -259,18 +318,65 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const oldBadges = [...(targetUser.badges || [])];
-    targetUser.badges = badges;
-    await targetUser.save();
+
+    // Sync the isStaff flag and staffRole based on whether the admin
+    // included staff-related badges in the request.  These badges are
+    // auto-assigned by recalculateUserBadges based on the isStaff flag,
+    // so we need to update the flag *before* recalculating.
+    const STAFF_BADGE_IDS = ['staff', 'admin', 'moderator'];
+    const requestedStaffBadges = badges.filter((b) => STAFF_BADGE_IDS.includes(b));
+    const wantsStaff = requestedStaffBadges.length > 0;
+
+    const staffUpdate: Record<string, any> = {};
+    if (wantsStaff && !targetUser.isStaff) {
+      staffUpdate.isStaff = true;
+      // Pick the highest-privilege role requested
+      if (requestedStaffBadges.includes('admin')) {
+        staffUpdate.staffRole = 'admin';
+      } else if (requestedStaffBadges.includes('moderator')) {
+        staffUpdate.staffRole = 'moderator';
+      } else {
+        staffUpdate.staffRole = 'staff';
+      }
+    } else if (wantsStaff && targetUser.isStaff) {
+      // Update staffRole if the requested set changed
+      if (requestedStaffBadges.includes('admin')) {
+        staffUpdate.staffRole = 'admin';
+      } else if (requestedStaffBadges.includes('moderator')) {
+        staffUpdate.staffRole = 'moderator';
+      } else {
+        staffUpdate.staffRole = 'staff';
+      }
+    } else if (!wantsStaff && targetUser.isStaff) {
+      staffUpdate.isStaff = false;
+      staffUpdate.staffRole = null;
+    }
+
+    // Only manual badges can be set by admin; auto badges are recalculated
+    const { recalculateUserBadges, MANUAL_BADGES } = await import('@/lib/services/badges');
+    const manualBadges = badges.filter((b) => (MANUAL_BADGES as readonly string[]).includes(b));
+    await User.updateById(targetUser.id, { badges: manualBadges, ...staffUpdate });
+    const finalBadges = await recalculateUserBadges(targetUser.id);
+
+    // DM the user about any badge they just unlocked (skip system accounts).
+    const newlyAdded = (finalBadges || manualBadges).filter((b) => !oldBadges.includes(b));
+    if (newlyAdded.length > 0 && !targetUser.isSystem) {
+      const { BADGES } = await import('@/lib/constants/badges');
+      const { notifyBadgesUnlocked } = await import('@/lib/services/systemNotify');
+      const byId = new Map(Object.values(BADGES).map((b) => [b.id, b.name]));
+      const names = newlyAdded.map((b) => byId.get(b) || b);
+      void notifyBadgesUnlocked(targetUser.id, names).catch(() => {});
+    }
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'edit_badges',
       'user',
-      targetUser._id.toString(),
-      { oldBadges, newBadges: badges }
+      targetUser.id,
+      { oldBadges, newBadges: finalBadges || manualBadges }
     );
 
-    return { success: true, badges: targetUser.badges };
+    return { success: true, badges: finalBadges || manualBadges };
   }, {
     params: t.Object({
       userId: t.String(),
@@ -284,9 +390,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Search servers
   .get('/servers/search', async ({ headers, cookie, query, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -295,30 +401,36 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const searchQuery = q ? {
-      $or: [
-        { name: { $regex: q, $options: 'i' } },
-        { description: { $regex: q, $options: 'i' } },
-      ]
-    } : {};
+    const allServers = await Server.find({});
+    let filtered = allServers;
+    if (q) {
+      const lowerQ = q.toLowerCase();
+      filtered = allServers.filter(s => 
+        s.name?.toLowerCase().includes(lowerQ) ||
+        s.description?.toLowerCase().includes(lowerQ)
+      );
+    }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const servers = filtered.slice(skip, skip + limitNum);
 
-    const [servers, total] = await Promise.all([
-      Server.find(searchQuery)
-        .populate('ownerId', 'username displayName')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      Server.countDocuments(searchQuery)
-    ]);
+    // Batch fetch owners
+    const ownerIds = [...new Set(servers.map(s => s.ownerId))];
+    const owners = ownerIds.length > 0 ? await User.find({ id: { in: ownerIds } }) : [];
+    const ownerMap = new Map(owners.map(o => [o.id, o]));
 
     return {
       servers: servers.map(s => ({
-        id: s._id,
+        id: s.id,
         name: s.name,
         description: s.description,
         icon: s.icon,
         memberCount: s.memberCount,
-        owner: s.ownerId,
+        owner: ownerMap.get(s.ownerId) ? {
+          id: ownerMap.get(s.ownerId)!.id,
+          username: ownerMap.get(s.ownerId)!.username,
+          displayName: ownerMap.get(s.ownerId)!.displayName,
+        } : s.ownerId,
         isDiscoverable: s.isDiscoverable,
         isPartnered: s.isPartnered,
         createdAt: s.createdAt,
@@ -334,9 +446,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Delete server
   .delete('/servers/:serverId', async ({ headers, cookie, params, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -349,21 +461,21 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'delete_server',
       'server',
-      server._id.toString(),
-      { name: server.name, ownerId: server.ownerId.toString() },
+      server.id,
+      { name: server.name, ownerId: server.ownerId },
       reason
     );
 
     // Delete the server and associated data
-    await Promise.all([
-      Server.findByIdAndDelete(params.serverId),
-      Message.deleteMany({ serverId: params.serverId }),
-      // Channel deletion happens via Server cascade
-    ]);
-
+    await Server.deleteById(params.serverId);
+    const serverMessages = await Message.find({ serverId: params.serverId });
+    for (const msg of serverMessages) {
+      await Message.deleteById(msg.id);
+    }
+    // Channel deletion happens via Server cascade
     return { success: true, message: 'Server deleted' };
   }, {
     params: t.Object({
@@ -376,9 +488,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Toggle server partner status
   .post('/servers/:serverId/partner', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -389,19 +501,31 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }
 
     const newPartnerStatus = !server.isPartnered;
-    server.isPartnered = newPartnerStatus;
-    server.partneredAt = newPartnerStatus ? new Date() : undefined;
-    await server.save();
+
+    // Age-gated servers cannot be partnered
+    if (newPartnerStatus && server.isAgeGated) {
+      set.status = 400;
+      return { error: 'Age-gated servers cannot be partnered' };
+    }
+
+    await Server.updateById(server.id, {
+      isPartnered: newPartnerStatus,
+      partneredAt: newPartnerStatus ? new Date() : null,
+    });
+
+    // Auto-assign/remove partner badge for the server owner
+    const { recalculateUserBadges } = await import('@/lib/services/badges');
+    void recalculateUserBadges(server.ownerId).catch(() => {});
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       newPartnerStatus ? 'grant_partner' : 'revoke_partner',
       'server',
-      server._id.toString(),
+      server.id,
       { name: server.name }
     );
 
-    return { success: true, isPartnered: server.isPartnered };
+    return { success: true, isPartnered: newPartnerStatus };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -410,9 +534,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Toggle server discoverability
   .post('/servers/:serverId/discovery', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -422,18 +546,24 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Server not found' };
     }
 
-    server.isDiscoverable = !server.isDiscoverable;
-    await server.save();
+    // Age-gated servers cannot be discoverable
+    if (!server.isDiscoverable && server.isAgeGated) {
+      set.status = 400;
+      return { error: 'Age-gated servers cannot be discoverable' };
+    }
+
+    const newDiscoverable = !server.isDiscoverable;
+    await Server.updateById(server.id, { isDiscoverable: newDiscoverable });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'toggle_discovery',
       'server',
-      server._id.toString(),
-      { name: server.name, isDiscoverable: server.isDiscoverable }
+      server.id,
+      { name: server.name, isDiscoverable: newDiscoverable }
     );
 
-    return { success: true, isDiscoverable: server.isDiscoverable };
+    return { success: true, isDiscoverable: newDiscoverable };
   }, {
     params: t.Object({
       serverId: t.String(),
@@ -442,9 +572,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Transfer server ownership
   .post('/servers/:serverId/transfer', async ({ headers, cookie, params, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -462,19 +592,23 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'New owner not found' };
     }
 
-    const oldOwnerId = server.ownerId.toString();
-    server.ownerId = newOwner._id;
-    await server.save();
+    const oldOwnerId = server.ownerId;
+    await Server.updateById(server.id, { ownerId: newOwner.id });
+
+    // Recalculate badges for both old and new owner
+    const { recalculateUserBadges } = await import('@/lib/services/badges');
+    void recalculateUserBadges(oldOwnerId).catch(() => {});
+    void recalculateUserBadges(newOwner.id).catch(() => {});
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'transfer_ownership',
       'server',
-      server._id.toString(),
+      server.id,
       { 
         name: server.name, 
         oldOwnerId, 
-        newOwnerId: newOwner._id.toString(),
+        newOwnerId: newOwner.id,
         newOwnerUsername: newOwner.username
       },
       reason
@@ -493,67 +627,91 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // ==================== PLATFORM SETTINGS ====================
 
+  // Public endpoint — returns connectionsEnabled flag and disabledProviders (no auth required)
+  .get('/settings/connections', async () => {
+    const settings = await getPlatformSettings();
+    return {
+      connectionsEnabled: settings.connectionsEnabled,
+      disabledProviders: settings.disabledProviders || [],
+    };
+  })
+
   // Get platform settings
   .get('/settings', async ({ headers, cookie, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
     const settings = await getPlatformSettings();
-    return (settings as any).toObject();
+    return settings;
   })
 
   // Update platform settings
   .patch('/settings', async ({ headers, cookie, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
-    const { maintenanceMode, allowRegistration, globalAnnouncement, oembedWhitelist } = body as {
+    const { maintenanceMode, allowRegistration, connectionsEnabled, disabledProviders, globalAnnouncement, oembedWhitelist, allowedFileTypes, warnOnUnknownFileTypes } = body as {
       maintenanceMode?: boolean;
       allowRegistration?: boolean;
+      connectionsEnabled?: boolean;
+      disabledProviders?: string[];
       globalAnnouncement?: string;
       oembedWhitelist?: string[];
+      allowedFileTypes?: { type: string; safe: boolean }[];
+      warnOnUnknownFileTypes?: boolean;
     };
 
     const updates: Record<string, unknown> = {};
     if (maintenanceMode !== undefined) updates.maintenanceMode = maintenanceMode;
     if (allowRegistration !== undefined) updates.allowRegistration = allowRegistration;
+    if (connectionsEnabled !== undefined) updates.connectionsEnabled = connectionsEnabled;
+    if (disabledProviders !== undefined) updates.disabledProviders = disabledProviders;
     if (globalAnnouncement !== undefined) {
       updates.globalAnnouncement = globalAnnouncement || null;
       updates.announcementUpdatedAt = new Date();
     }
     if (oembedWhitelist !== undefined) updates.oembedWhitelist = oembedWhitelist;
+    if (allowedFileTypes !== undefined) updates.allowedFileTypes = allowedFileTypes;
+    if (warnOnUnknownFileTypes !== undefined) updates.warnOnUnknownFileTypes = warnOnUnknownFileTypes;
 
     const settings = await updatePlatformSettings(updates);
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'update_settings',
       'platform',
       'settings',
       updates
     );
 
-    return (settings as any).toObject();
+    return settings;
   }, {
     body: t.Object({
       maintenanceMode: t.Optional(t.Boolean()),
       allowRegistration: t.Optional(t.Boolean()),
+      connectionsEnabled: t.Optional(t.Boolean()),
+      disabledProviders: t.Optional(t.Array(t.String())),
       globalAnnouncement: t.Optional(t.String()),
       oembedWhitelist: t.Optional(t.Array(t.String())),
+      allowedFileTypes: t.Optional(t.Array(t.Object({
+        type: t.String(),
+        safe: t.Boolean(),
+      }))),
+      warnOnUnknownFileTypes: t.Optional(t.Boolean()),
     }),
   })
 
   // Publish global announcement
   .post('/broadcast', async ({ headers, cookie, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -573,92 +731,97 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     // Send DMs from Serika Broadcast system user if requested
     let dmCount = 0;
     if (sendDMs) {
-      try {
-        const { SERIKA_BROADCAST_ID, ensureSerikaBroadcastUser } = await import('@/lib/services/serikaBroadcast');
-        const { Channel } = await import('@/lib/models/Channel');
-        const { Message } = await import('@/lib/models/Message');
-        const { encryptForStorage } = await import('@/lib/security/encryption');
-        const { Types } = await import('mongoose');
-        const { emitDmListUpdate } = await import('@/lib/api/dms');
-        
-        await ensureSerikaBroadcastUser();
-        
-        // Get all users (excluding system users and banned users)
-        const allUsers = await User.find({ 
-          isSystem: { $ne: true },
-          isBanned: { $ne: true }
-        }).select('_id');
-        
-        console.log(`Broadcasting to ${allUsers.length} users`);
-        
-        // Send DM to each user (in batches)
-        const batchSize = 50;
-        const broadcastUserId = new Types.ObjectId(SERIKA_BROADCAST_ID);
-        
-        for (let i = 0; i < allUsers.length; i += batchSize) {
-          const batch = allUsers.slice(i, i + batchSize);
-          
-          await Promise.all(batch.map(async (targetUser) => {
-            try {
-              // Get or create DM channel with system user
-              let channel = await Channel.findOne({
-                type: 'dm',
-                recipientIds: { $all: [broadcastUserId, targetUser._id], $size: 2 },
-              });
-              
-              if (!channel) {
-                channel = new Channel({
+      // Fire-and-forget: process DMs in the background so the HTTP request
+      // returns immediately and doesn't time out on large user bases.
+      void (async () => {
+        try {
+          const { SERIKA_BROADCAST_ID, ensureSerikaBroadcastUser } = await import('@/lib/services/serikaBroadcast');
+          const { Channel } = await import('@/lib/models/Channel');
+          const { Message } = await import('@/lib/models/Message');
+          const { encryptForStorage } = await import('@/lib/security/encryption');
+          const { emitDmListUpdate } = await import('@/lib/api/dms');
+
+          await ensureSerikaBroadcastUser();
+
+          // Get all users (excluding system users and banned users)
+          const allUsers = await User.find({});
+          const eligibleUsers = allUsers.filter(u => !u.isSystem && !u.isBanned);
+
+          console.log(`[Broadcast] Sending to ${eligibleUsers.length} users`);
+
+          // Send DM to each user (in batches)
+          const batchSize = 50;
+          const broadcastUserId = SERIKA_BROADCAST_ID;
+          let sent = 0;
+
+          for (let i = 0; i < eligibleUsers.length; i += batchSize) {
+            const batch = eligibleUsers.slice(i, i + batchSize);
+
+            await Promise.all(batch.map(async (targetUser: any) => {
+              try {
+                // Get or create DM channel with system user
+                let channel = await Channel.findOne({
                   type: 'dm',
-                  name: 'Direct Message',
-                  recipientIds: [broadcastUserId, targetUser._id],
-                  position: 0,
+                  recipientIds: [broadcastUserId, targetUser.id],
                 });
-                await channel.save();
+
+                if (!channel) {
+                  channel = await Channel.create({
+                    type: 'dm',
+                    name: 'Direct Message',
+                    recipientIds: [broadcastUserId, targetUser.id],
+                    position: 0,
+                  });
+                }
+
+                // Encrypt and send message
+                const encryptedContent = await encryptForStorage(message.trim());
+                const dmMessage = await Message.create({
+                  channelId: channel.id,
+                  authorId: broadcastUserId,
+                  content: encryptedContent,
+                  type: 'default',
+                });
+
+                // Update channel
+                await Channel.updateById(channel.id, {
+                  lastMessageId: dmMessage.id,
+                  updatedAt: new Date(),
+                });
+
+                // Emit real-time DM list update to the target user
+                emitDmListUpdate([targetUser.id], {
+                  type: 'dm:list:update',
+                  channelId: channel.id,
+                  recipientId: SERIKA_BROADCAST_ID,
+                  message: {
+                    id: dmMessage.id,
+                    content: message.trim().slice(0, 180),
+                    authorId: broadcastUserId,
+                    createdAt: dmMessage.createdAt,
+                  },
+                });
+
+                sent++;
+              } catch (err) {
+                console.error(`[Broadcast] Failed to send DM to user ${targetUser.id}:`, err);
               }
-              
-              // Encrypt and send message
-              const encryptedContent = await encryptForStorage(message.trim());
-              const dmMessage = new Message({
-                channelId: channel._id,
-                authorId: broadcastUserId,
-                content: encryptedContent,
-                type: 'default',
-              });
-              await dmMessage.save();
-              
-              // Update channel
-              channel.lastMessageId = dmMessage._id;
-              channel.updatedAt = new Date();
-              await channel.save();
-              
-              // Emit real-time DM list update to the target user
-              emitDmListUpdate([targetUser._id.toString()], {
-                type: 'dm:list:update',
-                channelId: channel._id.toString(),
-                recipientId: SERIKA_BROADCAST_ID.toString(),
-                message: {
-                  id: dmMessage._id.toString(),
-                  content: message.trim().slice(0, 180),
-                  authorId: broadcastUserId.toString(),
-                  createdAt: dmMessage.createdAt,
-                },
-              });
-              
-              dmCount++;
-            } catch (err) {
-              console.error(`Failed to send DM to user ${targetUser._id}:`, err);
-            }
-          }));
+            }));
+
+            console.log(`[Broadcast] Progress: ${sent}/${eligibleUsers.length} DMs sent`);
+          }
+
+          console.log(`[Broadcast] Complete: ${sent}/${eligibleUsers.length} DMs sent`);
+        } catch (err) {
+          console.error('[Broadcast] Failed to send broadcast DMs:', err);
         }
-        
-        console.log(`Broadcast complete: ${dmCount} DMs sent`);
-      } catch (err) {
-        console.error('Failed to send broadcast DMs:', err);
-      }
+      })();
+
+      dmCount = -1; // Indicates "sending in background"
     }
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'broadcast_announcement',
       'platform',
       'broadcast',
@@ -677,9 +840,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Get admin activity logs
   .get('/logs', async ({ headers, cookie, query, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -688,30 +851,35 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = {};
+    const allLogs = await AdminLog.find({});
+    let filtered = allLogs;
     if (type) {
       if (type === 'bans') {
-        filter.action = { $in: ['ban_user', 'unban_user'] };
+        filtered = allLogs.filter(log => log.action === 'ban_user' || log.action === 'unban_user');
       } else if (type === 'reports') {
-        filter.action = { $in: ['resolve_report', 'dismiss_report'] };
+        filtered = allLogs.filter(log => log.action === 'resolve_report' || log.action === 'dismiss_report');
       } else if (type === 'admin') {
-        filter.action = { $in: ['update_settings', 'broadcast_announcement', 'grant_partner', 'revoke_partner'] };
+        filtered = allLogs.filter(log => ['update_settings', 'broadcast_announcement', 'grant_partner', 'revoke_partner'].includes(log.action));
       }
     }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const logs = filtered.slice(skip, skip + limitNum);
 
-    const [logs, total] = await Promise.all([
-      AdminLog.find(filter)
-        .populate('adminId', 'username displayName avatar')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      AdminLog.countDocuments(filter)
-    ]);
+    // Batch fetch admins
+    const adminIds = [...new Set(logs.map(log => log.adminId))];
+    const admins = adminIds.length > 0 ? await User.find({ id: { in: adminIds } }) : [];
+    const adminMap = new Map(admins.map(a => [a.id, a]));
 
     return {
-      logs: logs.map((log: IAdminLog) => ({
-        id: log._id,
-        admin: log.adminId,
+      logs: logs.map((log) => ({
+        id: log.id,
+        admin: adminMap.get(log.adminId) ? {
+          id: adminMap.get(log.adminId)!.id,
+          username: adminMap.get(log.adminId)!.username,
+          displayName: adminMap.get(log.adminId)!.displayName,
+          avatar: adminMap.get(log.adminId)!.avatar,
+        } : log.adminId,
         action: log.action,
         targetType: log.targetType,
         targetId: log.targetId,
@@ -732,34 +900,47 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // List all experiments
   .get('/experiments', async ({ headers, cookie, query, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
     const { Experiment } = await import('@/lib/models/Experiment');
-    const { status, page = '1', limit = '20' } = query as { status?: string; page?: string; limit?: string };
+    const { status: expStatus, page = '1', limit = '20' } = query as { status?: string; page?: string; limit?: string };
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = {};
-    if (status) {
-      filter.status = status;
+    const allExperiments = await Experiment.find({});
+    let filtered = allExperiments;
+    if (expStatus) {
+      // Frontend passes a comma-separated list (e.g. "running,paused,draft").
+      const statuses = expStatus.split(',').map(s => s.trim()).filter(Boolean);
+      if (statuses.length > 0) {
+        filtered = allExperiments.filter(e => e.status && statuses.includes(e.status));
+      }
     }
+    filtered.sort((a, b) => new Date(b.createdAt ?? 0).getTime() - new Date(a.createdAt ?? 0).getTime());
+    const total = filtered.length;
+    const experiments = filtered.slice(skip, skip + limitNum);
 
-    const [experiments, total] = await Promise.all([
-      Experiment.find(filter)
-        .populate('createdBy', 'username displayName')
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      Experiment.countDocuments(filter)
-    ]);
+    // Batch fetch creators
+    const creatorIds = [...new Set(experiments.map(e => e.createdBy).filter(Boolean))];
+    const creators = creatorIds.length > 0 ? await User.find({ id: { in: creatorIds } }) : [];
+    const creatorMap = new Map(creators.map(c => [c.id, c]));
+
+    const experimentsWithCreators = experiments.map(e => ({
+      ...e,
+      createdBy: creatorMap.get(e.createdBy) ? {
+        id: creatorMap.get(e.createdBy)!.id,
+        username: creatorMap.get(e.createdBy)!.username,
+        displayName: creatorMap.get(e.createdBy)!.displayName,
+      } : e.createdBy,
+    }));
 
     return {
-      experiments,
+      experiments: experimentsWithCreators,
       pagination: {
         page: pageNum,
         limit: limitNum,
@@ -771,22 +952,34 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Get experiment by ID
   .get('/experiments/:experimentId', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
     const { Experiment } = await import('@/lib/models/Experiment');
-    const experiment = await Experiment.findById(params.experimentId)
-      .populate('createdBy', 'username displayName');
+    const experiment = await Experiment.findById(params.experimentId);
     
     if (!experiment) {
       set.status = 404;
       return { error: 'Experiment not found' };
     }
 
-    return experiment;
+    // Fetch creator info
+    let creator = null;
+    if (experiment.createdBy) {
+      creator = await User.findById(experiment.createdBy);
+    }
+
+    return {
+      ...experiment,
+      createdBy: creator ? {
+        id: creator.id,
+        username: creator.username,
+        displayName: creator.displayName,
+      } : experiment.createdBy,
+    };
   }, {
     params: t.Object({
       experimentId: t.String(),
@@ -795,14 +988,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Create experiment
   .post('/experiments', async ({ headers, cookie, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
     const { Experiment } = await import('@/lib/models/Experiment');
-    const { Types } = await import('mongoose');
 
     const {
       name,
@@ -817,7 +1009,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       name: string;
       key: string;
       description?: string;
-      type: string;
+      type: 'feature_flag' | 'ab_test' | 'percentage_rollout' | 'user_segment';
       variants: Array<{ id: string; name: string; weight: number; config?: Record<string, unknown> }>;
       rolloutPercentage?: number;
       filters?: Array<{ type: string; operator: string; value: unknown }>;
@@ -831,7 +1023,7 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Experiment key already exists' };
     }
 
-    const experiment = new Experiment({
+    const experiment = await Experiment.create({
       name,
       key,
       description,
@@ -839,18 +1031,16 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       variants,
       rolloutPercentage: rolloutPercentage ?? 100,
       filters: filters ?? [],
-      excludedUsers: excludedUserIds?.map(id => new Types.ObjectId(id)) ?? [],
-      createdBy: user._id,
+      excludedUsers: excludedUserIds ?? [],
+      createdBy: user.id,
       status: 'draft',
     });
 
-    await experiment.save();
-
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'create_experiment',
       'platform',
-      experiment._id.toString(),
+      experiment.id,
       { name, key, type }
     );
 
@@ -879,9 +1069,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Update experiment
   .patch('/experiments/:experimentId', async ({ headers, cookie, params, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -899,44 +1089,51 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       variants,
       rolloutPercentage,
       filters,
-      status,
+      excludedUsers: bodyExcludedUsers,
+      userOverrides: bodyUserOverrides,
+      status: expBodyStatus,
     } = body as {
       name?: string;
       description?: string;
       variants?: Array<{ id: string; name: string; weight: number; config?: Record<string, unknown> }>;
       rolloutPercentage?: number;
       filters?: Array<{ type: string; operator: string; value: unknown }>;
+      excludedUsers?: string[];
+      userOverrides?: Array<{ userId: string; variantId: string }>;
       status?: string;
     };
 
-    if (name) experiment.name = name;
-    if (description !== undefined) experiment.description = description;
-    if (variants) experiment.variants = variants as any;
-    if (rolloutPercentage !== undefined) experiment.rolloutPercentage = rolloutPercentage;
-    if (filters) experiment.filters = filters as any;
+    const updates: Record<string, unknown> = {};
+    if (name) updates.name = name;
+    if (description !== undefined) updates.description = description;
+    if (variants) updates.variants = variants;
+    if (rolloutPercentage !== undefined) updates.rolloutPercentage = rolloutPercentage;
+    if (filters) updates.filters = filters;
+    if (bodyExcludedUsers !== undefined) updates.excludedUsers = bodyExcludedUsers;
+    if (bodyUserOverrides !== undefined) updates.userOverrides = bodyUserOverrides;
     
     // Handle status changes
-    if (status && status !== experiment.status) {
-      experiment.status = status as typeof experiment.status;
-      if (status === 'running' && !experiment.startedAt) {
-        experiment.startedAt = new Date();
+    if (expBodyStatus && expBodyStatus !== experiment.status) {
+      updates.status = expBodyStatus;
+      if (expBodyStatus === 'running' && !experiment.startedAt) {
+        updates.startedAt = new Date();
       }
-      if (status === 'completed' && !experiment.endedAt) {
-        experiment.endedAt = new Date();
+      if (expBodyStatus === 'completed' && !experiment.endedAt) {
+        updates.endedAt = new Date();
       }
     }
 
-    await experiment.save();
+    const updated = await Experiment.updateById(experiment.id, updates);
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'update_experiment',
       'platform',
-      experiment._id.toString(),
+      experiment.id,
       { changes: body }
     );
 
-    return experiment;
+    return updated || experiment;
   }, {
     params: t.Object({
       experimentId: t.String(),
@@ -956,15 +1153,20 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
         operator: t.String(),
         value: t.Unknown(),
       }))),
+      excludedUsers: t.Optional(t.Array(t.String())),
+      userOverrides: t.Optional(t.Array(t.Object({
+        userId: t.String(),
+        variantId: t.String(),
+      }))),
       status: t.Optional(t.String()),
     }),
   })
 
   // Delete experiment
   .delete('/experiments/:experimentId', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -976,10 +1178,10 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Experiment not found' };
     }
 
-    await experiment.deleteOne();
+    await Experiment.deleteById(experiment.id);
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'delete_experiment',
       'platform',
       params.experimentId,
@@ -995,9 +1197,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Get user's experiment variant
   .get('/experiments/:experimentId/variant/:userId', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -1015,13 +1217,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'User not found' };
     }
 
-    const variant = await getUserVariant(experiment.key, params.userId);
+    const variant = await getUserVariant(experiment, params.userId);
 
     return {
       experimentKey: experiment.key,
       experimentName: experiment.name,
       user: {
-        id: targetUser._id,
+        id: targetUser.id,
         username: targetUser.username,
       },
       variant,
@@ -1033,38 +1235,208 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
     }),
   })
 
+  // List managed users for an experiment
+  .get('/experiments/:experimentId/users', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const experiment = await Experiment.findById(params.experimentId);
+
+    if (!experiment) {
+      set.status = 404;
+      return { error: 'Experiment not found' };
+    }
+
+    const excludedUsers = (experiment.excludedUsers as string[]) || [];
+    const userOverrides = (experiment.userOverrides as Array<{ userId: string; variantId: string }>) || [];
+
+    const allUserIds = [...new Set([...excludedUsers, ...userOverrides.map(o => o.userId)])];
+    const users = allUserIds.length > 0 ? await User.find({ id: { in: allUserIds } }) : [];
+    const userMap = new Map(users.map(u => [u.id, u]));
+
+    const managedUsers = allUserIds.map(id => {
+      const u = userMap.get(id);
+      const override = userOverrides.find(o => o.userId === id);
+      return {
+        id,
+        username: u?.username ?? 'Unknown',
+        displayName: u?.displayName ?? null,
+        status: excludedUsers.includes(id) ? 'excluded' : 'included',
+        variantId: override?.variantId ?? null,
+      };
+    });
+
+    return { users: managedUsers };
+  }, {
+    params: t.Object({
+      experimentId: t.String(),
+    }),
+  })
+
+  // Add user to experiment (include or exclude)
+  .post('/experiments/:experimentId/users', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const experiment = await Experiment.findById(params.experimentId);
+
+    if (!experiment) {
+      set.status = 404;
+      return { error: 'Experiment not found' };
+    }
+
+    const { userId, action } = body as { userId: string; action: 'include' | 'exclude' };
+
+    if (!userId || !userId.trim()) {
+      set.status = 400;
+      return { error: 'User ID is required' };
+    }
+
+    const targetUser = await User.findById(userId.trim());
+    if (!targetUser) {
+      set.status = 404;
+      return { error: 'User not found' };
+    }
+
+    const excludedUsers = (experiment.excludedUsers as string[]) || [];
+    const userOverrides = (experiment.userOverrides as Array<{ userId: string; variantId: string }>) || [];
+    const variants = (experiment.variants as Array<{ id: string; name: string; weight: number }>) || [];
+
+    const updates: Record<string, unknown> = {};
+
+    if (action === 'exclude') {
+      if (!excludedUsers.includes(targetUser.id)) {
+        updates.excludedUsers = [...excludedUsers, targetUser.id];
+      }
+      // Remove from overrides if present
+      const filteredOverrides = userOverrides.filter(o => o.userId !== targetUser.id);
+      if (filteredOverrides.length !== userOverrides.length) {
+        updates.userOverrides = filteredOverrides;
+      }
+    } else {
+      // Include: remove from excluded, add to overrides with first non-control variant (or 'enabled')
+      const filteredExcluded = excludedUsers.filter(id => id !== targetUser.id);
+      if (filteredExcluded.length !== excludedUsers.length) {
+        updates.excludedUsers = filteredExcluded;
+      }
+
+      const existingOverride = userOverrides.find(o => o.userId === targetUser.id);
+      if (!existingOverride) {
+        const enabledVariant = variants.find(v => v.id === 'enabled') || variants.find(v => v.id !== 'control') || variants[0];
+        updates.userOverrides = [...userOverrides, { userId: targetUser.id, variantId: enabledVariant?.id ?? 'enabled' }];
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await Experiment.updateById(experiment.id, updates);
+    }
+
+    await logAdminAction(
+      user.id,
+      'update_experiment',
+      'platform',
+      experiment.id,
+      { action, userId: targetUser.id, username: targetUser.username }
+    );
+
+    return { success: true, action, user: { id: targetUser.id, username: targetUser.username } };
+  }, {
+    params: t.Object({
+      experimentId: t.String(),
+    }),
+    body: t.Object({
+      userId: t.String(),
+      action: t.Union([t.Literal('include'), t.Literal('exclude')]),
+    }),
+  })
+
+  // Remove user from experiment management
+  .delete('/experiments/:experimentId/users/:userId', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { Experiment } = await import('@/lib/models/Experiment');
+    const experiment = await Experiment.findById(params.experimentId);
+
+    if (!experiment) {
+      set.status = 404;
+      return { error: 'Experiment not found' };
+    }
+
+    const excludedUsers = (experiment.excludedUsers as string[]) || [];
+    const userOverrides = (experiment.userOverrides as Array<{ userId: string; variantId: string }>) || [];
+
+    const updates: Record<string, unknown> = {};
+
+    const filteredExcluded = excludedUsers.filter(id => id !== params.userId);
+    if (filteredExcluded.length !== excludedUsers.length) {
+      updates.excludedUsers = filteredExcluded;
+    }
+
+    const filteredOverrides = userOverrides.filter(o => o.userId !== params.userId);
+    if (filteredOverrides.length !== userOverrides.length) {
+      updates.userOverrides = filteredOverrides;
+    }
+
+    if (Object.keys(updates).length > 0) {
+      await Experiment.updateById(experiment.id, updates);
+    }
+
+    await logAdminAction(
+      user.id,
+      'update_experiment',
+      'platform',
+      experiment.id,
+      { action: 'remove_user', userId: params.userId }
+    );
+
+    return { success: true };
+  }, {
+    params: t.Object({
+      experimentId: t.String(),
+      userId: t.String(),
+    }),
+  })
+
   // ==================== INSTANCES ====================
 
   // List connected instances
   .get('/instances', async ({ headers, cookie, query, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
     const { Instance } = await import('@/lib/models/Instance');
-    const { status, page = '1', limit = '20' } = query as { status?: string; page?: string; limit?: string };
+    const { status: instStatus, page = '1', limit = '20' } = query as { status?: string; page?: string; limit?: string };
     const pageNum = Math.max(1, parseInt(page));
     const limitNum = Math.min(50, Math.max(1, parseInt(limit)));
     const skip = (pageNum - 1) * limitNum;
 
-    const filter: Record<string, unknown> = {};
-    if (status) {
-      filter.status = status;
+    const allInstances = await Instance.find({}) as any[];
+    let filtered = allInstances;
+    if (instStatus) {
+      filtered = allInstances.filter((i: any) => i.status === instStatus);
     }
-
-    const [instances, total] = await Promise.all([
-      Instance.find(filter)
-        .skip(skip)
-        .limit(limitNum)
-        .sort({ createdAt: -1 }),
-      Instance.countDocuments(filter)
-    ]);
+    filtered.sort((a: any, b: any) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    const total = filtered.length;
+    const instances = filtered.slice(skip, skip + limitNum);
 
     return {
-      instances: instances.map(i => ({
-        id: i._id,
+      instances: instances.map((i: any) => ({
+        id: i.id,
         name: i.name,
         domain: i.domain,
         type: i.type,
@@ -1087,9 +1459,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Approve instance
   .post('/instances/:instanceId/approve', async ({ headers, cookie, params, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -1101,14 +1473,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Instance not found' };
     }
 
-    instance.status = 'active';
-    await instance.save();
+    await Instance.updateById(instance.id, { status: 'active' });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'approve_instance',
       'platform',
-      instance._id.toString(),
+      instance.id,
       { name: instance.name, domain: instance.domain }
     );
 
@@ -1121,9 +1492,9 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
 
   // Revoke instance
   .post('/instances/:instanceId/revoke', async ({ headers, cookie, params, body, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
@@ -1137,14 +1508,13 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
       return { error: 'Instance not found' };
     }
 
-    instance.status = 'revoked';
-    await instance.save();
+    await Instance.updateById(instance.id, { status: 'revoked' });
 
     await logAdminAction(
-      user._id.toString(),
+      user.id,
       'revoke_instance',
       'platform',
-      instance._id.toString(),
+      instance.id,
       { name: instance.name, domain: instance.domain },
       reason
     );
@@ -1163,29 +1533,851 @@ export const adminRoutes = new Elysia({ prefix: '/admin' })
   
   // Get platform stats
   .get('/stats', async ({ headers, cookie, set }) => {
-    const { user, error, isAdmin } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
     if (!user || !isAdmin) {
-      set.status = 403;
+      set.status = status;
       return { error: error || 'Admin access required' };
     }
 
-    const [userCount, serverCount, messageCount, bannedCount] = await Promise.all([
-      User.countDocuments(),
-      Server.countDocuments(),
-      Message.countDocuments(),
-      User.countDocuments({ isBanned: true }),
-    ]);
+    const allUsers = await User.find({});
+    const allServers = await Server.find({});
+    const allMessages = await Message.find({});
+    // Filter out legacy discord- prefixed users (now stored in DiscordUser table)
+    const realUsers = allUsers.filter(u => !u.username?.startsWith('discord-'));
+    const bannedUsers = realUsers.filter(u => u.isBanned);
+    const botUsers = realUsers.filter(u => u.isBot);
 
     // Get today's new users
     const today = new Date();
     today.setHours(0, 0, 0, 0);
-    const newUsersToday = await User.countDocuments({ createdAt: { $gte: today } });
+    const todayMs = today.getTime();
+    const newUsersToday = realUsers.filter(u => new Date(u.createdAt ?? 0).getTime() >= todayMs).length;
+
+    // New users this week
+    const weekAgo = new Date(today);
+    weekAgo.setDate(weekAgo.getDate() - 7);
+    const weekMs = weekAgo.getTime();
+    const newUsersThisWeek = realUsers.filter(u => new Date(u.createdAt ?? 0).getTime() >= weekMs).length;
+
+    // Messages today
+    const messagesToday = allMessages.filter(m => new Date(m.createdAt ?? 0).getTime() >= todayMs).length;
+
+    // Online users (presence heartbeat within 5 min)
+    const now = Date.now();
+    const onlineUsers = realUsers.filter(u => {
+      if (u.status === 'offline' || u.status === 'invisible') return false;
+      const hb = u.presenceLastHeartbeatAt;
+      if (!hb) return false;
+      return new Date(hb).getTime() >= now - 5 * 60 * 1000;
+    }).length;
+
+    // Total server members across all servers
+    const allServerMembers = await ServerMember.find({});
+    const totalMemberships = allServerMembers.length;
+
+    // Active servers (created in last 30 days)
+    const thirtyDaysAgo = new Date(today);
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    const activeServers = allServers.filter(s => new Date(s.createdAt ?? 0).getTime() >= thirtyDaysAgo.getTime()).length;
 
     return {
-      users: userCount,
-      servers: serverCount,
-      messages: messageCount,
-      banned: bannedCount,
+      users: realUsers.length,
+      servers: allServers.length,
+      messages: allMessages.length,
+      banned: bannedUsers.length,
+      bots: botUsers.length,
       newUsersToday,
+      newUsersThisWeek,
+      messagesToday,
+      onlineUsers,
+      totalMemberships,
+      activeServers,
     };
+  })
+
+  // ==================== TTS SOUND TRIGGERS ====================
+
+  // List all configured TTS sound triggers
+  .get('/tts-sounds', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const sounds = await TtsSound.find({});
+    return { sounds };
+  })
+
+  // Create a TTS sound trigger
+  .post('/tts-sounds', async ({ headers, cookie, body, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const { triggerWord, path, label, enabled } = body;
+    const cleanTrigger = triggerWord.trim().toLowerCase();
+    const cleanPath = path.trim();
+    if (!cleanTrigger || !cleanPath) {
+      set.status = 400;
+      return { error: 'triggerWord and path are required' };
+    }
+    // Normalise to a leading-slash public path so clients can load it directly.
+    const normalizedPath = cleanPath.startsWith('/') ? cleanPath : `/${cleanPath}`;
+    const sound = await TtsSound.create({
+      triggerWord: cleanTrigger,
+      path: normalizedPath,
+      label: label?.trim() || null,
+      enabled: enabled ?? true,
+      createdBy: user.id,
+    });
+    await logAdminAction(user.id, 'update_settings', 'platform', sound.id, { triggerWord: cleanTrigger, path: normalizedPath });
+    return { sound };
+  }, {
+    body: t.Object({
+      triggerWord: t.String(),
+      path: t.String(),
+      label: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Update a TTS sound trigger
+  .patch('/tts-sounds/:id', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const updates: Record<string, unknown> = {};
+    if (body.triggerWord !== undefined) updates.triggerWord = body.triggerWord.trim().toLowerCase();
+    if (body.path !== undefined) {
+      const p = body.path.trim();
+      updates.path = p.startsWith('/') ? p : `/${p}`;
+    }
+    if (body.label !== undefined) updates.label = body.label.trim() || null;
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    const sound = await TtsSound.updateById(params.id, updates);
+    if (!sound) {
+      set.status = 404;
+      return { error: 'Sound not found' };
+    }
+    return { sound };
+  }, {
+    body: t.Object({
+      triggerWord: t.Optional(t.String()),
+      path: t.Optional(t.String()),
+      label: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Delete a TTS sound trigger
+  .delete('/tts-sounds/:id', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    await TtsSound.deleteById(params.id);
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, { deleted: true });
+    return { success: true };
+  })
+
+  // ==================== TTS CUSTOM VOICES ====================
+
+  // List all configured TTS voices
+  .get('/tts-voices', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    const voices = await TtsVoice.find({});
+    return { voices };
+  })
+
+  // Create a TTS custom voice
+  .post('/tts-voices', async ({ headers, cookie, body, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const { name, provider, referenceId, description, enabled, isDefault } = body;
+    const cleanName = name.trim().toLowerCase();
+    const cleanProvider = provider.trim().toLowerCase();
+    const cleanRefId = referenceId.trim();
+    if (!cleanName || !cleanProvider || !cleanRefId) {
+      set.status = 400;
+      return { error: 'name, provider, and referenceId are required' };
+    }
+    if (!['fish', 'streamelements', 'se'].includes(cleanProvider)) {
+      set.status = 400;
+      return { error: 'provider must be "fish" or "streamelements"' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    if (isDefault) await TtsVoice.clearDefault();
+    const voice = await TtsVoice.create({
+      name: cleanName,
+      provider: cleanProvider,
+      referenceId: cleanRefId,
+      description: description?.trim() || null,
+      enabled: enabled ?? true,
+      isDefault: isDefault ?? false,
+      createdBy: user.id,
+    });
+    await logAdminAction(user.id, 'update_settings', 'platform', voice.id, { name: cleanName, provider: cleanProvider });
+    return { voice };
+  }, {
+    body: t.Object({
+      name: t.String(),
+      provider: t.String(),
+      referenceId: t.String(),
+      description: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+      isDefault: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Update a TTS voice
+  .patch('/tts-voices/:id', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    const updates: Record<string, unknown> = {};
+    if (body.name !== undefined) updates.name = body.name.trim().toLowerCase();
+    if (body.provider !== undefined) updates.provider = body.provider.trim().toLowerCase();
+    if (body.referenceId !== undefined) updates.referenceId = body.referenceId.trim();
+    if (body.description !== undefined) updates.description = body.description.trim() || null;
+    if (body.enabled !== undefined) updates.enabled = body.enabled;
+    if (body.isDefault !== undefined) {
+      if (body.isDefault) await TtsVoice.clearDefault();
+      updates.isDefault = body.isDefault;
+    }
+    const voice = await TtsVoice.updateById(params.id, updates);
+    if (!voice) {
+      set.status = 404;
+      return { error: 'Voice not found' };
+    }
+    return { voice };
+  }, {
+    body: t.Object({
+      name: t.Optional(t.String()),
+      provider: t.Optional(t.String()),
+      referenceId: t.Optional(t.String()),
+      description: t.Optional(t.String()),
+      enabled: t.Optional(t.Boolean()),
+      isDefault: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // Set a voice as the platform default
+  .patch('/tts-voices/:id/default', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    const voice = await TtsVoice.setDefault(params.id);
+    if (!voice) {
+      set.status = 404;
+      return { error: 'Voice not found' };
+    }
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, { setDefault: true });
+    return { voice };
+  })
+
+  // Delete a TTS voice
+  .delete('/tts-voices/:id', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const { TtsVoice } = await import('@/lib/models/TtsVoice');
+    await TtsVoice.deleteById(params.id);
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, { deleted: true });
+    return { success: true };
+  })
+
+  // ==================== TRANSLATION MANAGEMENT ====================
+
+  // Get locale stats from Serika Translate
+  .get('/translate/stats', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const apiKey = process.env.SERIKA_TRANSLATE_KEY;
+    if (!apiKey) {
+      set.status = 500;
+      return { error: 'SERIKA_TRANSLATE_KEY not configured' };
+    }
+    const slug = process.env.SERIKA_TRANSLATE_SLUG || 'serikacord';
+    try {
+      const res = await fetch(`https://translate.serika.dev/api/v1/projects/${slug}/locales`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) {
+        const body = await res.text().catch(() => '');
+        set.status = res.status;
+        return { error: `Translate API error: ${body}` };
+      }
+      const data = await res.json();
+      return { locales: Array.isArray(data) ? data : data.locales || [] };
+    } catch (err) {
+      set.status = 500;
+      return { error: 'Failed to fetch stats' };
+    }
+  })
+
+  // Get translation keys from Serika Translate
+  .get('/translate/keys', async ({ headers, cookie, query, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const apiKey = process.env.SERIKA_TRANSLATE_KEY;
+    if (!apiKey) {
+      set.status = 500;
+      return { error: 'SERIKA_TRANSLATE_KEY not configured' };
+    }
+    const slug = process.env.SERIKA_TRANSLATE_SLUG || 'serikacord';
+    const { search, page = '1', limit = '50' } = query as { search?: string; page?: string; limit?: string };
+    const params = new URLSearchParams({ page, limit });
+    if (search) params.set('search', search);
+    try {
+      const res = await fetch(`https://translate.serika.dev/api/v1/projects/${slug}/keys?${params}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) {
+        set.status = res.status;
+        return { error: 'Translate API error' };
+      }
+      const data = await res.json();
+      return { keys: data.keys || [], pagination: data.pagination };
+    } catch {
+      set.status = 500;
+      return { error: 'Failed to fetch keys' };
+    }
+  })
+
+  // Get activity log from Serika Translate
+  .get('/translate/activity', async ({ headers, cookie, query, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const apiKey = process.env.SERIKA_TRANSLATE_KEY;
+    if (!apiKey) {
+      set.status = 500;
+      return { error: 'SERIKA_TRANSLATE_KEY not configured' };
+    }
+    const slug = process.env.SERIKA_TRANSLATE_SLUG || 'serikacord';
+    const { limit = '30', offset = '0' } = query as { limit?: string; offset?: string };
+    try {
+      const res = await fetch(`https://translate.serika.dev/api/v1/projects/${slug}/activity?limit=${limit}&offset=${offset}`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!res.ok) {
+        set.status = res.status;
+        return { error: 'Translate API error' };
+      }
+      const data = await res.json();
+      return { activity: Array.isArray(data) ? data : data.activity || [] };
+    } catch {
+      set.status = 500;
+      return { error: 'Failed to fetch activity' };
+    }
+  })
+
+  // Push source strings to Serika Translate
+  .post('/translate/push', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const apiKey = process.env.SERIKA_TRANSLATE_KEY;
+    if (!apiKey) {
+      set.status = 500;
+      return { error: 'SERIKA_TRANSLATE_KEY not configured' };
+    }
+    const slug = process.env.SERIKA_TRANSLATE_SLUG || 'serikacord';
+    try {
+      const { readFile } = await import('fs/promises');
+      const { join } = await import('path');
+      const enPath = join(process.cwd(), 'public', '_gt', 'en.json');
+      const enContent = await readFile(enPath, 'utf8');
+      const enData = JSON.parse(enContent);
+      const entries = Object.entries(enData).map(([key, value]) => ({
+        key,
+        value: typeof value === 'string' ? value : JSON.stringify(value),
+      }));
+      const batchSize = 200;
+      let pushed = 0;
+      for (let i = 0; i < entries.length; i += batchSize) {
+        const batch = entries.slice(i, i + batchSize);
+        await fetch(`https://translate.serika.dev/api/v1/projects/${slug}/translations`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ entries: batch }),
+        });
+        pushed += batch.length;
+      }
+      await logAdminAction(user.id, 'update_settings', 'platform', 'translations', { action: 'push', pushed });
+      return { pushed };
+    } catch (err) {
+      set.status = 500;
+      return { error: 'Failed to push source strings' };
+    }
+  })
+
+  // Pull translations from Serika Translate (non-destructive)
+  .post('/translate/pull', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const apiKey = process.env.SERIKA_TRANSLATE_KEY;
+    if (!apiKey) {
+      set.status = 500;
+      return { error: 'SERIKA_TRANSLATE_KEY not configured' };
+    }
+    const slug = process.env.SERIKA_TRANSLATE_SLUG || 'serikacord';
+    try {
+      const { readFile, writeFile, readdir } = await import('fs/promises');
+      const { join } = await import('path');
+      const gtDir = join(process.cwd(), 'public', '_gt');
+      const enContent = await readFile(join(gtDir, 'en.json'), 'utf8');
+      const enData = JSON.parse(enContent);
+      const localFiles = await readdir(gtDir);
+      const targetLocales = localFiles
+        .filter((f) => f.endsWith('.json') && f !== 'en.json')
+        .map((f) => f.replace('.json', ''));
+
+      const bundleRes = await fetch(`https://translate.serika.dev/api/v1/projects/${slug}/bundle?status=approved`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!bundleRes.ok) {
+        set.status = bundleRes.status;
+        return { error: 'Failed to fetch bundle from Translate API' };
+      }
+      const bundle = await bundleRes.json();
+      const remoteLocales = bundle.locales || {};
+
+      let updated = 0;
+      let newLocales = 0;
+
+      for (const locale of targetLocales) {
+        const remoteData = remoteLocales[locale];
+        if (!remoteData || Object.keys(remoteData).length === 0) continue;
+
+        const localPath = join(gtDir, `${locale}.json`);
+        let localData: Record<string, unknown> = {};
+        try {
+          localData = JSON.parse(await readFile(localPath, 'utf8'));
+        } catch {}
+
+        let changed = 0;
+        for (const [key, remoteValue] of Object.entries(remoteData)) {
+          if (!remoteValue) continue;
+          const localValue = localData[key];
+          const enValue = enData[key];
+          if (localValue && localValue !== enValue && localValue !== remoteValue) continue;
+          if (localValue !== remoteValue) {
+            localData[key] = remoteValue;
+            changed++;
+          }
+        }
+        if (changed > 0) {
+          await writeFile(localPath, JSON.stringify(localData, null, 2) + '\n');
+          updated++;
+        }
+      }
+
+      for (const [remoteLocale, remoteData] of Object.entries(remoteLocales)) {
+        if (remoteLocale === 'en') continue;
+        const localPath = join(gtDir, `${remoteLocale}.json`);
+        try {
+          await readFile(localPath);
+        } catch {
+          if (remoteData && Object.keys(remoteData).length > 0) {
+            await writeFile(localPath, JSON.stringify(remoteData, null, 2) + '\n');
+            newLocales++;
+          }
+        }
+      }
+
+      await logAdminAction(user.id, 'update_settings', 'platform', 'translations', { action: 'pull', updated, newLocales });
+      return { updated, newLocales };
+    } catch (err) {
+      set.status = 500;
+      return { error: 'Failed to pull translations' };
+    }
+  })
+
+  // Full sync: push then pull
+  .post('/translate/sync', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+    const apiKey = process.env.SERIKA_TRANSLATE_KEY;
+    if (!apiKey) {
+      set.status = 500;
+      return { error: 'SERIKA_TRANSLATE_KEY not configured' };
+    }
+    const slug = process.env.SERIKA_TRANSLATE_SLUG || 'serikacord';
+    try {
+      const { readFile, writeFile, readdir } = await import('fs/promises');
+      const { join } = await import('path');
+      const gtDir = join(process.cwd(), 'public', '_gt');
+
+      // Push
+      const enContent = await readFile(join(gtDir, 'en.json'), 'utf8');
+      const enData = JSON.parse(enContent);
+      const entries = Object.entries(enData).map(([key, value]) => ({
+        key,
+        value: typeof value === 'string' ? value : JSON.stringify(value),
+      }));
+      const batchSize = 200;
+      for (let i = 0; i < entries.length; i += batchSize) {
+        const batch = entries.slice(i, i + batchSize);
+        await fetch(`https://translate.serika.dev/api/v1/projects/${slug}/translations`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${apiKey}`,
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ entries: batch }),
+        });
+      }
+
+      // Pull
+      const localFiles = await readdir(gtDir);
+      const targetLocales = localFiles
+        .filter((f) => f.endsWith('.json') && f !== 'en.json')
+        .map((f) => f.replace('.json', ''));
+
+      const bundleRes = await fetch(`https://translate.serika.dev/api/v1/projects/${slug}/bundle?status=approved`, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+      });
+      if (!bundleRes.ok) {
+        set.status = bundleRes.status;
+        return { error: 'Failed to fetch bundle' };
+      }
+      const bundle = await bundleRes.json();
+      const remoteLocales = bundle.locales || {};
+
+      let updated = 0;
+      let newLocales = 0;
+
+      for (const locale of targetLocales) {
+        const remoteData = remoteLocales[locale];
+        if (!remoteData || Object.keys(remoteData).length === 0) continue;
+
+        const localPath = join(gtDir, `${locale}.json`);
+        let localData: Record<string, unknown> = {};
+        try {
+          localData = JSON.parse(await readFile(localPath, 'utf8'));
+        } catch {}
+
+        let changed = 0;
+        for (const [key, remoteValue] of Object.entries(remoteData)) {
+          if (!remoteValue) continue;
+          const localValue = localData[key];
+          const enValue = enData[key];
+          if (localValue && localValue !== enValue && localValue !== remoteValue) continue;
+          if (localValue !== remoteValue) {
+            localData[key] = remoteValue;
+            changed++;
+          }
+        }
+        if (changed > 0) {
+          await writeFile(localPath, JSON.stringify(localData, null, 2) + '\n');
+          updated++;
+        }
+      }
+
+      for (const [remoteLocale, remoteData] of Object.entries(remoteLocales)) {
+        if (remoteLocale === 'en') continue;
+        const localPath = join(gtDir, `${remoteLocale}.json`);
+        try {
+          await readFile(localPath);
+        } catch {
+          if (remoteData && Object.keys(remoteData).length > 0) {
+            await writeFile(localPath, JSON.stringify(remoteData, null, 2) + '\n');
+            newLocales++;
+          }
+        }
+      }
+
+      await logAdminAction(user.id, 'update_settings', 'platform', 'translations', { action: 'sync', updated, newLocales });
+      return { updated, newLocales };
+    } catch (err) {
+      set.status = 500;
+      return { error: 'Failed to sync translations' };
+    }
+  })
+
+  // ==================== BUG REPORTS MANAGEMENT ====================
+
+  // List all bug reports (with optional filters)
+  .get('/bug-reports', async ({ headers, cookie, query, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { status: filterStatus, priority, category, page = '1', limit = '20' } = query as any;
+    const pageNum = Math.max(1, parseInt(page));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit)));
+    const offset = (pageNum - 1) * limitNum;
+
+    // 'active' = the default working set: everything except resolved / won't-fix.
+    // Filtered in JS since the model only supports single-status equality, so we
+    // must fetch the full set (no tight _limit) for pagination to stay correct.
+    const isActiveFilter = filterStatus === 'active';
+    const filter: Record<string, unknown> = { _orderByPriority: true };
+    if (!isActiveFilter) filter._limit = limitNum;
+    if (filterStatus && filterStatus !== 'all' && !isActiveFilter) filter.status = filterStatus;
+    if (priority && priority !== 'all') filter.priority = priority;
+    if (category && category !== 'all') filter.category = category;
+
+    let allReports = await BugReport.find(filter);
+    const { normalizeUrl } = await import('@/lib/services/storage');
+    allReports = allReports.map((r) => {
+      if (!r.attachments || !Array.isArray(r.attachments)) return r;
+      return { ...r, attachments: r.attachments.map((att: any) => att?.url ? { ...att, url: normalizeUrl(att.url) } : att) };
+    });
+    if (isActiveFilter) {
+      allReports = allReports.filter((r) => r.status !== 'resolved' && r.status !== 'wont_fix');
+    }
+    const total = allReports.length;
+    const reports = allReports.slice(offset, offset + limitNum);
+
+    // Fetch reporter info
+    const reporterIds = [...new Set(reports.map(r => r.reporterId))];
+    const reporters = reporterIds.length > 0 ? await User.find({ id: { in: reporterIds } }) : [];
+    const reporterMap = new Map(reporters.map(u => [u.id, u]));
+
+    return {
+      reports: reports.map(r => ({
+        ...r,
+        reporter: reporterMap.get(r.reporterId)
+          ? { id: reporterMap.get(r.reporterId)!.id, username: reporterMap.get(r.reporterId)!.username, displayName: reporterMap.get(r.reporterId)!.displayName, avatar: reporterMap.get(r.reporterId)!.avatar }
+          : null,
+      })),
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum),
+      },
+    };
+  })
+
+  // Get a single bug report with full details
+  .get('/bug-reports/:id', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const report = await BugReport.findById(params.id);
+    if (!report) {
+      set.status = 404;
+      return { error: 'Bug report not found' };
+    }
+
+    const { normalizeUrl } = await import('@/lib/services/storage');
+    const normalizedReport = report.attachments && Array.isArray(report.attachments)
+      ? { ...report, attachments: report.attachments.map((att: any) => att?.url ? { ...att, url: normalizeUrl(att.url) } : att) }
+      : report;
+
+    const reporter = await User.findById(report.reporterId);
+
+    return {
+      ...normalizedReport,
+      reporter: reporter
+        ? { id: reporter.id, username: reporter.username, displayName: reporter.displayName, avatar: reporter.avatar, email: reporter.email }
+        : null,
+    };
+  })
+
+  // Update bug report (priority, status, admin notes, assignment)
+  .patch('/bug-reports/:id', async ({ headers, cookie, params, body, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const report = await BugReport.findById(params.id);
+    if (!report) {
+      set.status = 404;
+      return { error: 'Bug report not found' };
+    }
+
+    const { priority, status: newStatus, adminNotes, assignedTo } = body as any;
+
+    const updates: Record<string, unknown> = {};
+    if (priority && ['low', 'medium', 'high', 'critical'].includes(priority)) {
+      updates.priority = priority;
+    }
+    if (newStatus && ['open', 'acknowledged', 'resolved', 'wont_fix'].includes(newStatus)) {
+      updates.status = newStatus;
+      if (newStatus === 'resolved' || newStatus === 'wont_fix') {
+        updates.resolvedAt = new Date();
+        updates.resolvedBy = user.id;
+      } else {
+        updates.resolvedAt = null;
+        updates.resolvedBy = null;
+      }
+    }
+    if (adminNotes !== undefined) {
+      updates.adminNotes = adminNotes;
+    }
+    if (assignedTo !== undefined) {
+      updates.assignedTo = assignedTo || null;
+    }
+
+    if (Object.keys(updates).length === 0) {
+      set.status = 400;
+      return { error: 'No valid fields to update' };
+    }
+
+    const updated = await BugReport.updateById(params.id, updates);
+
+    // Notify the reporter when the status changes (bug report / feedback status).
+    if (updates.status && updates.status !== report.status && report.reporterId) {
+      const { notifyBugReportStatus } = await import('@/lib/services/systemNotify');
+      void notifyBugReportStatus({
+        reporterId: report.reporterId,
+        kind: report.kind || 'bug',
+        title: report.title,
+        newStatus: updates.status as string,
+        adminNote: (updates.adminNotes as string | undefined) ?? report.adminNotes,
+      }).catch(() => {});
+    }
+
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, {
+      action: 'bug_report_update',
+      priority: updates.priority,
+      status: updates.status,
+      adminNotes: updates.adminNotes !== undefined,
+      assignedTo: updates.assignedTo !== undefined,
+    });
+
+    return { report: updated };
+  }, {
+    body: t.Object({
+      priority: t.Optional(t.Union([t.Literal('low'), t.Literal('medium'), t.Literal('high'), t.Literal('critical')])),
+      status: t.Optional(t.Union([t.Literal('open'), t.Literal('acknowledged'), t.Literal('resolved'), t.Literal('wont_fix')])),
+      adminNotes: t.Optional(t.String()),
+      assignedTo: t.Optional(t.String()),
+    }),
+  })
+
+  // Delete a bug report
+  .delete('/bug-reports/:id', async ({ headers, cookie, params, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const report = await BugReport.findById(params.id);
+    if (!report) {
+      set.status = 404;
+      return { error: 'Bug report not found' };
+    }
+
+    await BugReport.deleteById(params.id);
+
+    await logAdminAction(user.id, 'update_settings', 'platform', params.id, {
+      action: 'bug_report_delete',
+    });
+
+    return { success: true };
+  })
+
+  // Get bug report statistics
+  .get('/bug-reports/stats', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const allReports = await BugReport.find({});
+    const stats = {
+      total: allReports.length,
+      open: allReports.filter(r => r.status === 'open').length,
+      acknowledged: allReports.filter(r => r.status === 'acknowledged').length,
+      resolved: allReports.filter(r => r.status === 'resolved').length,
+      wontFix: allReports.filter(r => r.status === 'wont_fix').length,
+      byPriority: {
+        low: allReports.filter(r => r.priority === 'low').length,
+        medium: allReports.filter(r => r.priority === 'medium').length,
+        high: allReports.filter(r => r.priority === 'high').length,
+        critical: allReports.filter(r => r.priority === 'critical').length,
+      },
+    };
+
+    return { stats };
+  })
+
+  // Normalize legacy Backblaze B2 URLs in bug report attachments to CDN format
+  .post('/bug-reports/normalize-attachments', async ({ headers, cookie, set }) => {
+    const { user, error, isAdmin, status } = await getAdminAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user || !isAdmin) {
+      set.status = status;
+      return { error: error || 'Admin access required' };
+    }
+
+    const { normalizeUrl } = await import('@/lib/services/storage');
+    const allReports = await BugReport.find({});
+    let fixed = 0;
+
+    for (const report of allReports) {
+      const attachments = report.attachments as Array<{ url: string; type: string; name: string }> | null;
+      if (!attachments || attachments.length === 0) continue;
+
+      let changed = false;
+      const normalized = attachments.map((att) => {
+        if (!att.url || att.url.includes('cdn.serika.chat')) return att;
+        changed = true;
+        return { ...att, url: normalizeUrl(att.url) };
+      });
+
+      if (changed) {
+        await BugReport.updateById(report.id, { attachments: normalized } as any);
+        fixed++;
+      }
+    }
+
+    await logAdminAction(user.id, 'update_settings', 'platform', 'bug-reports', {
+      action: 'normalize_attachment_urls',
+      reportsFixed: fixed,
+    });
+
+    return { success: true, reportsFixed: fixed };
   });

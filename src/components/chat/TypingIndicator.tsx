@@ -7,13 +7,18 @@ interface TypingIndicatorProps {
   className?: string;
 }
 
-/** Animated "X is typing..." row; collapses smoothly when text is empty. */
+/**
+ * Animated "X is typing..." row. Occupies a CONSTANT height whether or not
+ * anyone is typing, so the message list above it never resizes/shifts when the
+ * indicator appears or disappears — only the content fades in and out.
+ */
 export function TypingIndicator({ text, className }: TypingIndicatorProps) {
   return (
     <div
+      aria-hidden={!text}
       className={cn(
-        "px-4 overflow-hidden transition-all duration-200",
-        text ? "py-1.5 max-h-8 opacity-100" : "py-0 max-h-0 opacity-0",
+        "px-4 h-5 flex items-center overflow-hidden transition-opacity duration-150",
+        text ? "opacity-100" : "opacity-0",
         className
       )}
     >

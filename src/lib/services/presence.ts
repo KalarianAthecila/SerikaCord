@@ -6,7 +6,7 @@ export type PublicPresenceStatus = "online" | "idle" | "dnd" | "offline";
 interface PresenceInput {
   status?: string | null;
   presenceLastHeartbeatAt?: Date | string | number | null;
-  isSystem?: boolean;
+  isSystem?: boolean | null;
 }
 
 function toTimestamp(value: PresenceInput["presenceLastHeartbeatAt"]): number | null {

@@ -1,11 +1,14 @@
 "use client";
 
 import { memo, useEffect, useState } from "react";
+import { useInView } from "@/hooks/useInView";
 import { useRouter } from "next/navigation";
-import { Loader2, Check } from "lucide-react";
+import { Check } from "lucide-react";
 import { toast } from "sonner";
-import { cn } from "@/lib/utils";
+import { useChatGt } from "./ChatGtContext";
+import { cn, cdnImage } from "@/lib/utils";
 import { ServerBadge } from "@/components/ui/badges";
+import { Loader } from "@/components/ui/Loader";
 
 /** Serika domains whose root/`/invite` paths carry server invite codes. */
 const INVITE_HOSTS = ["serika.cc", "serika.chat", "serika.dev"];
@@ -91,13 +94,20 @@ function formatCount(n?: number): string {
  * online/member counts, and a context-aware Join / Joined button.
  */
 export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps) {
+  const gt = useChatGt();
   const router = useRouter();
   const [data, setData] = useState<InviteData | null>(null);
   const [status, setStatus] = useState<"loading" | "ready" | "error">("loading");
   const [isJoining, setIsJoining] = useState(false);
   const [joined, setJoined] = useState(false);
+  // Defer the invite lookup until the card is near the viewport. Without this,
+  // opening an invite-heavy channel (e.g. Partnerships) mounts every card at
+  // once and fires 50–200 concurrent /api/invites requests, spiking memory and
+  // the main thread hard enough to crash the tab.
+  const [cardRef, inView] = useInView<HTMLDivElement>();
 
   useEffect(() => {
+    if (!inView) return;
     let active = true;
     setStatus("loading");
     fetch(`/api/invites/${encodeURIComponent(code)}`)
@@ -115,7 +125,7 @@ export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps)
     return () => {
       active = false;
     };
-  }, [code]);
+  }, [code, inView]);
 
   const handleJoin = async () => {
     if (!data || isJoining) return;
@@ -125,16 +135,16 @@ export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps)
       const payload = await res.json().catch(() => null);
       if (res.ok) {
         setJoined(true);
-        toast.success(`Joined ${data.server.name}`);
+        toast.success(gt("Joined {name}", { name: data.server.name }));
         router.push(`/channels/${data.server._id}`);
       } else if (res.status === 400 && /already a member/i.test(payload?.error || "")) {
         setJoined(true);
         router.push(`/channels/${data.server._id}`);
       } else {
-        toast.error(payload?.error || "Failed to join server");
+        toast.error(payload?.error || gt("Failed to join server"));
       }
     } catch {
-      toast.error("Failed to join server. Check your connection.");
+      toast.error(gt("Failed to join server. Check your connection."));
     } finally {
       setIsJoining(false);
     }
@@ -143,9 +153,9 @@ export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps)
   if (status === "error") return null;
 
   return (
-    <div className="mt-2 w-full max-w-[420px] rounded-lg bg-[var(--app-surface-alt)] border border-[var(--app-border)] p-4">
+    <div ref={cardRef} className="mt-2 w-full max-w-[420px] rounded-lg bg-[var(--app-surface-alt)] border border-[var(--app-border)] p-4">
       <p className="text-xs font-semibold uppercase tracking-wide text-[var(--app-muted)] mb-3">
-        You&apos;ve been invited to join a server
+        {gt("You've been invited to join a server")}
       </p>
 
       {status === "loading" ? (
@@ -164,7 +174,7 @@ export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps)
             {data.server.icon ? (
               // eslint-disable-next-line @next/next/no-img-element
               <img
-                src={data.server.icon}
+                src={cdnImage(data.server.icon)}
                 alt=""
                 className="w-full h-full object-cover"
                 loading="lazy"
@@ -188,11 +198,11 @@ export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps)
             <div className="flex items-center gap-3 mt-0.5 text-xs text-[var(--app-muted)]">
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-[#22c55e]" />
-                {formatCount(data.server.onlineCount)} Online
+                {formatCount(data.server.onlineCount)} {gt("Online")}
               </span>
               <span className="flex items-center gap-1.5">
                 <span className="w-2 h-2 rounded-full bg-[var(--app-muted)]" />
-                {formatCount(data.server.memberCount)} Members
+                {formatCount(data.server.memberCount)} {gt("Members")}
               </span>
             </div>
           </div>
@@ -209,14 +219,14 @@ export const InviteEmbed = memo(function InviteEmbed({ code }: InviteEmbedProps)
             )}
           >
             {isJoining ? (
-              <Loader2 className="w-4 h-4 animate-spin" />
+              <Loader size={16} />
             ) : joined ? (
               <>
                 <Check className="w-4 h-4" />
-                Joined
+                {gt("Joined")}
               </>
             ) : (
-              "Join"
+              gt("Join")
             )}
           </button>
         </div>

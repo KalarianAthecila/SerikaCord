@@ -9,12 +9,21 @@ import {
   useState,
 } from "react";
 import { cn } from "@/lib/utils";
+import { useGT } from "gt-next";
 
 export interface ComposerEmoji {
   id: string;
   name: string;
   url: string;
   animated?: boolean;
+}
+
+export interface ComposerMention {
+  id: string;
+  label: string;
+  /** "user" | "role" | "everyone" | "here" | "channel" */
+  kind: "user" | "role" | "everyone" | "here" | "channel";
+  color?: string;
 }
 
 export interface RichComposerHandle {
@@ -28,6 +37,8 @@ export interface RichComposerHandle {
   replaceRange: (start: number, end: number, replacement: string) => void;
   /** Replace [start, end) in token-string coordinates with an emoji image */
   replaceRangeWithEmoji: (start: number, end: number, emoji: ComposerEmoji) => void;
+  /** Replace [start, end) in token-string coordinates with a mention pill */
+  replaceRangeWithMention: (start: number, end: number, mention: ComposerMention) => void;
 }
 
 interface RichComposerProps {
@@ -44,6 +55,37 @@ interface RichComposerProps {
 
 function emojiToken(emoji: ComposerEmoji): string {
   return `<${emoji.animated ? "a" : ""}:${emoji.name}:${emoji.id}>`;
+}
+
+function mentionToken(mention: ComposerMention): string {
+  if (mention.kind === "role") return `<@&${mention.id}>`;
+  if (mention.kind === "everyone") return "@everyone";
+  if (mention.kind === "here") return "@here";
+  if (mention.kind === "channel") return `<#${mention.id}>`;
+  return `<@${mention.id}>`;
+}
+
+function makeMentionSpan(mention: ComposerMention): HTMLSpanElement {
+  const span = document.createElement("span");
+  span.contentEditable = "false";
+  span.dataset.mentionKind = mention.kind;
+  span.dataset.mentionId = mention.id;
+  span.dataset.mentionToken = mentionToken(mention);
+  span.className =
+    "inline-block px-1 py-0.5 rounded font-medium cursor-pointer select-none mx-px " +
+    (mention.kind === "everyone" || mention.kind === "here"
+      ? "bg-yellow-500/20 text-yellow-200"
+      : mention.kind === "channel"
+        ? "bg-[var(--app-accent)]/15 text-[var(--app-accent)]"
+        : mention.color
+          ? ""
+          : "bg-[var(--app-accent)]/20 text-[var(--app-accent)]");
+  if (mention.color && mention.kind !== "everyone" && mention.kind !== "here" && mention.kind !== "channel") {
+    span.style.backgroundColor = mention.color + "22";
+    span.style.color = mention.color;
+  }
+  span.textContent = mention.kind === "channel" ? `#${mention.label}` : `@${mention.label}`;
+  return span;
 }
 
 function makeEmojiImg(emoji: ComposerEmoji): HTMLImageElement {
@@ -64,6 +106,9 @@ function nodeTokenLength(node: Node): number {
   if (node.nodeName === "IMG") {
     return (node as HTMLElement).dataset.emojiToken?.length ?? 0;
   }
+  if (node.nodeName === "SPAN" && (node as HTMLElement).dataset.mentionToken) {
+    return (node as HTMLElement).dataset.mentionToken?.length ?? 0;
+  }
   if (node.nodeName === "BR") return 1;
   return 0;
 }
@@ -82,6 +127,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
     { placeholder, disabled = false, className, "aria-label": ariaLabel, onChange, onCaretMove, onKeyDown },
     ref
   ) {
+    const gt = useGT();
     const editorRef = useRef<HTMLDivElement>(null);
     const isEmptyRef = useRef(true);
     const [isEmpty, setIsEmpty] = useState(true);
@@ -99,6 +145,8 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
             out += child.textContent ?? "";
           } else if (child.nodeName === "IMG") {
             out += (child as HTMLElement).dataset.emojiToken ?? "";
+          } else if (child.nodeName === "SPAN" && (child as HTMLElement).dataset.mentionToken) {
+            out += (child as HTMLElement).dataset.mentionToken ?? "";
           } else if (child.nodeName === "BR") {
             out += "\n";
           } else if (child.nodeType === Node.ELEMENT_NODE) {
@@ -190,7 +238,8 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
               return { node: child, offset: remaining };
             }
             remaining -= len;
-          } else if (child.nodeName === "IMG" || child.nodeName === "BR") {
+          } else if (child.nodeName === "IMG" || child.nodeName === "BR" ||
+            (child.nodeName === "SPAN" && (child as HTMLElement).dataset.mentionToken)) {
             const len = nodeTokenLength(child);
             if (remaining < len) {
               return { node, offset: i };
@@ -274,7 +323,19 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
     }, [posToDom, emitChange]);
 
     useImperativeHandle(ref, () => ({
-      focus: () => editorRef.current?.focus(),
+      focus: () => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        editor.focus();
+        const selection = window.getSelection();
+        if (selection) {
+          const range = document.createRange();
+          range.selectNodeContents(editor);
+          range.collapse(false);
+          selection.removeAllRanges();
+          selection.addRange(range);
+        }
+      },
       clear: () => {
         if (editorRef.current) {
           editorRef.current.innerHTML = "";
@@ -297,6 +358,9 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       replaceRangeWithEmoji: (start: number, end: number, emoji: ComposerEmoji) => {
         domReplaceRange(start, end, makeEmojiImg(emoji));
       },
+      replaceRangeWithMention: (start: number, end: number, mention: ComposerMention) => {
+        domReplaceRange(start, end, makeMentionSpan(mention));
+      },
     }), [serialize, getCaret, insertNodeAtCaret, domReplaceRange]);
 
     // ----- Event handlers ----------------------------------------------------
@@ -306,6 +370,17 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
     }, [emitChange]);
 
     const handlePaste = useCallback((e: React.ClipboardEvent) => {
+      // Check for pasted files (screenshots, copied images) FIRST. In Electron
+      // webviews, calling preventDefault() before the parent MessageBar's
+      // onPaste fires can consume clipboard items, so we must bail out early
+      // and let the parent handler deal with file attachments.
+      const dt = e.clipboardData;
+      if (dt) {
+        const hasFiles =
+          (dt.files && dt.files.length > 0) ||
+          (dt.items && Array.from(dt.items).some((item) => item.kind === "file"));
+        if (hasFiles) return; // let MessageBar's onPaste handle the files
+      }
       // Plain text only — no pasted markup
       e.preventDefault();
       const text = e.clipboardData.getData("text/plain");
@@ -323,16 +398,24 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
       emitChange();
     }, [emitChange]);
 
+    const lastKeyPreventedRef = useRef(false);
+
     const handleKeyDownInternal = useCallback((e: React.KeyboardEvent) => {
       // Block rich-formatting shortcuts (bold/italic/underline)
       if ((e.metaKey || e.ctrlKey) && ["b", "i", "u"].includes(e.key.toLowerCase())) {
         e.preventDefault();
+        lastKeyPreventedRef.current = true;
         return;
       }
       onKeyDown?.(e);
+      lastKeyPreventedRef.current = e.defaultPrevented;
     }, [onKeyDown]);
 
     const reportCaret = useCallback(() => {
+      if (lastKeyPreventedRef.current) {
+        lastKeyPreventedRef.current = false;
+        return;
+      }
       onCaretMove?.(serialize(), getCaret());
     }, [onCaretMove, serialize, getCaret]);
 
@@ -358,6 +441,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
         <div
           ref={editorRef}
           role="textbox"
+          data-message-composer="true"
           aria-multiline="true"
           aria-label={ariaLabel ?? placeholder}
           contentEditable={!disabled}
@@ -376,7 +460,7 @@ export const RichComposer = forwardRef<RichComposerHandle, RichComposerProps>(
         {/* Markdown supported indicator */}
         {hasMarkdown && !isEmpty && (
           <span className="absolute bottom-0.5 left-10 sm:left-14 text-[10px] text-[var(--app-muted)] pointer-events-none opacity-60">
-            Markdown
+            {gt("Markdown")}
           </span>
         )}
       </div>

@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Fragment,
   useCallback,
   useEffect,
   useImperativeHandle,
@@ -13,25 +14,34 @@ import {
   type ReactNode,
   type Ref,
 } from "react";
-import { Loader2, ArrowDown } from "lucide-react";
+import { ArrowDown } from "lucide-react";
+import { useGT, useLocale } from "gt-next";
+import { ChatGtProvider } from "./ChatGtContext";
 import { cn } from "@/lib/utils";
 import { MessageGroup } from "@/components/chat/MessageGroup";
 import { MessageSkeleton } from "@/components/ui/skeleton";
+import { formatMessageTimestamp } from "@/lib/chat/messages";
 import type { PickerEmoji } from "@/components/chat/MessageHoverActions";
 import type { ChatMessage, MessageGroupData } from "@/lib/chat/types";
 import type { useMessageActions } from "@/hooks/useMessageActions";
+import { Loader } from "@/components/ui/Loader";
 
 export interface MessageListHandle {
   scrollToBottom: (behavior?: ScrollBehavior) => void;
   scrollToMessage: (messageId: string) => void;
   isAtBottom: () => boolean;
   forceScrollToBottom: () => void;
+  /** Scroll roughly one viewport up (dir -1) or down (dir 1). */
+  scrollByViewport: (dir: 1 | -1) => void;
+  /** Scroll to the very top (loading older messages happens automatically). */
+  scrollToTop: () => void;
 }
 
 interface MentionUser {
   id: string;
   username?: string;
   displayName?: string;
+  avatar?: string;
 }
 
 interface MentionRole {
@@ -44,10 +54,18 @@ interface MessageListProps<M extends ChatMessage> {
   groups: MessageGroupData<M>[];
   isLoading: boolean;
   hasMoreOlder: boolean;
+  /** True when the window is detached from the live tail (jumped to a pin/search
+   *  result, or trimmed) — enables scroll-down "load newer" pagination. */
+  hasMoreNewer?: boolean;
   isLoadingMore: boolean;
   loadOlderMessages: () => Promise<boolean>;
+  loadNewerMessages?: () => Promise<boolean>;
   actions: ReturnType<typeof useMessageActions<M>>;
   currentUserId?: string;
+  /** Owner / MANAGE_MESSAGES — can delete other people's messages. */
+  canModerate?: boolean;
+  /** Owner / MANAGE_MESSAGES / PIN_MESSAGES — can pin or unpin messages. */
+  canPin?: boolean;
   serverId?: string;
   serverName?: string;
   swipeEnabled?: boolean;
@@ -57,6 +75,7 @@ interface MessageListProps<M extends ChatMessage> {
   serverEmojis?: PickerEmoji[];
   availableServerEmojis?: PickerEmoji[];
   onMediaClick: (src: string, alt: string | undefined, messageId: string) => void;
+  onSuppressEmbeds?: (messageId: string) => void;
   /** Focus the composer after choosing "reply" (or similar). */
   onReplyFocus?: () => void;
   /** Rendered above the first message when the full history is loaded. */
@@ -74,10 +93,14 @@ function MessageListInner<M extends ChatMessage>(
     groups,
     isLoading,
     hasMoreOlder,
+    hasMoreNewer = false,
     isLoadingMore,
     loadOlderMessages,
+    loadNewerMessages,
     actions,
     currentUserId,
+    canModerate = false,
+    canPin = false,
     serverId,
     serverName,
     swipeEnabled = false,
@@ -87,30 +110,48 @@ function MessageListInner<M extends ChatMessage>(
     serverEmojis,
     availableServerEmojis,
     onMediaClick,
+    onSuppressEmbeds,
     onReplyFocus,
     welcomeHeader,
-    emptyText = "No messages yet. Be the first to say something!",
+    emptyText,
     className,
     onAtBottomChange,
     resetKey,
   }: MessageListProps<M>,
   ref: Ref<MessageListHandle>
 ) {
+  const gt = useGT();
+  const locale = useLocale();
   const viewportRef = useRef<HTMLDivElement | null>(null);
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const endRef = useRef<HTMLDivElement | null>(null);
   const isAtBottomRef = useRef(true);
+  // True while the list should stay glued to the bottom. Set on channel switch
+  // / force-scroll and cleared the moment the user scrolls up. Drives the
+  // ResizeObserver re-anchor below so late-loading media can't strand the list
+  // mid-view (which also used to spuriously trigger top-pagination).
+  const stickToBottomRef = useRef(true);
   const prevScrollHeightRef = useRef(0);
   const pendingScrollRestoreRef = useRef(false);
   const forceScrollRef = useRef(false);
+  // Gates top-pagination: stays false until the list has settled at the bottom
+  // for the current context, so opening a channel never auto-loads older
+  // history before the user has actually scrolled up.
+  const readyForPaginationRef = useRef(false);
   const scrollRafRef = useRef<number | null>(null);
   const animateInRef = useRef(true);
   const [animateIn, setAnimateIn] = useState(true);
   const [newMessagesCount, setNewMessagesCount] = useState(0);
+  const [newMessageStartId, setNewMessageStartId] = useState<string | null>(null);
   const [showContentFade, setShowContentFade] = useState(false);
   const wasLoadingRef = useRef(isLoading);
   const messageCount = useMemo(
     () => groups.reduce((total, group) => total + group.messages.length, 0),
     [groups]
+  );
+  const formattedTimestamps = useMemo(
+    () => groups.map((g) => formatMessageTimestamp(g.timestamp, gt, locale)),
+    [groups, gt, locale],
   );
   const firstMessageId = groups[0]?.messages[0]?.id;
   const prevMessageCountRef = useRef(0);
@@ -118,16 +159,22 @@ function MessageListInner<M extends ChatMessage>(
 
   // Reset scroll state when channel/DM changes so the list scrolls to bottom
   // even if the message count happens to be identical to the previous context.
-  useEffect(() => {
+  // Must be a layout effect so the force-scroll flag is set BEFORE the
+  // auto-scroll layout effect below runs on the same commit — otherwise an
+  // instant cached paint lands mid-list.
+  useLayoutEffect(() => {
     if (resetKey === undefined) return;
     prevMessageCountRef.current = 0;
     prevGroupCountRef.current = 0;
     isAtBottomRef.current = true;
+    stickToBottomRef.current = true;
     forceScrollRef.current = true;
+    readyForPaginationRef.current = false;
     animateInRef.current = true;
     wasLoadingRef.current = true;
     Promise.resolve().then(() => {
       setNewMessagesCount(0);
+      setNewMessageStartId(null);
       setAnimateIn(true);
       setShowContentFade(false);
     });
@@ -148,9 +195,9 @@ function MessageListInner<M extends ChatMessage>(
 
   // Latest mutable handlers behind stable identities so memoized rows
   // don't re-render on every parent render.
-  const latestRef = useRef({ actions, loadOlderMessages, onReplyFocus, onAtBottomChange });
+  const latestRef = useRef({ actions, loadOlderMessages, loadNewerMessages, onReplyFocus, onAtBottomChange });
   useEffect(() => {
-    latestRef.current = { actions, loadOlderMessages, onReplyFocus, onAtBottomChange };
+    latestRef.current = { actions, loadOlderMessages, loadNewerMessages, onReplyFocus, onAtBottomChange };
   });
 
   const scrollToBottom = useCallback((behavior: ScrollBehavior = "smooth") => {
@@ -169,6 +216,16 @@ function MessageListInner<M extends ChatMessage>(
     forceScrollRef.current = true;
   }, []);
 
+  const scrollByViewport = useCallback((dir: 1 | -1) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollBy({ top: dir * viewport.clientHeight * 0.9, behavior: "smooth" });
+  }, []);
+
+  const scrollToTop = useCallback(() => {
+    viewportRef.current?.scrollTo({ top: 0, behavior: "smooth" });
+  }, []);
+
   useImperativeHandle(
     ref,
     () => ({
@@ -176,8 +233,10 @@ function MessageListInner<M extends ChatMessage>(
       scrollToMessage,
       isAtBottom: () => isAtBottomRef.current,
       forceScrollToBottom,
+      scrollByViewport,
+      scrollToTop,
     }),
-    [scrollToBottom, scrollToMessage, forceScrollToBottom]
+    [scrollToBottom, scrollToMessage, forceScrollToBottom, scrollByViewport, scrollToTop]
   );
 
   // Scroll restoration after loading older messages — runs synchronously
@@ -200,12 +259,15 @@ function MessageListInner<M extends ChatMessage>(
   // useLayoutEffect ensures instant scroll (no flash) on initial load and
   // force-scroll; RAF-deferred smooth scroll for subsequent new messages.
   useLayoutEffect(() => {
+    if (isLoading) return;
     if (pendingScrollRestoreRef.current) return; // handled above
     const prevCount = prevMessageCountRef.current;
     prevMessageCountRef.current = messageCount;
-    if (messageCount <= prevCount) return;
 
     const shouldForce = forceScrollRef.current;
+    // A pending force-scroll (e.g. from a channel switch) must always resolve to
+    // the bottom, even when the new context has the same or fewer messages.
+    if (messageCount <= prevCount && !shouldForce) return;
     forceScrollRef.current = false;
 
     if (shouldForce || isAtBottomRef.current) {
@@ -214,6 +276,9 @@ function MessageListInner<M extends ChatMessage>(
       // Instant scroll for initial load or force-scroll; smooth otherwise.
       if (prevCount === 0 || shouldForce) {
         viewport.scrollTop = viewport.scrollHeight;
+        // The list is now pinned to the bottom for this context; allow the user
+        // to scroll up to trigger older-history pagination from here on.
+        readyForPaginationRef.current = true;
       } else {
         // Defer smooth scroll to after paint so the browser animates properly.
         requestAnimationFrame(() => {
@@ -221,14 +286,48 @@ function MessageListInner<M extends ChatMessage>(
         });
       }
     } else {
-      setNewMessagesCount((c) => c + (messageCount - prevCount));
+      let delta = messageCount - prevCount;
+      setNewMessagesCount((c) => c + delta);
+      // Record the first new message group's ID for the separator line
+      for (let i = groups.length - 1; i >= 0; i--) {
+        const g = groups[i];
+        if (g.messages.length >= delta) {
+          const startIdx = g.messages.length - delta;
+          setNewMessageStartId(g.messages[startIdx]?.id ?? g.messages[0]?.id ?? null);
+          break;
+        }
+        delta -= g.messages.length;
+      }
     }
     // Disable staggered animation after the initial batch has rendered.
     animateInRef.current = false;
     if (animateIn) {
       Promise.resolve().then(() => setAnimateIn(false));
     }
-  }, [messageCount, animateIn]);
+  }, [messageCount, animateIn, isLoading]);
+
+  // Keep the list glued to the bottom while content height changes *after* the
+  // initial paint — images, embeds, custom emojis and web fonts all resolve
+  // asynchronously and grow the scroll height under us. Without this, the
+  // initial scroll-to-bottom lands mid-list once that media loads, and the
+  // resulting near-top scrollTop spuriously fires top-pagination.
+  useEffect(() => {
+    const content = contentRef.current;
+    if (!content || typeof ResizeObserver === "undefined") return;
+    const ro = new ResizeObserver(() => {
+      if (!stickToBottomRef.current) return;
+      const viewport = viewportRef.current;
+      if (!viewport) return;
+      if (pendingScrollRestoreRef.current) return; // top-pagination owns scroll
+      viewport.scrollTop = viewport.scrollHeight;
+      if (!isAtBottomRef.current) {
+        isAtBottomRef.current = true;
+        latestRef.current.onAtBottomChange?.(true);
+      }
+    });
+    ro.observe(content);
+    return () => ro.disconnect();
+  }, []);
 
   // Detect if new groups were appended at the bottom (vs prepended at top).
   // Used to apply slide-in animation to newly arrived messages.
@@ -249,19 +348,42 @@ function MessageListInner<M extends ChatMessage>(
       if (!viewport) return;
       const { scrollTop, scrollHeight, clientHeight } = viewport;
       const atBottom = scrollHeight - scrollTop - clientHeight < 80;
+      // A user-initiated scroll away from the bottom releases the sticky pin;
+      // reaching the bottom again re-engages it.
+      stickToBottomRef.current = atBottom;
       if (atBottom !== isAtBottomRef.current) {
         isAtBottomRef.current = atBottom;
         latestRef.current.onAtBottomChange?.(atBottom);
       }
-      if (atBottom) setNewMessagesCount(0);
+      if (atBottom) {
+        setNewMessagesCount(0);
+        setNewMessageStartId(null);
+        // Detached window (jumped to a pin/search result, or trimmed): reaching
+        // the bottom loads the next newer page so the user can scroll all the way
+        // back to the latest message.
+        if (hasMoreNewer && !isLoadingMore && readyForPaginationRef.current) {
+          void latestRef.current.loadNewerMessages?.();
+        }
+      }
 
-      if (scrollTop < 500 && hasMoreOlder && !isLoadingMore) {
+      // Only paginate once the list has settled at the bottom for this context
+      // (readyForPaginationRef) and there is real scroll room — this prevents a
+      // freshly-opened or short channel from auto-loading older history before
+      // the user has actually scrolled up.
+      if (
+        scrollTop < 500 &&
+        hasMoreOlder &&
+        !isLoadingMore &&
+        readyForPaginationRef.current &&
+        !stickToBottomRef.current &&
+        scrollHeight - clientHeight > 200
+      ) {
         prevScrollHeightRef.current = viewport.scrollHeight;
         pendingScrollRestoreRef.current = true;
         void latestRef.current.loadOlderMessages();
       }
     });
-  }, [hasMoreOlder, isLoadingMore]);
+  }, [hasMoreOlder, hasMoreNewer, isLoadingMore]);
 
   // Stable handlers for memoized rows.
   const stable = useMemo(() => {
@@ -290,13 +412,14 @@ function MessageListInner<M extends ChatMessage>(
   }, []);
 
   return (
+    <ChatGtProvider>
     <div className={cn("relative flex-1 min-h-0", className)}>
       {/* Non-intrusive top loading indicator — absolute positioned, no layout shift */}
       {hasMoreOlder && !isLoading && isLoadingMore && (
         <div className="absolute top-0 left-0 right-0 z-10 flex justify-center py-2 pointer-events-none">
           <div className="flex items-center gap-2 text-xs text-[var(--text-muted)] bg-[var(--bg-app)]/80 backdrop-blur-sm px-3 py-1 rounded-full shadow-sm">
-            <Loader2 className="w-3.5 h-3.5 animate-spin" />
-            Loading older messages
+            <Loader size={undefined} />
+            {gt("Loading older messages")}
           </div>
         </div>
       )}
@@ -305,7 +428,7 @@ function MessageListInner<M extends ChatMessage>(
         onScroll={handleScroll}
         className="chat-scroller h-full overflow-y-auto overflow-x-hidden scrollbar-thin overscroll-contain"
       >
-        <div className="flex flex-col min-h-full">
+        <div ref={contentRef} className="flex flex-col min-h-full">
           <div className="flex-1" />
           <div className={cn("flex flex-col py-4 w-full max-w-full", showContentFade && "msg-list-fade-in")}>
             {/* History start header */}
@@ -315,15 +438,22 @@ function MessageListInner<M extends ChatMessage>(
             {isLoading ? (
               <MessageSkeleton count={5} />
             ) : groups.length === 0 ? (
-              <div className="text-center text-[var(--text-muted)] py-8">{emptyText}</div>
+              <div className="text-center text-[var(--text-muted)] py-8">{emptyText || gt("No messages yet. Be the first to say something!")}</div>
             ) : (
               groups.map((group, idx) => {
                 const shouldAnimate = animateIn && idx < 12;
                 const isLastGroup = idx === groups.length - 1;
                 const shouldSlideIn = !animateIn && isBottomAppend.current && isLastGroup && isAtBottomRef.current;
+                const showNewSeparator = newMessageStartId === group.messages[0]?.id;
                 return (
+                <Fragment key={`group-${group.messages[0].id}`}>
+                {showNewSeparator && (
+                  <div className="flex items-center gap-2 px-4 my-2 select-none">
+                    <span className="text-xs font-semibold text-[var(--app-accent)] whitespace-nowrap">{gt("New")}</span>
+                    <div className="h-px flex-1 bg-[var(--app-accent)]" />
+                  </div>
+                )}
                 <div
-                  key={`group-${group.messages[0].id}`}
                   className={cn(
                     "msg-group-cv",
                     shouldAnimate && "msg-fade-in",
@@ -334,6 +464,8 @@ function MessageListInner<M extends ChatMessage>(
                 <MessageGroup
                   group={group}
                   currentUserId={currentUserId}
+                  canModerate={canModerate}
+                  canPin={canPin}
                   serverId={serverId}
                   serverName={serverName}
                   swipeEnabled={swipeEnabled}
@@ -360,9 +492,12 @@ function MessageListInner<M extends ChatMessage>(
                   onToggleReaction={stable.onToggleReaction}
                   onOpenReactionPicker={stable.onOpenReactionPicker}
                   onMediaClick={onMediaClick}
+                  onSuppressEmbeds={onSuppressEmbeds}
                   onJumpToMessage={scrollToMessage}
+                  formattedTimestamp={formattedTimestamps[idx]}
                 />
                 </div>
+                </Fragment>
                 );
               })
             )}
@@ -376,16 +511,18 @@ function MessageListInner<M extends ChatMessage>(
         <button
           onClick={() => {
             setNewMessagesCount(0);
+            setNewMessageStartId(null);
             isAtBottomRef.current = true;
             scrollToBottom();
           }}
           className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-[var(--accent-color)] text-white text-sm shadow-lg hover:opacity-90 transition-opacity animate-fade-in-up"
         >
           <ArrowDown className="w-4 h-4" />
-          {newMessagesCount} new message{newMessagesCount === 1 ? "" : "s"}
+          {gt("{count} new messages", { count: newMessagesCount })}
         </button>
       )}
     </div>
+    </ChatGtProvider>
   );
 }
 

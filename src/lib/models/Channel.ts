@@ -1,203 +1,103 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import { eq, sql, and, type SQL } from 'drizzle-orm';
+import { normalizeId, buildCondition } from '../db/normalizeId';
+import { db, schema } from '../db/postgres';
 
-export type ChannelType = 
-  | 'text' 
-  | 'voice' 
-  | 'category' 
-  | 'announcement' 
-  | 'stage' 
-  | 'forum' 
-  | 'dm' 
+export type ChannelType =
+  | 'text'
+  | 'voice'
+  | 'category'
+  | 'announcement'
+  | 'stage'
+  | 'forum'
+  | 'public_thread'
+  | 'private_thread'
+  | 'dm'
   | 'group_dm';
 
-export interface IPermissionOverwrite {
-  id: Types.ObjectId;
-  type: 'role' | 'member';
-  allow: string; // Bitfield as string
-  deny: string; // Bitfield as string
-}
+export type ForumMode = 'posts' | 'tickets';
 
-export interface IChannel extends Document {
-  _id: Types.ObjectId;
-  serverId?: Types.ObjectId; // Null for DMs
-  name: string;
-  type: ChannelType;
-  topic?: string;
-  position: number;
-  parentId?: Types.ObjectId; // Category parent
-  
-  // For text channels
-  lastMessageId?: Types.ObjectId;
-  lastPinTimestamp?: Date;
-  rateLimitPerUser: number; // Slowmode in seconds
-  nsfw: boolean;
-  
-  // For voice channels
-  bitrate: number;
-  userLimit: number;
-  rtcRegion?: string;
-  
-  // For forum channels
-  defaultAutoArchiveDuration: number;
-  defaultThreadRateLimitPerUser: number;
-  availableTags: Array<{
-    id: string;
-    name: string;
-    moderated: boolean;
-    emojiId?: string;
-    emojiName?: string;
-  }>;
-  defaultReactionEmoji?: {
-    emojiId?: string;
-    emojiName?: string;
-  };
-  defaultSortOrder?: 'latest_activity' | 'creation_date';
-  defaultForumLayout?: 'not_set' | 'list_view' | 'gallery_view';
-  
-  // For DMs
-  recipientIds: Types.ObjectId[];
-  
-  // Permissions
-  permissionOverwrites: IPermissionOverwrite[];
-  
-  // Timestamps
-  createdAt: Date;
-  updatedAt: Date;
-}
+export type IChannel = typeof schema.channels.$inferSelect;
 
-const PermissionOverwriteSchema = new Schema<IPermissionOverwrite>({
-  id: {
-    type: Schema.Types.ObjectId,
-    required: true,
-  },
-  type: {
-    type: String,
-    enum: ['role', 'member'],
-    required: true,
-  },
-  allow: {
-    type: String,
-    default: '0',
-  },
-  deny: {
-    type: String,
-    default: '0',
-  },
-}, { _id: false });
+export const Channel = {
+  table: schema.channels,
 
-const ChannelSchema = new Schema<IChannel>({
-  serverId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Server',
-    index: true,
-    default: null,
+  async findById(id: string) {
+    const [row] = await db.select().from(schema.channels).where(eq(schema.channels.id, normalizeId(id))).limit(1);
+    return row || null;
   },
-  name: {
-    type: String,
-    required: true,
-    trim: true,
-    minlength: 1,
-    maxlength: 100,
-  },
-  type: {
-    type: String,
-    enum: ['text', 'voice', 'category', 'announcement', 'stage', 'forum', 'dm', 'group_dm'],
-    required: true,
-    index: true,
-  },
-  topic: {
-    type: String,
-    maxlength: 1024,
-    default: null,
-  },
-  position: {
-    type: Number,
-    default: 0,
-  },
-  parentId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Channel',
-    default: null,
-  },
-  lastMessageId: {
-    type: Schema.Types.ObjectId,
-    ref: 'Message',
-    default: null,
-  },
-  lastPinTimestamp: {
-    type: Date,
-    default: null,
-  },
-  rateLimitPerUser: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 21600, // 6 hours
-  },
-  nsfw: {
-    type: Boolean,
-    default: false,
-  },
-  bitrate: {
-    type: Number,
-    default: 64000,
-    min: 8000,
-    max: 384000,
-  },
-  userLimit: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 99,
-  },
-  rtcRegion: {
-    type: String,
-    default: null,
-  },
-  defaultAutoArchiveDuration: {
-    type: Number,
-    default: 1440, // 24 hours
-    enum: [60, 1440, 4320, 10080], // 1 hour, 24 hours, 3 days, 1 week
-  },
-  defaultThreadRateLimitPerUser: {
-    type: Number,
-    default: 0,
-    min: 0,
-    max: 21600,
-  },
-  availableTags: [{
-    id: String,
-    name: String,
-    moderated: { type: Boolean, default: false },
-    emojiId: String,
-    emojiName: String,
-  }],
-  defaultReactionEmoji: {
-    emojiId: String,
-    emojiName: String,
-  },
-  defaultSortOrder: {
-    type: String,
-    enum: ['latest_activity', 'creation_date'],
-    default: null,
-  },
-  defaultForumLayout: {
-    type: String,
-    enum: ['not_set', 'list_view', 'gallery_view'],
-    default: 'not_set',
-  },
-  recipientIds: [{
-    type: Schema.Types.ObjectId,
-    ref: 'User',
-  }],
-  permissionOverwrites: [PermissionOverwriteSchema],
-}, {
-  timestamps: true,
-});
 
-// Indexes
-ChannelSchema.index({ serverId: 1, position: 1 });
-ChannelSchema.index({ serverId: 1, parentId: 1 });
-ChannelSchema.index({ recipientIds: 1 }, { sparse: true });
+  async findOne(filter: Record<string, unknown>) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'id': conditions.push(buildCondition(schema.channels.id, value, true)); break;
+        case 'serverId': conditions.push(buildCondition(schema.channels.serverId, value, true)); break;
+        case 'type': conditions.push(buildCondition(schema.channels.type, value, false)); break;
+        case 'parentId': conditions.push(buildCondition(schema.channels.parentId, value, true)); break;
+        case 'lastMessageId': conditions.push(buildCondition(schema.channels.lastMessageId, value, true)); break;
+        case 'recipientId': conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${normalizeId(value as string)}]::uuid[]`); break;
+        case 'recipientIds': {
+          // Match channels whose recipient set contains ALL given ids (used to
+          // locate the DM between specific users). Combined with type:'dm' this
+          // uniquely identifies the 1:1 DM.
+          const ids = (value as string[]).map((v) => normalizeId(v));
+          conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${sql.join(ids.map((i) => sql`${i}`), sql`, `)}]::uuid[]`);
+          break;
+        }
+      }
+    }
+    let query = db.select().from(schema.channels);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    const [row] = await query.limit(1);
+    return row || null;
+  },
 
-export const Channel = mongoose.models.Channel || mongoose.model<IChannel>('Channel', ChannelSchema);
+  async find(filter: Record<string, unknown> = {}) {
+    const conditions: SQL[] = [];
+    for (const [key, value] of Object.entries(filter)) {
+      if (value === undefined || value === null) continue;
+      switch (key) {
+        case 'serverId': conditions.push(buildCondition(schema.channels.serverId, value, true)); break;
+        case 'type': conditions.push(buildCondition(schema.channels.type, value, false)); break;
+        case 'parentId': conditions.push(buildCondition(schema.channels.parentId, value, true)); break;
+        case 'id': conditions.push(buildCondition(schema.channels.id, value, true)); break;
+        case 'recipientId': conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${normalizeId(value as string)}]::uuid[]`); break;
+        case 'recipientIds': {
+          // Match channels whose recipient set contains ALL given ids (used to
+          // locate the DM between specific users). Combined with type:'dm' this
+          // uniquely identifies the 1:1 DM.
+          const ids = (value as string[]).map((v) => normalizeId(v));
+          conditions.push(sql`${schema.channels.recipientIds} @> ARRAY[${sql.join(ids.map((i) => sql`${i}`), sql`, `)}]::uuid[]`);
+          break;
+        }
+      }
+    }
+    let query = db.select().from(schema.channels);
+    if (conditions.length > 0) {
+      query = query.where(and(...conditions)) as typeof query;
+    }
+    return query;
+  },
+
+  async create(data: typeof schema.channels.$inferInsert) {
+    const [row] = await db.insert(schema.channels).values(data).returning();
+    return row;
+  },
+
+  async updateById(id: string, data: Partial<typeof schema.channels.$inferInsert>) {
+    const [row] = await db.update(schema.channels).set({ ...data, updatedAt: new Date() }).where(eq(schema.channels.id, normalizeId(id))).returning();
+    return row || null;
+  },
+
+  async deleteById(id: string) {
+    await db.delete(schema.channels).where(eq(schema.channels.id, normalizeId(id)));
+  },
+
+  async count() {
+    const result = await db.select({ count: sql<number>`count(*)::int` }).from(schema.channels);
+    return result[0]?.count ?? 0;
+  },
+};

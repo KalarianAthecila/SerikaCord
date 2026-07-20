@@ -1,6 +1,7 @@
 "use client";
 
-import { Pin, Loader2 } from "lucide-react";
+import { Pin } from "lucide-react";
+import { cdnImage } from "@/lib/utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   Dialog,
@@ -10,7 +11,9 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { formatMessageTimestamp } from "@/lib/chat/messages";
+import { T, useGT, useLocale } from "gt-next";
 import type { ChatMessage } from "@/lib/chat/types";
+import { Loader } from "@/components/ui/Loader";
 
 interface PinnedMessagesDialogProps<M extends ChatMessage> {
   open: boolean;
@@ -33,31 +36,33 @@ export function PinnedMessagesDialog<M extends ChatMessage>({
   onJumpToMessage,
   onUnpin,
 }: PinnedMessagesDialogProps<M>) {
+  const gt = useGT();
+  const locale = useLocale();
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] max-w-2xl">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Pin className="w-5 h-5 text-[var(--accent-color)]" />
-            Pinned Messages
+            <T>Pinned Messages</T>
           </DialogTitle>
           <DialogDescription className="text-[var(--text-secondary)]">
             {isLoading
-              ? "Loading pinned messages..."
+              ? gt("Loading pinned messages...")
               : contextLabel
-                ? `Quick access to important messages in ${contextLabel}.`
-                : `${messages.length} pinned message${messages.length === 1 ? "" : "s"}`}
+                ? <>{gt("Quick access to important messages in")} {contextLabel}.</>
+                : <>{messages.length} {messages.length === 1 ? gt("pinned message") : gt("pinned messages")}</>}
           </DialogDescription>
         </DialogHeader>
         <div className="max-h-[60vh] overflow-y-auto space-y-2 pr-1 scrollbar-thin">
           {isLoading ? (
             <div className="text-sm text-[var(--text-secondary)] flex items-center gap-2">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              Loading pinned messages...
+              <Loader size={16} />
+              {gt("Loading pinned messages...")}
             </div>
           ) : messages.length === 0 ? (
             <div className="text-center py-8 text-sm text-[var(--text-secondary)]">
-              No pinned messages yet.
+              <T>No pinned messages yet.</T>
             </div>
           ) : (
             messages.map((message) => (
@@ -71,7 +76,7 @@ export function PinnedMessagesDialog<M extends ChatMessage>({
               >
                 <div className="flex items-center gap-2 mb-1">
                   <Avatar className="w-6 h-6">
-                    <AvatarImage src={message.author?.avatar} />
+                    <AvatarImage src={cdnImage(message.author?.avatar)} />
                     <AvatarFallback className="bg-[var(--accent-color)] text-white text-xs">
                       {(message.author?.displayName || message.author?.username || "?")
                         .charAt(0)
@@ -79,10 +84,10 @@ export function PinnedMessagesDialog<M extends ChatMessage>({
                     </AvatarFallback>
                   </Avatar>
                   <span className="font-medium text-sm text-[var(--text-primary)]">
-                    {message.author?.displayName || message.author?.username || "Unknown"}
+                    {message.author?.displayName || message.author?.username || gt("Unknown")}
                   </span>
                   <span className="text-xs text-[var(--text-muted)]">
-                    {formatMessageTimestamp(message.createdAt)}
+                    {formatMessageTimestamp(message.createdAt, gt, locale)}
                   </span>
                   {onUnpin && (
                     <button
@@ -91,14 +96,14 @@ export function PinnedMessagesDialog<M extends ChatMessage>({
                         onUnpin(message);
                       }}
                       className="ml-auto p-1 hover:bg-[var(--bg-hover)] rounded-md transition-colors"
-                      title="Unpin"
+                      title={gt("Unpin")}
                     >
                       <Pin className="w-4 h-4 text-[var(--accent-color)]" />
                     </button>
                   )}
                 </div>
                 <p className="text-sm text-[var(--text-primary)] line-clamp-3">
-                  {message.content || "(attachment)"}
+                  {message.content || gt("(attachment)")}
                 </p>
               </div>
             ))

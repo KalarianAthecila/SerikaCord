@@ -2,8 +2,10 @@
 
 import { useState } from "react";
 import { useAuth } from "@/contexts/AuthContext";
+import { useCurrentTime } from "@/hooks/useCurrentTime";
 import { useIsMobile } from "@/hooks/useIsMobile";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { SwitchAccountsDialog } from "@/components/dialogs/SwitchAccountsDialog";
 import {
   Dialog,
   DialogContent,
@@ -24,9 +26,14 @@ import {
   Copy,
   Users,
   Check,
+  Clock,
 } from "lucide-react";
-import { cn } from "@/lib/utils";
+import { cn, cdnImage } from "@/lib/utils";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
+import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
+import { getProfileBannerStyle, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
+import { useGT } from "gt-next";
+import { statusLabelInvisible } from "@/lib/statusLabels";
 
 interface UserProfilePopupProps {
   children: React.ReactNode;
@@ -34,19 +41,24 @@ interface UserProfilePopupProps {
 }
 
 const statusOptions = [
-  { value: "online", label: "Online", icon: Circle, color: "#8B5CF6" },
-  { value: "idle", label: "Idle", icon: Moon, color: "#A78BFA" },
-  { value: "dnd", label: "Do Not Disturb", icon: MinusCircle, color: "#EF4444" },
-  { value: "offline", label: "Invisible", icon: EyeOff, color: "#555555" },
+  { value: "online", label: "Online", icon: Circle, color: "#23A55A" },
+  { value: "idle", label: "Idle", icon: Moon, color: "#F0B232" },
+  { value: "dnd", label: "Do Not Disturb", icon: MinusCircle, color: "#F23F43" },
+  { value: "offline", label: "Invisible", icon: EyeOff, color: "#80848E" },
 ] as const;
 
 type StatusValue = typeof statusOptions[number]['value'];
 
 export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupProps) {
   const { user, refresh, updateUser } = useAuth();
+  const localTime = useCurrentTime(user?.timezone);
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   const [showStatusMenu, setShowStatusMenu] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [editingStatus, setEditingStatus] = useState(false);
+  const [statusText, setStatusText] = useState("");
+  const [showSwitchAccounts, setShowSwitchAccounts] = useState(false);
 
   // Use user status directly, fallback to online
   const currentStatus: StatusValue = (user?.status as StatusValue) || "online";
@@ -74,6 +86,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
         // If update failed, refresh to get the correct status back
         await refresh();
       }
+      // On success, don't refresh - we already updated local state
     } catch (error) {
       console.error("Failed to update status:", error);
       // Refresh to restore correct state
@@ -86,6 +99,31 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
     onOpenSettings?.();
   };
 
+  const handleSaveStatus = async () => {
+    const trimmed = statusText.trim();
+    updateUser({ customStatus: trimmed || undefined });
+    setEditingStatus(false);
+    try {
+      const response = await fetch("/api/users/me", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ customStatus: trimmed || null }),
+      });
+      if (!response.ok) {
+        await refresh();
+      }
+      // On success, don't refresh - we already updated local state
+    } catch (error) {
+      console.error("Failed to update custom status:", error);
+      await refresh();
+    }
+  };
+
+  const startEditingStatus = () => {
+    setStatusText(user?.customStatus || "");
+    setEditingStatus(true);
+  };
+
   const currentStatusOption = statusOptions.find(s => s.value === currentStatus) || statusOptions[0];
   const isMobile = useIsMobile();
 
@@ -96,16 +134,21 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
 
   if (!user) return <>{children}</>;
 
+  const cardBgStyle = getProfileBackgroundStyle(user.customization, { opaque: true });
+  const hasCardBg = Object.keys(cardBgStyle).length > 0;
+
   const renderProfileCard = () => (
     <>
       {/* Banner */}
       <div
         className={cn("relative", isMobile ? "h-28" : "h-[60px]")}
-        style={{
-          background: user.banner
-            ? `url(${user.banner}) center/cover`
-            : `linear-gradient(135deg, var(--accent-color) 0%, rgba(99,102,241,0.8) 100%)`,
-        }}
+        style={
+          user.banner
+            ? { background: `url(${user.banner}) center/cover` }
+            : (user.customization?.profileGradient && user.customization.profileGradient.length >= 2) || user.customization?.profileColor
+              ? getProfileBannerStyle(user.customization)
+              : { background: `linear-gradient(135deg, var(--accent-color) 0%, rgba(99,102,241,0.8) 100%)` }
+        }
       />
 
       {/* Avatar and Info */}
@@ -114,7 +157,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
         <div className="absolute -top-8 left-3">
           <div className="relative">
             <Avatar className={cn("border-[5px] border-[#111111]", isMobile ? "w-24 h-24" : "w-[72px] h-[72px]")}>
-              <AvatarImage src={user.avatar} />
+              <AvatarImage src={cdnImage(user.avatar)} />
               <AvatarFallback className="bg-[var(--accent-color)] text-white text-xl">
                 {user.displayName?.charAt(0).toUpperCase() || "?"}
               </AvatarFallback>
@@ -135,6 +178,9 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                 {user.displayName || user.username}
               </h3>
               <span className="text-sm text-[#888888]">{user.username}</span>
+              {user.pronouns && (
+                <div className="text-xs text-[#888888] mt-0.5">{user.pronouns}</div>
+              )}
               {user.settings?.advanced?.developerMode && user.id && (
                 <p className="mt-1 text-[10px] font-mono text-[#666666]">ID: {user.id}</p>
               )}
@@ -145,7 +191,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
               <>
                 <div className="h-px bg-[#222222] my-2" />
                 <div className="text-xs text-[#888888] uppercase font-semibold mb-1.5">
-                  Badges
+                  {gt("Badges")}
                 </div>
                 {renderBadges()}
               </>
@@ -153,26 +199,42 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
 
             {/* Custom status */}
             {user.customStatus && (
-              <p className="text-sm text-[#dcddde] mb-2">{user.customStatus}</p>
+              <div className="text-sm text-[#dcddde] mb-2">
+                <MarkdownRenderer content={user.customStatus} />
+              </div>
             )}
 
             {/* Bio */}
             {user.bio && (
-              <p className={cn("text-[#dcddde] mb-2", isMobile ? "text-base line-clamp-6" : "text-sm line-clamp-3")}>{user.bio}</p>
+              <div className={cn("text-[#dcddde] mb-2 whitespace-pre-wrap break-words", isMobile ? "text-base line-clamp-6" : "text-sm line-clamp-3")}>
+                <MarkdownRenderer content={user.bio} />
+              </div>
             )}
 
             {/* View Full Bio */}
             {user.bio && user.bio.length > 100 && (
               <button className="text-sm text-[#888888] hover:text-white transition-colors mb-2">
-                View Full Bio
+                {gt("View Full Bio")}
               </button>
+            )}
+
+            {/* Current Time */}
+            {user.showTimezone && user.timezone && localTime && (
+              <div className="flex items-center gap-1.5 mb-2 text-sm text-[#dcddde]">
+                <Clock className="w-3.5 h-3.5 text-[#888888]" />
+                <span>
+                  {localTime}
+                </span>
+                <span className="text-[#555555]">•</span>
+                <span className="text-xs text-[#888888]">{user.timezone}</span>
+              </div>
             )}
 
             <div className="h-px bg-[#222222] my-2" />
 
             {/* Member Since */}
             <div className="text-xs text-[#888888] uppercase font-semibold mb-1">
-              SerikaCord Member Since
+              {gt("SerikaCord Member Since")}
             </div>
             <p className="text-sm text-[#dcddde]">
               {user.createdAt
@@ -181,7 +243,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                     day: "numeric",
                     year: "numeric",
                   })
-                : "Unknown"}
+                : gt("Unknown")}
             </p>
           </div>
 
@@ -193,7 +255,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
               className="w-full flex items-center gap-3 px-3 py-2 rounded hover:bg-[#1a1a1a] transition-colors text-left"
             >
               <Pencil className="w-4 h-4 text-[#888888]" />
-              <span className="text-sm text-[#dcddde]">Edit Profiles</span>
+              <span className="text-sm text-[#dcddde]">{gt("Edit Profiles")}</span>
             </button>
 
             {/* Status Selector - Using Popover to prevent overflow */}
@@ -211,7 +273,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                         <div className="w-2 h-0.5 bg-[#111111] rounded" />
                       )}
                     </div>
-                    <span className="text-sm text-[#dcddde]">{currentStatusOption.label}</span>
+                    <span className="text-sm text-[#dcddde]">{statusLabelInvisible(currentStatus, gt)}</span>
                   </div>
                   <ChevronRight className={cn(
                     "w-4 h-4 text-[#888888] transition-transform",
@@ -235,7 +297,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                         className="w-3 h-3 rounded-full"
                         style={{ backgroundColor: status.color }}
                       />
-                      <span className="text-sm text-[#dcddde]">{status.label}</span>
+                      <span className="text-sm text-[#dcddde]">{statusLabelInvisible(status.value, gt)}</span>
                     </div>
                     {currentStatus === status.value && (
                       <Check className="w-4 h-4 text-[var(--accent-color)]" />
@@ -245,13 +307,86 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
               </PopoverContent>
             </Popover>
 
+            {/* Custom Status Editor */}
+            {editingStatus ? (
+              <div className="px-3 py-2 space-y-2">
+                <input
+                  type="text"
+                  value={statusText}
+                  onChange={(e) => setStatusText(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") handleSaveStatus();
+                    if (e.key === "Escape") setEditingStatus(false);
+                  }}
+                  placeholder={gt("What's on your mind?")}
+                  autoFocus
+                  maxLength={200}
+                  className="w-full px-2 py-1.5 rounded bg-[#1a1a1a] text-sm text-[#dcddde] placeholder:text-[#666] border border-[#333] focus:outline-none focus:border-[var(--accent-color)]"
+                />
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={handleSaveStatus}
+                    className="px-3 py-1 rounded bg-[var(--accent-color)] text-white text-xs hover:brightness-110 transition"
+                  >
+                    {gt("Save")}
+                  </button>
+                  <button
+                    onClick={() => setEditingStatus(false)}
+                    className="px-3 py-1 rounded bg-[#1a1a1a] text-[#888] text-xs hover:bg-[#222] transition"
+                  >
+                    {gt("Cancel")}
+                  </button>
+                  {user?.customStatus && (
+                    <button
+                      onClick={async () => {
+                        setStatusText("");
+                        setEditingStatus(false);
+                        updateUser({ customStatus: undefined });
+                        try {
+                          const response = await fetch("/api/users/me", {
+                            method: "PUT",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ customStatus: null }),
+                          });
+                          if (!response.ok) {
+                            await refresh();
+                          }
+                        } catch {
+                          await refresh();
+                        }
+                      }}
+                      className="px-3 py-1 rounded text-[#888] text-xs hover:text-red-400 transition ml-auto"
+                    >
+                      {gt("Clear")}
+                    </button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <button
+                onClick={startEditingStatus}
+                className="w-full flex items-center gap-3 px-3 py-2 rounded hover:bg-[#1a1a1a] transition-colors text-left"
+              >
+                <Pencil className="w-4 h-4 text-[#888888]" />
+                <span className="text-sm text-[#dcddde]">
+                  {user?.customStatus ? gt("Edit Custom Status") : gt("Set Custom Status")}
+                </span>
+              </button>
+            )}
+
             <div className="h-px bg-[#222222] my-1" />
 
             {/* Switch Accounts */}
-            <button className="w-full flex items-center justify-between px-3 py-2 rounded hover:bg-[#1a1a1a] transition-colors">
+            <button
+              onClick={() => {
+                setOpen(false);
+                setShowSwitchAccounts(true);
+              }}
+              className="w-full flex items-center justify-between px-3 py-2 rounded hover:bg-[#1a1a1a] transition-colors"
+            >
               <div className="flex items-center gap-3">
                 <Users className="w-4 h-4 text-[#888888]" />
-                <span className="text-sm text-[#dcddde]">Switch Accounts</span>
+                <span className="text-sm text-[#dcddde]">{gt("Switch Accounts")}</span>
               </div>
               <ChevronRight className="w-4 h-4 text-[#888888]" />
             </button>
@@ -267,7 +402,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
                 <Copy className="w-4 h-4 text-[#888888]" />
               )}
               <span className="text-sm text-[#dcddde]">
-                {copied ? "Copied!" : "Copy User ID"}
+                {copied ? gt("Copied!") : gt("Copy User ID")}
               </span>
             </button>
           </div>
@@ -282,11 +417,15 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
         <Dialog open={open} onOpenChange={setOpen}>
           <DialogTrigger asChild>{children}</DialogTrigger>
           <DialogContent
-            className="!fixed !inset-x-0 !bottom-0 !top-auto !left-0 !translate-x-0 !translate-y-0 !max-w-full p-0 rounded-t-2xl bg-[#111111] border border-[#222222] shadow-2xl overflow-hidden max-h-[85vh] flex flex-col"
+            className={cn(
+              "!fixed !inset-x-0 !bottom-0 !top-auto !left-0 !translate-x-0 !translate-y-0 !max-w-full p-0 rounded-t-2xl border border-[#222222] shadow-2xl overflow-hidden max-h-[85vh] flex flex-col",
+              !hasCardBg && "bg-[#111111]"
+            )}
+            style={hasCardBg ? cardBgStyle : undefined}
             showCloseButton={false}
           >
             <div className="w-12 h-1 bg-[#444444] rounded-full mt-3 mb-1 mx-auto shrink-0" />
-            <div className="overflow-y-auto">{renderProfileCard()}</div>
+            <div className="overflow-y-auto flex-1 min-h-0">{renderProfileCard()}</div>
           </DialogContent>
         </Dialog>
       ) : (
@@ -296,12 +435,17 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
             side="top"
             align="start"
             sideOffset={8}
-            className="w-[300px] p-0 bg-[#111111] border border-[#222222] rounded-lg overflow-hidden shadow-xl"
+            className={cn(
+              "w-[300px] p-0 border border-[#222222] rounded-lg overflow-hidden shadow-xl",
+              !hasCardBg && "bg-[#111111]"
+            )}
+            style={hasCardBg ? cardBgStyle : undefined}
           >
             {renderProfileCard()}
           </PopoverContent>
         </Popover>
       )}
+      <SwitchAccountsDialog open={showSwitchAccounts} onOpenChange={setShowSwitchAccounts} />
     </>
   );
 }

@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useMemo } from "react";
-import twemoji from "twemoji";
+import twemoji from "@twemoji/api";
 import { cn } from "@/lib/utils";
+import { twemojiOnError } from "@/lib/twemoji-helpers";
 
 interface CustomEmojiData {
   id: string;
@@ -19,7 +20,7 @@ interface TwemojiProps {
 }
 
 // Custom emoji regex: <:name:id> or <a:name:id>
-const CUSTOM_EMOJI_REGEX = /<(a)?:([a-zA-Z0-9_]{2,32}):([a-f0-9]{24})>/g;
+const CUSTOM_EMOJI_REGEX = /<(a)?:([a-zA-Z0-9_]{2,32}):([0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12})>/g;
 
 // Check if a string contains only emoji characters (including custom)
 function isOnlyEmoji(text: string): boolean {
@@ -27,6 +28,16 @@ function isOnlyEmoji(text: string): boolean {
   const stripped = text.replace(/\s/g, "").replace(CUSTOM_EMOJI_REGEX, "E");
   const emojiRegex = /^(?:E|\p{Emoji_Presentation}|\p{Emoji}\uFE0F)+$/u;
   return emojiRegex.test(stripped) && stripped.length <= 12;
+}
+
+// Escape HTML special characters to prevent XSS in dangerouslySetInnerHTML
+function escapeHtml(str: string): string {
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 // Parse content and replace custom emojis with img tags
@@ -41,15 +52,34 @@ function parseCustomEmojis(content: string, customEmojis?: CustomEmojiData[]): s
     }
   }
   
-  return content.replace(CUSTOM_EMOJI_REGEX, (match, animated, name, id) => {
-    // Check if we have pre-parsed data
+  // Split by the regex so we can escape non-emoji segments
+  let lastIndex = 0;
+  const parts: string[] = [];
+  const regex = new RegExp(CUSTOM_EMOJI_REGEX.source, 'g');
+  let match: RegExpExecArray | null;
+
+  while ((match = regex.exec(content)) !== null) {
+    // Escape the text before this match
+    if (match.index > lastIndex) {
+      parts.push(escapeHtml(content.slice(lastIndex, match.index)));
+    }
+    const [, , name, id] = match;
     const emojiData = emojiMap.get(id);
     if (emojiData) {
-      return `<img src="${emojiData.url}" alt=":${emojiData.name}:" title=":${emojiData.name}:" class="custom-emoji inline-block align-middle" draggable="false" />`;
+      // Escape the URL and name to prevent attribute injection
+      parts.push(`<img src="${escapeHtml(emojiData.url)}" alt=":${escapeHtml(emojiData.name)}:" title=":${escapeHtml(emojiData.name)}:" class="custom-emoji inline-block align-middle" draggable="false" />`);
+    } else {
+      parts.push(escapeHtml(`:${name}:`));
     }
-    // Fallback: return original text as placeholder
-    return `:${name}:`;
-  });
+    lastIndex = regex.lastIndex;
+  }
+
+  // Escape remaining text
+  if (lastIndex < content.length) {
+    parts.push(escapeHtml(content.slice(lastIndex)));
+  }
+
+  return parts.join('');
 }
 
 export function Twemoji({ children, className, size = "normal", customEmojis }: TwemojiProps) {
@@ -69,7 +99,8 @@ export function Twemoji({ children, className, size = "normal", customEmojis }: 
         folder: "svg",
         ext: ".svg",
         className: "emoji",
-      });
+        onerror: twemojiOnError,
+      } as Parameters<typeof twemoji.parse>[1]);
     }
   }, [processedContent, children]);
 
