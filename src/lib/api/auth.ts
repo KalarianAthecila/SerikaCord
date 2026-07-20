@@ -2,37 +2,29 @@ import { Elysia, t } from 'elysia';
 import { createHash, randomBytes } from 'crypto';
 import { config } from '../config';
 import {
-  verifyEmail,
-  resetPassword,
-  deleteSession,
-  verifyToken,
-  handleDiscordOAuth,
   authenticateRequest,
   createSession,
+  deleteSession,
+  handleDiscordOAuth,
+  login as localLogin,
+  registerUser,
+  resetPassword,
+  verifyEmail,
+  verifyToken,
 } from '../services/auth';
 import { cache } from '../db/redis';
 import { UserConnection, User } from '../models';
 import { getPlatformSettings } from '../models/PlatformSettings';
 import {
-    accountsForgotPassword,
-    accountsInternalGetUser,
-    accountsLogin,
-    accountsRefresh,
-    accountsRegister,
-    accountsResendVerification,
-    accountsResetPassword,
-    accountsVerifyEmail,
+  accountsForgotPassword,
+  accountsInternalGetUser,
+  accountsLogin,
+  accountsRefresh,
+  accountsRegister,
+  accountsResendVerification,
+  accountsResetPassword,
+  accountsVerifyEmail,
 } from '../services/accountsClient';
-import {
-    authenticateRequest,
-    deleteSession,
-    handleDiscordOAuth,
-    login as localLogin,
-    registerUser,
-    resetPassword,
-    verifyEmail,
-    verifyToken
-} from '../services/auth';
 
 const isDev = config.NODE_ENV !== 'production';
 
