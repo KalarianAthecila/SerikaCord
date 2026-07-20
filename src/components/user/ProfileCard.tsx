@@ -372,7 +372,7 @@ export function ProfileCard({
         {/* Avatar overlapping the banner */}
         <div className="absolute -top-11 left-4">
           <div className="relative">
-            <Avatar className="w-[88px] h-[88px] border-[5px] border-[#0c0c10] shadow-lg">
+            <Avatar className="w-[88px] h-[88px] shadow-lg">
               <AvatarImage src={cdnImage(user.avatar || undefined)} />
               <AvatarFallback className="bg-[#8B5CF6] text-white text-3xl">
                 {displayName.charAt(0).toUpperCase()}

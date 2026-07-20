@@ -156,7 +156,7 @@ export function UserProfilePopup({ children, onOpenSettings }: UserProfilePopupP
         {/* Avatar */}
         <div className="absolute -top-8 left-3">
           <div className="relative">
-            <Avatar className={cn("border-[5px] border-[#111111]", isMobile ? "w-24 h-24" : "w-[72px] h-[72px]")}>
+            <Avatar className={cn(isMobile ? "w-24 h-24" : "w-[72px] h-[72px]")}>
               <AvatarImage src={cdnImage(user.avatar)} />
               <AvatarFallback className="bg-[var(--accent-color)] text-white text-xl">
                 {user.displayName?.charAt(0).toUpperCase() || "?"}

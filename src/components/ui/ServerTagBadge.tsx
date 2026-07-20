@@ -119,7 +119,7 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
 
       <div className="px-4 pb-4 -mt-8">
         {/* Server icon */}
-        <Avatar className="w-16 h-16 rounded-2xl border-4 border-[#1a1a1f]">
+        <Avatar className="w-16 h-16 rounded-2xl">
           <AvatarImage src={info.icon ?? undefined} />
           <AvatarFallback className="bg-[#8B5CF6] text-white text-xl rounded-2xl">
             {info.name.charAt(0).toUpperCase()}
