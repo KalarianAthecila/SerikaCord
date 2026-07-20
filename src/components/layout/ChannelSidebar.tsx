@@ -1169,22 +1169,22 @@ export function ChannelSidebar({
         {/* DM row context menu */}
         {dmContextMenu && (
           <div
-            className="fixed z-50 min-w-[180px] bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1.5 animate-in fade-in-0 zoom-in-95"
+            className="ctx-menu fixed z-50 min-w-[188px]"
             style={{ left: dmContextMenu.x, top: dmContextMenu.y }}
             onClick={(e) => e.stopPropagation()}
           >
             <button
               disabled={!isChannelUnread(dmContextMenu.channel.id) && getMentionCount(dmContextMenu.channel.id) === 0}
               onClick={() => { markChannelRead(dmContextMenu.channel.id); closeDmContextMenu(); }}
-              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+              className="ctx-item"
             >
               <Check className="w-4 h-4" />
               {gt("Mark As Read")}
             </button>
-            <div className="h-px bg-[var(--border-subtle)] my-1" />
+            <div className="ctx-sep" />
             <button
               onClick={() => { navigator.clipboard.writeText(dmContextMenu.channel.recipients[0]?.id || ""); closeDmContextMenu(); }}
-              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+              className="ctx-item"
             >
               <Copy className="w-4 h-4" />
               {gt("Copy User ID")}
@@ -1441,14 +1441,14 @@ export function ChannelSidebar({
       {/* Channel Context Menu */}
       {contextMenu && (
         <div
-          className="fixed z-50 min-w-[180px] bg-[var(--bg-sidebar-elevated)] border border-[var(--border-subtle)] rounded-lg shadow-xl py-1.5 animate-in fade-in-0 zoom-in-95"
+          className="ctx-menu fixed z-50 min-w-[188px]"
           style={{ left: contextMenu.x, top: contextMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >
           {canManageChannels && (
             <button
               onClick={handleEditChannel}
-              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+              className="ctx-item"
             >
               <Edit2 className="w-4 h-4" />
               {gt("Edit Channel")}
@@ -1457,17 +1457,17 @@ export function ChannelSidebar({
           {canInvite && (
             <button
               onClick={onInvitePeople}
-              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+              className="ctx-item"
             >
               <UserPlus className="w-4 h-4" />
               {gt("Invite People")}
             </button>
           )}
-          {(canManageChannels || canInvite) && <div className="h-px bg-[var(--border-subtle)] my-1" />}
+          {(canManageChannels || canInvite) && <div className="ctx-sep" />}
           {contextMenu?.channel?.type !== "category" && (
             <button
               onClick={handleCopyChannelLink}
-              className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+              className="ctx-item"
             >
               <LinkIcon className="w-4 h-4" />
               {gt("Copy Link")}
@@ -1475,12 +1475,12 @@ export function ChannelSidebar({
           )}
           <button
             onClick={handleCopyChannelId}
-            className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+            className="ctx-item"
           >
             <Copy className="w-4 h-4" />
             {contextMenu?.channel?.type === "category" ? gt("Copy Category ID") : gt("Copy Channel ID")}
           </button>
-          <div className="h-px bg-[var(--border-subtle)] my-1" />
+          <div className="ctx-sep" />
           <button
             onClick={() => {
               if (contextMenu?.channel) {
@@ -1493,17 +1493,17 @@ export function ChannelSidebar({
               }
               closeContextMenu();
             }}
-            className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-[var(--text-primary)] hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] transition-colors"
+            className="ctx-item"
           >
             <BellOff className="w-4 h-4" />
             {contextMenu?.channel && isChannelMuted(contextMenu.channel.id) ? gt("Unmute Channel") : gt("Mute Channel")}
           </button>
           {canManageChannels && (
             <>
-              <div className="h-px bg-[var(--border-subtle)] my-1" />
+              <div className="ctx-sep" />
               <button
                 onClick={handleDeleteChannel}
-                className="w-full px-3 py-1.5 flex items-center gap-2 text-sm text-red-400 hover:bg-red-500 hover:text-[var(--text-primary)] transition-colors"
+                className="ctx-item ctx-item-danger"
               >
                 <Trash2 className="w-4 h-4" />
                 {gt("Delete Channel")}
