@@ -876,6 +876,11 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     presetId?: string;
   }>({ type: 'none' });
 
+  const selectedPreviewTag = useMemo(
+    () => availableTags.find((t) => t.serverId === displayedTagServerId) ?? null,
+    [availableTags, displayedTagServerId]
+  );
+
   const previewUser = useMemo(() => {
     const isServer = profileTab === "server";
     return {
@@ -891,6 +896,15 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       customStatus: customStatus,
       status: (status as any) || "online",
       badges: user?.badges || [],
+      displayedTag: selectedPreviewTag
+        ? {
+            serverId: selectedPreviewTag.serverId,
+            serverName: selectedPreviewTag.serverName,
+            serverIcon: selectedPreviewTag.serverIcon,
+            tagText: selectedPreviewTag.tagText,
+            tagIcon: selectedPreviewTag.tagIcon,
+          }
+        : null,
       createdAt: user?.createdAt ? new Date(user.createdAt).toISOString() : new Date().toISOString(),
       isPremium: user?.isPremium || false,
       customization: {
@@ -922,6 +936,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
     showTimezone,
     customStatus,
     status,
+    selectedPreviewTag,
     profileColor,
     profileGradient,
     displayNameStyle,

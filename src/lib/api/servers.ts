@@ -215,6 +215,7 @@ interface PopulatedMemberUser {
   username: string;
   displayName?: string;
   avatar?: string;
+  displayedTagServerId?: string | null;
   status?: string;
   customStatus?: string;
   isPremium?: boolean;
@@ -1354,8 +1355,20 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
       roleIds.length > 0 ? Role.find({ id: { in: roleIds }, serverId: params.serverId }) : [],
     ]);
 
+    const displayedTagServerIds = [
+      ...new Set(
+        users
+          .map((u: any) => u.displayedTagServerId)
+          .filter(Boolean)
+      ),
+    ] as string[];
+    const tagServers = displayedTagServerIds.length
+      ? await Server.find({ id: { in: displayedTagServerIds } })
+      : [];
+
     const userMap = new Map(users.map((u: any) => [u.id, u]));
     const roleMap = new Map(roles.map((r: any) => [r.id, r]));
+    const tagServerMap = new Map(tagServers.map((s: any) => [s.id, s]));
 
     let members = allMembers.map((m: any) => ({
       ...m,
@@ -1371,14 +1384,31 @@ export const serverRoutes = new Elysia({ prefix: '/servers' })
     members = members.slice(0, limit);
 
     return {
-      members: members.map((member: any) =>
-        normalizeMemberDto(member as unknown as {
+      members: members.map((member: any) => {
+        const normalized = normalizeMemberDto(member as unknown as {
           id: string;
           userId?: PopulatedMemberUser | null;
           roles?: PopulatedRole[];
           joinedAt?: Date;
-        }, server?.ownerId)
-      ),
+        }, server?.ownerId);
+
+        const memberUser = member.userId as PopulatedMemberUser | null;
+        const displayedTagServerId = memberUser?.displayedTagServerId || null;
+        const tagServer = displayedTagServerId ? tagServerMap.get(displayedTagServerId) : null;
+
+        return {
+          ...normalized,
+          displayedTag: tagServer && tagServer.tagText
+            ? {
+                serverId: tagServer.id,
+                serverName: tagServer.name,
+                serverIcon: tagServer.icon ?? null,
+                tagText: tagServer.tagText,
+                tagIcon: tagServer.tagIcon ?? null,
+              }
+            : null,
+        };
+      }),
     };
   }, {
     params: t.Object({

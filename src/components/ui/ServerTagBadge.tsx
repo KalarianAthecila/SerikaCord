@@ -3,7 +3,7 @@
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
-import { Loader2, LogIn, Users } from "lucide-react";
+import { ArrowRight, Loader2, LogIn, Users } from "lucide-react";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { toast } from "sonner";
@@ -35,13 +35,23 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
   const [info, setInfo] = useState<ServerInfo | null>(null);
   const [loading, setLoading] = useState(true);
   const [joining, setJoining] = useState(false);
+  const [isMember, setIsMember] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/servers/${serverId}/public-info`)
-      .then((r) => r.ok ? r.json() : Promise.reject())
-      .then((d) => { if (!cancelled) setInfo(d); })
+    Promise.all([
+      fetch(`/api/servers/${serverId}/public-info`),
+      fetch(`/api/servers/${serverId}/members/@me/permissions`),
+    ])
+      .then(async ([infoRes, memberRes]) => {
+        if (cancelled) return;
+        if (infoRes.ok) {
+          const d = await infoRes.json();
+          if (!cancelled) setInfo(d);
+        }
+        if (!cancelled) setIsMember(memberRes.ok);
+      })
       .catch(() => {})
       .finally(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
@@ -49,12 +59,26 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
 
   const handleJoin = async () => {
     if (!info) return;
+    if (isMember) {
+      onClose();
+      router.push(`/channels/${info.id}`);
+      return;
+    }
+
     setJoining(true);
     try {
       const code = info.vanityUrlCode ?? serverId;
       const res = await fetch(`/api/invites/${code}`, { method: "POST" });
-      const data = await res.json();
+      const data = await res.json().catch(() => ({}));
       if (!res.ok) {
+        const errorText = String((data as { error?: string })?.error || "").toLowerCase();
+        if (errorText.includes("already") && errorText.includes("member")) {
+          setIsMember(true);
+          toast.info(`You are already in ${info.name}`);
+          onClose();
+          router.push(`/channels/${info.id}`);
+          return;
+        }
         toast.error(data.error || "Failed to join server");
         return;
       }
@@ -103,7 +127,7 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
           </div>
         </div>
 
-        {info.tagAllowJoin && (
+        {(info.tagAllowJoin || isMember) && (
           <button
             onClick={() => void handleJoin()}
             disabled={joining}
@@ -111,10 +135,12 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
           >
             {joining ? (
               <Loader2 className="w-4 h-4 animate-spin" />
+            ) : isMember ? (
+              <ArrowRight className="w-4 h-4" />
             ) : (
               <LogIn className="w-4 h-4" />
             )}
-            {joining ? "Joining…" : "Join Server"}
+            {joining ? "Joining…" : isMember ? "Go to Server" : "Join Server"}
           </button>
         )}
       </div>
