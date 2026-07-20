@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export interface IServer extends Document {
   _id: Types.ObjectId;
@@ -96,6 +96,11 @@ export interface IServer extends Document {
   // Timestamps
   createdAt: Date;
   updatedAt: Date;
+  
+  // Server Tag
+  tagText?: string;  // up to 5 chars, A-Z 0-9 only
+  tagIcon?: string;  // URL to tag icon image
+  tagAllowJoin?: boolean; // allow joining from tag click
 }
 
 const ServerSchema = new Schema<IServer>({
@@ -288,6 +293,23 @@ const ServerSchema = new Schema<IServer>({
       description: { type: String, maxlength: 50 },
       emoji: { type: String, default: null },
     }],
+  },
+  tagText: {
+    type: String,
+    maxlength: 5,
+    default: null,
+    validate: {
+      validator: (v: string | null) => v === null || /^[A-Z0-9]{1,5}$/.test(v),
+      message: 'Tag must be 1-5 uppercase letters or digits',
+    },
+  },
+  tagIcon: {
+    type: String,
+    default: null,
+  },
+  tagAllowJoin: {
+    type: Boolean,
+    default: true,
   },
 }, {
   timestamps: true,

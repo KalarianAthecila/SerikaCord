@@ -1,32 +1,33 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
-import {
-  MessageSquare,
-  UserPlus,
-  Copy,
-  Check,
-  CalendarDays,
-  Crown,
-  Plus,
-  X,
-  Clock,
-} from "lucide-react";
-import { toast } from "sonner";
-import { cn } from "@/lib/utils";
-import { getBadgesByPriority } from "@/lib/constants/badges";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
+import {
+    Popover,
+    PopoverContent,
+    PopoverTrigger,
+} from "@/components/ui/popover";
+import { ServerTagBadge } from "@/components/ui/ServerTagBadge";
+import { NowWatchingCard } from "@/components/user/NowWatchingCard";
+import { useMoeActivity } from "@/hooks/useMoeActivity";
+import { getBadgesByPriority } from "@/lib/constants/badges";
 import { hasPermissionBit } from "@/lib/roles/bitfield";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
-import { useMoeActivity } from "@/hooks/useMoeActivity";
-import { NowWatchingCard } from "@/components/user/NowWatchingCard";
+import { cn } from "@/lib/utils";
+import {
+    CalendarDays,
+    Check,
+    Clock,
+    Copy,
+    Crown,
+    MessageSquare,
+    Plus,
+    UserPlus,
+    X,
+} from "lucide-react";
+import { useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
+import { toast } from "sonner";
 
 export interface ProfileCardUser {
   id: string;
@@ -45,6 +46,13 @@ export interface ProfileCardUser {
   isOwner?: boolean;
   isFriend?: boolean;
   friendRequestSent?: boolean;
+  displayedTag?: {
+    serverId: string;
+    serverName: string;
+    serverIcon?: string | null;
+    tagText: string;
+    tagIcon?: string | null;
+  } | null;
   customization?: {
     profileColor?: string;
     profileGradient?: string[];
@@ -322,6 +330,15 @@ export function ProfileCard({
               <Copy className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
             )}
           </button>
+          {user.displayedTag?.tagText && (
+            <div className="mt-1.5">
+              <ServerTagBadge
+                tagText={user.displayedTag.tagText}
+                tagIcon={user.displayedTag.tagIcon}
+                serverId={user.displayedTag.serverId}
+              />
+            </div>
+          )}
           {user.customStatus && (
             <p className="text-sm text-[#c8c8d8] mt-1.5 italic">{user.customStatus}</p>
           )}

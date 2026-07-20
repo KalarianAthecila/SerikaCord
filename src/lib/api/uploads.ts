@@ -1,10 +1,11 @@
-import { Elysia, t } from 'elysia';
-import { authenticateRequest } from '@/lib/services/auth';
-import { storage } from '@/lib/services/storage';
-import { checkRateLimit, getClientIP } from '@/lib/security';
+import { canManageRoles } from '@/lib/api/servers';
 import { config } from '@/lib/config';
 import { Server, ServerMember, User } from '@/lib/models';
+import { checkRateLimit, getClientIP } from '@/lib/security';
 import { accountsSyncProfile } from '@/lib/services/accountsClient';
+import { authenticateRequest } from '@/lib/services/auth';
+import { storage } from '@/lib/services/storage';
+import { Elysia, t } from 'elysia';
 
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -344,6 +345,82 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     body: t.Object({
       file: t.File(),
     }),
+  })
+  // Upload server tag icon (same rules as emoji: 256KB, image only)
+  .post('/server/:serverId/tag-icon', async ({ headers, cookie, params, body, request, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) {
+      set.status = 401;
+      return { error: authError || 'Unauthorized' };
+    }
+
+    const server = await Server.findById(params.serverId);
+    if (!server) {
+      set.status = 404;
+      return { error: 'Server not found' };
+    }
+
+    if (!server.ownerId.equals(user._id)) {
+      const ok = await canManageRoles(server as any, user._id);
+      if (!ok) {
+        set.status = 403;
+        return { error: 'You do not have permission to manage this server tag' };
+      }
+    }
+
+    const ip = getClientIP(request);
+    const rateLimit = await checkRateLimit('upload', `${user._id}:${ip}`);
+    if (!rateLimit.success) {
+      set.status = 429;
+      return { error: 'Upload rate limited', retryAfter: rateLimit.retryAfter };
+    }
+
+    const { file } = body;
+    if (!file) {
+      set.status = 400;
+      return { error: 'No file provided' };
+    }
+
+    if (!isValidImageType(file.type)) {
+      set.status = 400;
+      return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' };
+    }
+
+    const MAX_TAG_ICON_SIZE = 256 * 1024; // 256 KB — same as emoji
+    if (file.size > MAX_TAG_ICON_SIZE) {
+      set.status = 400;
+      return { error: 'Tag icon must be less than 256KB.' };
+    }
+
+    try {
+      // Delete old tag icon if present
+      const serverLean = await Server.findById(params.serverId).lean() as any;
+      if (serverLean?.tagIcon) {
+        try { await storage.deleteByUrl(serverLean.tagIcon); } catch { /* best-effort */ }
+      }
+
+      const result = await storage.uploadFromFormData(file, 'emojis', {
+        serverId: params.serverId,
+        userId: user._id.toString(),
+      });
+
+      // Use findByIdAndUpdate + strict:false to bypass Mongoose schema caching
+      await (Server as any).findByIdAndUpdate(
+        params.serverId,
+        { $set: { tagIcon: result.url } },
+        { strict: false }
+      );
+
+      return { success: true, url: result.url };
+    } catch (error: unknown) {
+      const message = error instanceof Error ? error.message : 'Failed to upload tag icon';
+      console.error('Tag icon upload error:', error);
+      set.status = 500;
+      return { error: message };
+    }
+  }, {
+    params: t.Object({ serverId: t.String() }),
+    body: t.Object({ file: t.File() }),
   })
   // Upload attachment
   .post('/attachment', async ({ headers, cookie, body, request, set }) => {

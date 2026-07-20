@@ -1,25 +1,25 @@
-import { Elysia, t } from 'elysia';
-import { cors } from '@elysiajs/cors';
-import { jwt } from '@elysiajs/jwt';
 import { config } from '@/lib/config';
 import { connectDB } from '@/lib/db';
-import { authenticateRequest, invalidateUserCache } from '@/lib/services/auth';
+import { AuthorizedApp, Server, User, UserConnection, UserDeviceSession } from '@/lib/models';
 import { checkRateLimit, getClientIP, rejectInvalidObjectIdParams } from '@/lib/security';
-import { User, type IUser, AuthorizedApp, UserDeviceSession, UserConnection } from '@/lib/models';
-import { authRoutes } from './auth';
-import { serverRoutes, inviteRoutes, partnerRoutes } from './servers';
-import { channelRoutes } from './channels';
-import { uploadRoutes } from './uploads';
-import { dmRoutes } from './dms';
-import { adminRoutes } from './admin';
-import { oembedRoutes } from './oembed';
-import { experimentRoutes, instanceRoutes } from './experiments';
-import { voiceRoutes } from './voice';
-import { gifRoutes } from './gifs';
-import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
-import { resolveEffectiveStatus } from '@/lib/services/presence';
+import { authenticateRequest, invalidateUserCache } from '@/lib/services/auth';
 import { getMoeActivity } from '@/lib/services/moeActivity';
+import { resolveEffectiveStatus } from '@/lib/services/presence';
+import { ensureSerikaBroadcastUser } from '@/lib/services/serikaBroadcast';
+import { cors } from '@elysiajs/cors';
+import { jwt } from '@elysiajs/jwt';
+import { Elysia, t } from 'elysia';
 import { Types } from 'mongoose';
+import { adminRoutes } from './admin';
+import { authRoutes } from './auth';
+import { channelRoutes } from './channels';
+import { dmRoutes } from './dms';
+import { experimentRoutes, instanceRoutes } from './experiments';
+import { gifRoutes } from './gifs';
+import { oembedRoutes } from './oembed';
+import { inviteRoutes, partnerRoutes, serverPublicRoutes, serverRoutes, serverTagRoutes } from './servers';
+import { uploadRoutes } from './uploads';
+import { voiceRoutes } from './voice';
 
 // Helper to safely compare IDs (handles both ObjectId and string)
 function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string): boolean {
@@ -174,6 +174,24 @@ function getPublicPresenceStatus(user: { status?: string | null; presenceLastHea
   });
 }
 
+/** Resolve a user's displayed tag into { serverId, serverName, tagText, tagIcon } or null. */
+async function resolveDisplayedTag(displayedTagServerId?: string | null) {
+  if (!displayedTagServerId) return null;
+  try {
+    const server = await Server.findById(displayedTagServerId).select('name icon tagText tagIcon').lean() as any;
+    if (!server?.tagText) return null;
+    return {
+      serverId: server._id.toString(),
+      serverName: server.name as string,
+      serverIcon: (server.icon ?? null) as string | null,
+      tagText: server.tagText as string,
+      tagIcon: (server.tagIcon ?? null) as string | null,
+    };
+  } catch {
+    return null;
+  }
+}
+
 const activeFriendStreamConnections = new Map<string, Set<ReadableStreamDefaultController>>();
 
 function emitFriendEvent(userIds: string[], payload: Record<string, unknown>) {
@@ -228,6 +246,9 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
+    const rawUser = await User.findById(user._id).select('displayedTagServerId').lean() as any;
+    const displayedTagServerId = rawUser?.displayedTagServerId ?? null;
+
     return {
       id: user._id,
       username: user.username,
@@ -238,6 +259,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       pronouns: user.pronouns,
       status: user.status,
       customStatus: user.customStatus,
+      displayedTagServerId,
+      displayedTag: await resolveDisplayedTag(displayedTagServerId),
       isPremium: user.isPremium,
       premiumSince: user.premiumSince,
       premiumTier: user.premiumTier,
@@ -256,6 +279,9 @@ const userRoutes = new Elysia({ prefix: '/users' })
       return { error: authError || 'Unauthorized' };
     }
 
+    const rawUser2 = await User.findById(user._id).select('displayedTagServerId').lean() as any;
+    const displayedTagServerId2 = rawUser2?.displayedTagServerId ?? null;
+
     return {
       id: user._id,
       username: user.username,
@@ -266,6 +292,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       pronouns: user.pronouns,
       status: user.status,
       customStatus: user.customStatus,
+      displayedTagServerId: displayedTagServerId2,
+      displayedTag: await resolveDisplayedTag(displayedTagServerId2),
       isPremium: user.isPremium,
       premiumSince: user.premiumSince,
       premiumTier: user.premiumTier,
@@ -321,6 +349,29 @@ const userRoutes = new Elysia({ prefix: '/users' })
       });
 
     return servers;
+  })
+  // List servers the user is in that have a tag — used by the tag picker
+  .get('/@me/available-tags', async ({ headers, cookie, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
+
+    const { ServerMember, Server } = await import('@/lib/models');
+    const memberships = await ServerMember.find({ userId: user._id }).select('serverId').lean();
+    const serverIds = memberships.map((m) => m.serverId);
+
+    const servers = await Server.find({ _id: { $in: serverIds } }).select('name icon tagText tagIcon tagAllowJoin').lean() as any[];
+    const tagged = servers.filter((s: any) => s.tagText);
+
+    return {
+      tags: tagged.map((s: any) => ({
+        serverId: s._id.toString(),
+        serverName: s.name,
+        serverIcon: s.icon ?? null,
+        tagText: s.tagText,
+        tagIcon: s.tagIcon ?? null,
+        tagAllowJoin: s.tagAllowJoin ?? true,
+      })),
+    };
   })
   .get('/@me/mentions', async ({ headers, cookie, set, query }) => {
     const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
@@ -528,13 +579,17 @@ const userRoutes = new Elysia({ prefix: '/users' })
         return { error: 'User not found in local database' };
       }
 
-      const { displayName, bio, pronouns, customStatus, status, settings, customization, gifFavorites } = body as Record<string, any>;
+      const { displayName, bio, pronouns, customStatus, displayedTagServerId, status, settings, customization, gifFavorites } = body as Record<string, any>;
       const prevStatus = user.status;
 
       if (displayName !== undefined) user.displayName = displayName;
       if (bio !== undefined) user.bio = bio;
       if (pronouns !== undefined) user.pronouns = pronouns;
       if (customStatus !== undefined) user.customStatus = customStatus;
+      // displayedTagServerId lives on a new schema field — save via
+      // findByIdAndUpdate+strict:false to bypass Mongoose model caching.
+      let tagServerIdUpdate: string | null | undefined;
+      if (displayedTagServerId !== undefined) tagServerIdUpdate = displayedTagServerId || null;
       if (status !== undefined) {
         user.status = status;
         if (status === 'offline' || status === 'invisible') {
@@ -554,7 +609,10 @@ const userRoutes = new Elysia({ prefix: '/users' })
         user.settings = normalizeUserSettingsShape(mergeDeep(currentSettings, normalizedPatch.patch || {})) as any;
       }
       if (customization !== undefined && typeof customization === 'object') {
-        user.customization = mergeDeep((user.customization || {}) as Record<string, any>, customization) as any;
+        const merged = mergeDeep((user.customization || {}) as Record<string, any>, customization);
+        // JSON round-trip strips undefined values that would cause Mongoose cast errors
+        // (e.g. customTheme: undefined when the schema expects an Object type)
+        user.customization = JSON.parse(JSON.stringify(merged)) as any;
       }
       if (gifFavorites !== undefined && Array.isArray(gifFavorites)) {
         user.gifFavorites = gifFavorites.slice(0, 200).map((f: any) => ({
@@ -566,7 +624,17 @@ const userRoutes = new Elysia({ prefix: '/users' })
       }
 
       await user.save();
-      
+
+      // displayedTagServerId is a new schema field — persist it separately
+      // via findByIdAndUpdate+strict:false to bypass Mongoose model caching.
+      if (tagServerIdUpdate !== undefined) {
+        await (User as any).findByIdAndUpdate(
+          userId,
+          { $set: { displayedTagServerId: tagServerIdUpdate } },
+          { strict: false }
+        );
+      }
+
       // Invalidate user cache so fresh data is fetched
       await invalidateUserCache(userId.toString());
 
@@ -593,7 +661,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       displayName: t.Optional(t.String({ maxLength: 32 })),
       bio: t.Optional(t.String({ maxLength: 190 })),
       pronouns: t.Optional(t.String({ maxLength: 32 })),
-      customStatus: t.Optional(t.String({ maxLength: 128 })),
+      customStatus: t.Optional(t.Nullable(t.String({ maxLength: 128 }))),
+      displayedTagServerId: t.Optional(t.Nullable(t.String())),
       status: t.Optional(t.Union([
         t.Literal('online'),
         t.Literal('idle'),
@@ -891,6 +960,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       badges: targetUser.badges || [],
       status: getPublicPresenceStatus(targetUser),
       customStatus: targetUser.customStatus,
+      displayedTag: await resolveDisplayedTag((await User.findById(targetUser._id).select('displayedTagServerId').lean() as any)?.displayedTagServerId),
       isPremium: targetUser.isPremium,
       isSystem: targetUser.isSystem || false,
       customization: targetUser.customization || {},
@@ -1474,6 +1544,8 @@ export const api = new Elysia({ prefix: '/api' })
   .use(userRoutes)
   .use(friendsRoutes)
   .use(serverRoutes)
+  .use(serverTagRoutes)
+  .use(serverPublicRoutes)
   .use(inviteRoutes)
   .use(partnerRoutes)
   .use(channelRoutes)
@@ -1500,3 +1572,4 @@ export type API = typeof api;
 
 // Export the getAuth helper for other files
 export { getAuth };
+

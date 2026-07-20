@@ -1,4 +1,4 @@
-import mongoose, { Schema, Document, Types } from 'mongoose';
+import mongoose, { Document, Schema, Types } from 'mongoose';
 
 export type BadgeId = 
   | 'staff' | 'admin' | 'moderator' 
@@ -54,6 +54,7 @@ export interface IUser extends Document {
   pronouns?: string;
   status?: 'online' | 'idle' | 'dnd' | 'offline' | 'invisible';
   customStatus?: string;
+  displayedTagServerId?: string; // ID of the server whose tag this user displays
   presenceLastHeartbeatAt?: Date;
   presenceLastDisconnectAt?: Date;
   
@@ -254,6 +255,10 @@ const UserSchema = new Schema<IUser>({
   customStatus: {
     type: String,
     maxlength: 128,
+    default: null,
+  },
+  displayedTagServerId: {
+    type: String,
     default: null,
   },
   presenceLastHeartbeatAt: {

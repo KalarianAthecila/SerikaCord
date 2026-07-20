@@ -1,51 +1,52 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ImageCropper } from "@/components/ui/image-cropper";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ServerTagBadge } from "@/components/ui/ServerTagBadge";
+import { Textarea } from "@/components/ui/textarea";
 import { ToggleSwitch } from "@/components/ui/toggle-switch";
 import { useAuth } from "@/contexts/AuthContext";
 import { useTheme } from "@/contexts/ThemeContext";
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { ImageCropper } from "@/components/ui/image-cropper";
-import {
-  X,
-  User,
-  Shield,
-  Bell,
-  Palette,
-  Mic,
-  Keyboard,
-  Languages,
-  Accessibility,
-  Crown,
-  LogOut,
-  Camera,
-  Check,
-  Loader2,
-  ExternalLink,
-  Pencil,
-  Search,
-  Link2,
-  Smartphone,
-  MessageSquare,
-  Lock,
-  Volume2,
-  Image,
-  Plug,
-  ShieldCheck,
-  Users,
-  Settings,
-  Database,
-  Activity,
-  FlaskConical,
-  RotateCcw,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
-import { getBadgesByPriority, BADGES, type BadgeId } from "@/lib/constants/badges";
-import { AdminExperimentsPanel } from "@/components/settings/AdminExperimentsPanel";
+import { BADGES, getBadgesByPriority, type BadgeId } from "@/lib/constants/badges";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
+import { cn } from "@/lib/utils";
+import {
+    Accessibility,
+    Activity,
+    Bell,
+    Camera,
+    Check,
+    Crown,
+    Database,
+    ExternalLink,
+    FlaskConical,
+    Image,
+    Keyboard,
+    Languages,
+    Link2,
+    Loader2,
+    Lock,
+    LogOut,
+    MessageSquare,
+    Mic,
+    Palette,
+    Pencil,
+    Plug,
+    RotateCcw,
+    Search,
+    Settings,
+    ShieldCheck,
+    Smartphone,
+    Tag,
+    User,
+    Users,
+    Volume2,
+    X
+} from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 interface UserSettingsDialogProps {
@@ -90,6 +91,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const [bio, setBio] = useState("");
   const [pronouns, setPronouns] = useState("");
   const [customStatus, setCustomStatus] = useState("");
+  const [displayedTagServerId, setDisplayedTagServerId] = useState<string | null>(null);
+  const [availableTags, setAvailableTags] = useState<Array<{
+    serverId: string; serverName: string; serverIcon: string | null; tagText: string; tagIcon: string | null;
+  }>>([]);
   const [status, setStatus] = useState("online");
   const [displayNameStyle, setDisplayNameStyle] = useState<{
     font?: 'default' | 'serif' | 'mono' | 'rounded' | 'cursive' | 'bold';
@@ -210,6 +215,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       setBio(user.bio || "");
       setPronouns(user.pronouns || "");
       setCustomStatus(user.customStatus || "");
+      setDisplayedTagServerId((user as any).displayedTagServerId ?? null);
       setStatus(user.status || "online");
       setDisplayNameStyle(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] });
       setProfileColor(user.customization?.profileColor || "");
@@ -220,11 +226,12 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
   const fetchUserSettings = async () => {
     setIsLoadingSettings(true);
     try {
-      const [settingsRes, appsRes, devicesRes, connectionsRes] = await Promise.all([
+      const [settingsRes, appsRes, devicesRes, connectionsRes, tagsRes] = await Promise.all([
         fetch("/api/users/me/settings"),
         fetch("/api/users/me/authorized-apps"),
         fetch("/api/users/me/devices"),
         fetch("/api/users/me/connections"),
+        fetch("/api/users/@me/available-tags"),
       ]);
 
       if (settingsRes.ok) {
@@ -242,6 +249,10 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
       if (connectionsRes.ok) {
         const data = await connectionsRes.json();
         setUserConnections(data.connections || []);
+      }
+      if (tagsRes.ok) {
+        const data = await tagsRes.json();
+        setAvailableTags(data.tags || []);
       }
     } catch (error) {
       console.error("Failed to fetch user settings:", error);
@@ -303,10 +314,11 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
         status !== (user.status || "online") ||
         JSON.stringify(displayNameStyle) !== JSON.stringify(user.customization?.displayNameStyle || { font: 'default', effect: 'solid', color: '', gradient: [] }) ||
         profileColor !== (user.customization?.profileColor || "") ||
-        JSON.stringify(profileGradient) !== JSON.stringify(user.customization?.profileGradient || []);
+        JSON.stringify(profileGradient) !== JSON.stringify(user.customization?.profileGradient || []) ||
+        displayedTagServerId !== ((user as any).displayedTagServerId ?? null);
       setHasChanges(changed);
     }
-  }, [displayName, bio, pronouns, customStatus, status, displayNameStyle, profileColor, profileGradient, user]);
+  }, [displayName, bio, pronouns, customStatus, displayedTagServerId, status, displayNameStyle, profileColor, profileGradient, user]);
 
   // Handle escape key
   useEffect(() => {
@@ -330,6 +342,7 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
           bio,
           pronouns,
           customStatus,
+          displayedTagServerId: displayedTagServerId || null,
           status,
           customization: {
             displayNameStyle,
@@ -1192,25 +1205,63 @@ export function UserSettingsDialog({ open, onOpenChange }: UserSettingsDialogPro
                           />
                         </div>
 
-                        {/* Display Name Style */}
-                        <div className="mt-8">
-                          <h2 className="text-[16px] font-bold text-white mb-4">Change Display Name Style</h2>
-                          <div className="bg-[#2B2D31] rounded-lg p-5">
-                            {/* Font */}
-                            <div className="mb-6">
-                              <div className="flex items-center gap-2 mb-3">
-                                <span className="text-[14px] font-bold text-white">Choose Font</span>
-                                <button onClick={() => setDisplayNameStyle((s) => ({ ...s, font: 'default' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Font"><RotateCcw className="w-4 h-4" /></button>
-                              </div>
-                              <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
-                                {([
-                                  { value: 'default', label: 'Default' },
-                                  { value: 'serif', label: 'Serif' },
-                                  { value: 'mono', label: 'Mono' },
-                                  { value: 'rounded', label: 'Rounded' },
-                                  { value: 'cursive', label: 'Cursive' },
-                                  { value: 'bold', label: 'Bold' },
-                                ] as const).map((font) => {
+                            {/* Server Tag */}
+                            <div>
+                              <label className="block text-xs font-bold text-[var(--text-secondary)] uppercase mb-2 flex items-center gap-1.5">
+                                <Tag className="w-3.5 h-3.5" />
+                                Server Tag
+                              </label>
+                              {availableTags.length === 0 ? (
+                                <p className="text-xs text-[var(--text-muted)] bg-[var(--bg-app)] rounded-lg px-3 py-2.5">
+                                  No servers with tags found. Ask a server admin to set up a tag in Server Settings.
+                                </p>
+                              ) : (
+                                <div className="space-y-1.5">
+                                  <select
+                                    value={displayedTagServerId ?? ""}
+                                    onChange={(e) => setDisplayedTagServerId(e.target.value || null)}
+                                    className="w-full h-10 px-3 rounded-lg bg-[var(--bg-app)] border border-[var(--border-subtle)] text-[var(--text-primary)] text-sm focus:outline-none focus:border-[var(--app-accent)]"
+                                  >
+                                    <option value="">None — don&apos;t display a tag</option>
+                                    {availableTags.map((t) => (
+                                      <option key={t.serverId} value={t.serverId}>
+                                        {t.tagText}  ·  {t.serverName}
+                                      </option>
+                                    ))}
+                                  </select>
+                                  {displayedTagServerId && (() => {
+                                    const sel = availableTags.find((t) => t.serverId === displayedTagServerId);
+                                    return sel ? (
+                                      <div className="flex items-center gap-2 text-xs text-[var(--text-muted)]">
+                                        <span>Preview:</span>
+                                        <ServerTagBadge tagText={sel.tagText} tagIcon={sel.tagIcon} serverId={sel.serverId} noPopup />
+                                      </div>
+                                    ) : null;
+                                  })()}
+                                </div>
+                              )}
+                              <p className="text-xs text-[var(--text-muted)] mt-1">Shows on your profile and in chat everywhere.</p>
+                            </div>
+
+                          {/* Display Name Style */}
+                          <div className="mt-8">
+                            <h2 className="text-[16px] font-bold text-white mb-4">Change Display Name Style</h2>
+                            <div className="bg-[#2B2D31] rounded-lg p-5">
+                              {/* Font */}
+                              <div className="mb-6">
+                                <div className="flex items-center gap-2 mb-3">
+                                  <span className="text-[14px] font-bold text-white">Choose Font</span>
+                                  <button onClick={() => setDisplayNameStyle((s) => ({ ...s, font: 'default' }))} className="text-[#B5BAC1] hover:text-white" title="Reset Font"><RotateCcw className="w-4 h-4" /></button>
+                                </div>
+                                <div className="grid grid-cols-3 sm:grid-cols-3 gap-3">
+                                  {([
+                                    { value: 'default', label: 'Default' },
+                                    { value: 'serif', label: 'Serif' },
+                                    { value: 'mono', label: 'Mono' },
+                                    { value: 'rounded', label: 'Rounded' },
+                                    { value: 'cursive', label: 'Cursive' },
+                                    { value: 'bold', label: 'Bold' },
+                                  ] as const).map((font) => {
                                   const isSelected = displayNameStyle.font === font.value;
                                   return (
                                     <button

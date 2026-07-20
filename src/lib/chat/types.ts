@@ -12,6 +12,11 @@ export interface MessageAuthor {
   isPremium?: boolean;
   isOwner?: boolean;
   isSystem?: boolean;
+  displayedTag?: {
+    serverId: string;
+    tagText: string;
+    tagIcon?: string | null;
+  } | null;
   customization?: {
     profileColor?: string;
     profileAccentColor?: string;

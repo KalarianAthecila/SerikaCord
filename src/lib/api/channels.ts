@@ -1,10 +1,10 @@
-import { Elysia, t } from 'elysia';
-import { Channel, Message, Role, Server, ServerMember, ServerSticker } from '@/lib/models';
-import { authenticateRequest } from '@/lib/services/auth';
-import { parseCustomEmojis, normalizeEmojiFormat, getReactionEmoji } from '@/lib/services/emoji';
-import { checkRateLimit, sanitizeInput, validateMessageContent, isValidObjectId, encryptForStorage, decryptFromStorage, rejectInvalidObjectIdParams } from '@/lib/security';
-import { cache, getPublisher } from '@/lib/db';
 import { config } from '@/lib/config';
+import { cache, getPublisher } from '@/lib/db';
+import { Channel, Message, Role, Server, ServerMember, ServerSticker, User } from '@/lib/models';
+import { checkRateLimit, decryptFromStorage, encryptForStorage, isValidObjectId, rejectInvalidObjectIdParams, sanitizeInput, validateMessageContent } from '@/lib/security';
+import { authenticateRequest } from '@/lib/services/auth';
+import { getReactionEmoji, normalizeEmojiFormat, parseCustomEmojis } from '@/lib/services/emoji';
+import { Elysia, t } from 'elysia';
 import { Types } from 'mongoose';
 
 // Helper to safely compare IDs (handles both ObjectId and string)
@@ -12,6 +12,28 @@ function compareIds(id1: Types.ObjectId | string, id2: Types.ObjectId | string):
   const str1 = id1 instanceof Types.ObjectId ? id1.toString() : id1;
   const str2 = id2 instanceof Types.ObjectId ? id2.toString() : id2;
   return str1 === str2;
+}
+
+type ResolvedTag = { serverId: string; serverName: string; serverIcon: string | null; tagText: string; tagIcon: string | null };
+
+/** Batch-resolve displayedTag for a set of author IDs. Uses lean() to bypass Mongoose schema caching. */
+async function batchResolveAuthorTags(authorIds: string[]): Promise<Map<string, ResolvedTag | null>> {
+  const result = new Map<string, ResolvedTag | null>();
+  if (!authorIds.length) return result;
+  const users = await User.find({ _id: { $in: authorIds } }).select('_id displayedTagServerId').lean() as any[];
+  const tagServerIds = [...new Set(users.map((u: any) => u.displayedTagServerId).filter(Boolean))] as string[];
+  const servers = tagServerIds.length > 0
+    ? await Server.find({ _id: { $in: tagServerIds } }).select('_id name icon tagText tagIcon').lean() as any[]
+    : [];
+  const serverMap = new Map(servers.map((s: any) => [s._id.toString(), s]));
+  for (const u of users) {
+    const srv = u.displayedTagServerId ? serverMap.get(u.displayedTagServerId.toString()) : null;
+    result.set(u._id.toString(), srv?.tagText ? {
+      serverId: srv._id.toString(), serverName: srv.name, serverIcon: srv.icon ?? null,
+      tagText: srv.tagText, tagIcon: srv.tagIcon ?? null,
+    } : null);
+  }
+  return result;
 }
 
 interface PopulatedAuthor {
@@ -447,6 +469,13 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
 
     messages.reverse();
 
+    // Batch-resolve author tags (two queries regardless of message count)
+    const historyAuthorIds = [...new Set((messages as any[]).map((m) => {
+      const a = m.authorId as any;
+      return a?._id?.toString();
+    }).filter(Boolean))] as string[];
+    const authorTagMap = await batchResolveAuthorTags(historyAuthorIds);
+
     // Transform for frontend - return array directly and map _id to id
     // Decrypt messages
     const decryptedMessages = await Promise.all((messages as RawLeanMessage[]).map(async (msg) => {
@@ -514,6 +543,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
           isOwner: serverOwnerId ? serverOwnerId.equals(populatedAuthor._id as unknown as Types.ObjectId) : false,
           isSystem: (populatedAuthor as PopulatedAuthor & { isSystem?: boolean }).isSystem || false,
           customization: populatedAuthor.customization || null,
+          displayedTag: authorTagMap.get(populatedAuthor._id.toString()) ?? null,
         } : null,
         channelId: msg.channelId.toString(),
         serverId: msg.serverId?.toString(),
@@ -774,6 +804,11 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
     // Populate author for response
     await message.populate('authorId', 'username displayName avatar status badges isSystem customization');
 
+    // Resolve sender's displayed tag
+    const senderTagMap = await batchResolveAuthorTags(
+      user._id ? [user._id.toString()] : []
+    );
+
     // Transform message for frontend (return original sanitized content, not encrypted)
     const author = message.authorId as PopulatedAuthor | Types.ObjectId | string | null;
     const populatedAuthor =
@@ -830,6 +865,7 @@ export const channelRoutes = new Elysia({ prefix: '/channels' })
         isOwner: serverOwnerId ? serverOwnerId.equals(populatedAuthor._id as unknown as Types.ObjectId) : false,
         isSystem: (populatedAuthor as PopulatedAuthor & { isSystem?: boolean }).isSystem || false,
         customization: populatedAuthor.customization || null,
+        displayedTag: senderTagMap.get(populatedAuthor._id.toString()) ?? null,
       } : null,
       channelId: message.channelId.toString(),
       serverId: message.serverId?.toString(),

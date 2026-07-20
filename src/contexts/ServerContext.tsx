@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useState, ReactNode, useCallback, useRef, useTransition } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState, useTransition } from "react";
 
 interface Server {
   id: string;
@@ -16,6 +16,9 @@ interface Server {
   rulesChannelId?: string | null;
   afkChannelId?: string | null;
   afkTimeout?: number;
+  tagText?: string | null;
+  tagIcon?: string | null;
+  tagAllowJoin?: boolean;
 }
 
 type ChannelType = 
@@ -327,4 +330,9 @@ export function useServer() {
     throw new Error("useServer must be used within a ServerProvider");
   }
   return context;
+}
+
+/** Returns undefined instead of throwing when used outside a ServerProvider. */
+export function useServerOptional() {
+  return useContext(ServerContext);
 }

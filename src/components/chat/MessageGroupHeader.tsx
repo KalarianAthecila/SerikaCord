@@ -1,15 +1,16 @@
 "use client";
 
-import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Crown } from "lucide-react";
-import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { StaffPill } from "@/components/chat/StaffPill";
 import { SystemPill } from "@/components/chat/SystemPill";
-import { formatMessageTimestamp } from "@/lib/chat/messages";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { ServerTagBadge } from "@/components/ui/ServerTagBadge";
+import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
 import { useTheme } from "@/contexts/ThemeContext";
+import { formatMessageTimestamp } from "@/lib/chat/messages";
+import type { MessageAuthor } from "@/lib/chat/types";
 import { getDisplayNameStyleClasses, getDisplayNameStyleInline } from "@/lib/userDisplayNameStyle";
 import { cn } from "@/lib/utils";
-import type { MessageAuthor } from "@/lib/chat/types";
+import { Crown } from "lucide-react";
 
 interface GroupAvatarProps {
   author: MessageAuthor;
@@ -68,7 +69,7 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
   const effectiveColor = !hasCustomStyle && settings.showRoleColors && roleColor ? roleColor : undefined;
 
   return (
-    <div className="flex items-baseline gap-2 mb-1">
+    <div className="flex items-baseline gap-2 mb-1 flex-wrap">
       {author.id && author.id !== "unknown" ? (
         <MemberProfilePopup
           member={{
@@ -84,6 +85,9 @@ export function GroupHeader({ author, timestamp, serverId, roleColor }: GroupHea
         >
           <button className={cn("font-medium hover:underline focus-visible:outline-2 focus-visible:outline-[#8B5CF6] rounded flex items-center gap-1", styleClasses)} style={hasCustomStyle ? styleInline : (effectiveColor ? { color: effectiveColor } : undefined)}>
             {name}
+            {author.displayedTag?.tagText && (
+              <ServerTagBadge tagText={author.displayedTag.tagText} tagIcon={author.displayedTag.tagIcon} serverId={author.displayedTag.serverId} />
+            )}
             {author.isOwner && (
               <Crown className="w-3.5 h-3.5 flex-shrink-0 text-[#F59E0B]" />
             )}

@@ -1,55 +1,57 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
-import { ToggleSwitch } from "@/components/ui/toggle-switch";
-import { useServer } from "@/contexts/ServerContext";
-import { useAuth } from "@/contexts/AuthContext";
+import { AudioTrimmerDialog } from "@/components/dialogs/AudioTrimmerDialog";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
-import { ScrollArea } from "@/components/ui/scroll-area";
-import { ImageCropper } from "@/components/ui/image-cropper";
 import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuCheckboxItem,
-  DropdownMenuTrigger,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
+    DropdownMenu,
+    DropdownMenuCheckboxItem,
+    DropdownMenuContent,
+    DropdownMenuLabel,
+    DropdownMenuSeparator,
+    DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { toast } from "sonner";
-import {
-  X,
-  Settings,
-  Shield,
-  Users,
-  Smile,
-  Sticker,
-  Link2,
-  Ban,
-  FileText,
-  Folder,
-  Camera,
-  Loader2,
-  Check,
-  Trash2,
-  Plus,
-  Copy,
-  ExternalLink,
-  Crown,
-  Volume2,
-  MoreHorizontal,
-  AlertTriangle,
-  GripVertical,
-  Search,
-  Play,
-} from "lucide-react";
-import { cn } from "@/lib/utils";
+import { ImageCropper } from "@/components/ui/image-cropper";
+import { Input } from "@/components/ui/input";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { ServerTagBadge } from "@/components/ui/ServerTagBadge";
+import { Textarea } from "@/components/ui/textarea";
+import { ToggleSwitch } from "@/components/ui/toggle-switch";
+import { UnsavedChangesBar } from "@/components/ui/unsaved-changes-bar";
+import { useAuth } from "@/contexts/AuthContext";
+import { useServer } from "@/contexts/ServerContext";
+import { useSettingsDraft, type SettingsDraft } from "@/hooks/useSettingsDraft";
 import { ROLE_PERMISSION_CATEGORIES } from "@/lib/constants/rolePermissions";
 import { hasPermissionBit, setPermissionBit } from "@/lib/roles/bitfield";
-import { useSettingsDraft, type SettingsDraft } from "@/hooks/useSettingsDraft";
-import { UnsavedChangesBar } from "@/components/ui/unsaved-changes-bar";
-import { AudioTrimmerDialog } from "@/components/dialogs/AudioTrimmerDialog";
+import { cn } from "@/lib/utils";
+import {
+    AlertTriangle,
+    Ban,
+    Camera,
+    Check,
+    Copy,
+    Crown,
+    ExternalLink,
+    FileText,
+    Folder,
+    GripVertical,
+    Link2,
+    Loader2,
+    MoreHorizontal,
+    Play,
+    Plus,
+    Search,
+    Settings,
+    Shield,
+    Smile,
+    Sticker,
+    Tag,
+    Trash2,
+    Users,
+    Volume2,
+    X,
+} from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 
 // Helper to get audio duration from a File
 function getAudioDuration(file: File): Promise<number> {
@@ -74,6 +76,7 @@ interface ServerSettingsDialogProps {
 
 type SettingsTab =
   | "overview"
+  | "server-tag"
   | "roles"
   | "emoji"
   | "stickers"
@@ -248,6 +251,13 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
   const [vanityDraft, setVanityDraft] = useState("");
   const [isSavingVanity, setIsSavingVanity] = useState(false);
   const [vanityError, setVanityError] = useState<string | null>(null);
+  // Server Tag state
+  const [tagText, setTagText] = useState("");
+  const [tagIcon, setTagIcon] = useState<string | null>(null);
+  const [tagAllowJoin, setTagAllowJoin] = useState(true);
+  const [isSavingTag, setIsSavingTag] = useState(false);
+  const [isUploadingTagIcon, setIsUploadingTagIcon] = useState(false);
+  const tagIconInputRef = useRef<HTMLInputElement>(null);
   const [bans, setBans] = useState<BannedUser[]>([]);
   const [members, setMembers] = useState<ServerMember[]>([]);
   const [memberSearch, setMemberSearch] = useState("");
@@ -312,9 +322,12 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
         "soundboard.volume": 100,
       };
       try {
-        const res = await fetch(`/api/servers/${currentServer.id}/settings`);
-        if (res.ok) {
-          const data = await res.json();
+        const [settingsRes, tagRes] = await Promise.all([
+          fetch(`/api/servers/${currentServer.id}/settings`),
+          fetch(`/api/servers/${currentServer.id}/tag`),
+        ]);
+        if (settingsRes.ok) {
+          const data = await settingsRes.json();
           const s = data.settings || {};
           base["widget.enabled"] = s.widget?.enabled ?? true;
           base["widget.channelId"] = s.widget?.channelId || null;
@@ -330,6 +343,14 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
           base["integrations.webhooks"] = Boolean(s.integrations?.webhooks);
           base["soundboard.enabled"] = s.soundboard?.enabled ?? true;
           base["soundboard.volume"] = s.soundboard?.volume ?? 100;
+        }
+        if (tagRes.ok) {
+          const td = await tagRes.json();
+          if (!cancelled) {
+            setTagText(td.tagText ?? "");
+            setTagIcon(td.tagIcon ?? null);
+            setTagAllowJoin(td.tagAllowJoin ?? true);
+          }
         }
       } catch {
         // Defaults stay in place; a failed load must not block the dialog
@@ -382,6 +403,16 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       setIsLoading(true);
       try {
         switch (activeTab) {
+          case "server-tag": {
+            const tagRes = await fetch(`/api/servers/${currentServer.id}/tag`);
+            if (tagRes.ok) {
+              const d = await tagRes.json();
+              setTagText(d.tagText ?? "");
+              setTagIcon(d.tagIcon ?? null);
+              setTagAllowJoin(d.tagAllowJoin ?? true);
+            }
+            break;
+          }
           case "roles":
             await fetchRolesData();
             break;
@@ -1266,6 +1297,7 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
       title: currentServer.name,
       items: [
         { id: "overview" as SettingsTab, label: "Overview", icon: Settings },
+        { id: "server-tag" as SettingsTab, label: "Server Tag", icon: Tag },
         { id: "roles" as SettingsTab, label: "Roles", icon: Shield },
         { id: "emoji" as SettingsTab, label: "Emoji", icon: Smile },
         { id: "stickers" as SettingsTab, label: "Stickers", icon: Sticker },
@@ -2656,10 +2688,147 @@ export function ServerSettingsDialog({ open, onOpenChange }: ServerSettingsDialo
     </div>
   );
 
+  const renderServerTag = () => {
+    const handleTagIconUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+      const file = e.target.files?.[0];
+      if (!file || !currentServer) return;
+      if (!file.type.startsWith("image/")) { toast.error("Please select an image file"); return; }
+      if (file.size > 256 * 1024) { toast.error("Tag icon must be less than 256KB"); return; }
+      setIsUploadingTagIcon(true);
+      const fd = new FormData();
+      fd.append("file", file);
+      try {
+        const res = await fetch(`/api/upload/server/${currentServer.id}/tag-icon`, { method: "POST", body: fd });
+        const d = await res.json();
+        if (!res.ok) { toast.error(d.error || "Failed to upload tag icon"); return; }
+        setTagIcon(d.url);
+        toast.success("Tag icon updated");
+      } catch { toast.error("Failed to upload tag icon"); }
+      finally { setIsUploadingTagIcon(false); if (tagIconInputRef.current) tagIconInputRef.current.value = ""; }
+    };
+
+    const handleSaveTag = async () => {
+      if (!currentServer) return;
+      setIsSavingTag(true);
+      try {
+        const normalized = tagText.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5);
+        const res = await fetch(`/api/servers/${currentServer.id}/tag`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ tagText: normalized || null, tagAllowJoin }),
+        });
+        const d = await res.json();
+        if (!res.ok) { toast.error(d.error || "Failed to save tag"); return; }
+        setTagText(d.tagText ?? "");
+        toast.success("Tag saved");
+      } catch { toast.error("Failed to save tag"); }
+      finally { setIsSavingTag(false); }
+    };
+
+    const handleRemoveTagIcon = async () => {
+      if (!currentServer) return;
+      try {
+        await fetch(`/api/servers/${currentServer.id}/tag/icon`, { method: "DELETE" });
+        setTagIcon(null);
+        toast.success("Tag icon removed");
+      } catch { toast.error("Failed to remove tag icon"); }
+    };
+
+    return (
+      <div className="space-y-6">
+        <div>
+          <h2 className="text-xl font-bold text-white mb-1">Server Tag</h2>
+          <p className="text-sm text-[#888888]">A short identifier shown next to usernames in your server</p>
+        </div>
+
+        <input type="file" ref={tagIconInputRef} onChange={handleTagIconUpload} accept="image/*" className="hidden" />
+
+        {/* Preview */}
+        {tagText && (
+          <div className="p-4 rounded-lg bg-[#111111] border border-[#222222]">
+            <p className="text-xs text-[#888888] uppercase mb-2">Preview</p>
+            <div className="flex items-center gap-2">
+              <span className="text-white font-semibold text-sm">Username</span>
+              <ServerTagBadge tagText={tagText} tagIcon={tagIcon} serverId={currentServer?.id ?? ""} noPopup />
+            </div>
+          </div>
+        )}
+
+        {/* Tag icon */}
+        <div>
+          <label className="block text-sm font-medium text-[#888888] mb-2 uppercase">Tag Icon</label>
+          <div className="flex items-center gap-4">
+            <div className="relative group w-16 h-16 rounded-xl bg-[#111111] border border-[#222222] flex items-center justify-center overflow-hidden">
+              {tagIcon ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img src={tagIcon} alt="Tag icon" className="w-full h-full object-cover" />
+              ) : (
+                <Tag className="w-6 h-6 text-[#555]" />
+              )}
+              <button
+                onClick={() => tagIconInputRef.current?.click()}
+                disabled={isUploadingTagIcon}
+                className="absolute inset-0 flex items-center justify-center bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity rounded-xl"
+              >
+                {isUploadingTagIcon ? <Loader2 className="w-5 h-5 text-white animate-spin" /> : <Camera className="w-5 h-5 text-white" />}
+              </button>
+            </div>
+            <div className="space-y-1">
+              <button onClick={() => tagIconInputRef.current?.click()} disabled={isUploadingTagIcon} className="px-3 py-1.5 bg-[#1a1a1a] hover:bg-[#222] border border-[#333] text-white text-sm rounded-md transition-colors disabled:opacity-50">
+                {isUploadingTagIcon ? "Uploading…" : "Upload Icon"}
+              </button>
+              {tagIcon && (
+                <button onClick={() => void handleRemoveTagIcon()} className="block px-3 py-1.5 text-red-400 hover:text-red-300 text-sm transition-colors">
+                  Remove
+                </button>
+              )}
+              <p className="text-xs text-[#555]">Max 256KB · PNG, GIF, WebP, JPEG</p>
+            </div>
+          </div>
+        </div>
+
+        {/* Tag text */}
+        <div>
+          <label className="block text-sm font-medium text-[#888888] mb-2 uppercase">Tag Text</label>
+          <input
+            type="text"
+            value={tagText}
+            maxLength={5}
+            onChange={(e) => setTagText(e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 5))}
+            placeholder="e.g. ALPHA"
+            className="w-40 h-10 px-3 rounded-md bg-[#111111] border border-[#222222] text-white font-mono tracking-widest focus:border-[#8B5CF6] focus:outline-none transition-colors"
+          />
+          <p className="text-xs text-[#555] mt-1">Up to 5 characters · letters and numbers only · auto-capitalized</p>
+        </div>
+
+        {/* Allow join from tag */}
+        <div className="p-4 rounded-lg bg-[#111111] border border-[#222222] flex items-center justify-between gap-4">
+          <div>
+            <p className="text-white font-medium text-sm">Allow joining from tag</p>
+            <p className="text-xs text-[#888888] mt-0.5">When enabled, anyone who clicks the tag can join this server</p>
+          </div>
+          <ToggleSwitch checked={tagAllowJoin} onCheckedChange={setTagAllowJoin} aria-label="Allow joining from tag" />
+        </div>
+
+        {/* Save */}
+        <button
+          onClick={() => void handleSaveTag()}
+          disabled={isSavingTag}
+          className="px-5 py-2 bg-[#8B5CF6] hover:bg-[#7C3AED] disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+        >
+          {isSavingTag && <Loader2 className="w-4 h-4 animate-spin" />}
+          Save Tag
+        </button>
+      </div>
+    );
+  };
+
   const renderContent = () => {
     switch (activeTab) {
       case "overview":
         return renderOverview();
+      case "server-tag":
+        return renderServerTag();
       case "roles":
         return renderRoles();
       case "invites":

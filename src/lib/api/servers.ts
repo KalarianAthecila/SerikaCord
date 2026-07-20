@@ -1,13 +1,14 @@
-import { Elysia, t } from 'elysia';
-import { Server, Channel, Role, ServerMember, Invite, ServerEmoji, ServerSticker, ServerBan, AdminLog, Message } from '@/lib/models';
-import { authenticateRequest } from '@/lib/services/auth';
-import { checkRateLimit, getClientIP, sanitizeInput, isValidObjectId, rejectInvalidObjectIdParams, decryptFromStorage } from '@/lib/security';
-import { cache } from '@/lib/db';
-import { nanoid } from 'nanoid';
 import { config } from '@/lib/config';
 import { isReservedSlug, isValidVanityCode } from '@/lib/constants/reserved';
+import { cache } from '@/lib/db';
+import { AdminLog, Channel, Invite, Message, Role, Server, ServerBan, ServerEmoji, ServerMember, ServerSticker } from '@/lib/models';
+import { checkRateLimit, decryptFromStorage, getClientIP, isValidObjectId, rejectInvalidObjectIdParams, sanitizeInput } from '@/lib/security';
+import { authenticateRequest } from '@/lib/services/auth';
 import { resolveEffectiveStatus } from '@/lib/services/presence';
+import { storage } from '@/lib/services/storage';
+import { Elysia, t } from 'elysia';
 import { Types } from 'mongoose';
+import { nanoid } from 'nanoid';
 
 // Helper function for auth
 async function getAuth(headers: Record<string, string | undefined>, cookie: Record<string, { value?: unknown }>) {
@@ -31,7 +32,7 @@ const PERM_ADMINISTRATOR = 1n << 3n;
 const PERM_MANAGE_ROLES = 1n << 28n;
 
 // Check if user can manage roles in a server (owner or has Manage Roles / Administrator)
-async function canManageRoles(server: { ownerId: Types.ObjectId; _id: Types.ObjectId }, userId: Types.ObjectId): Promise<boolean> {
+export async function canManageRoles(server: { ownerId: Types.ObjectId; _id: Types.ObjectId }, userId: Types.ObjectId): Promise<boolean> {
   if (server.ownerId.equals(userId)) return true;
   const member = await ServerMember.findOne({ serverId: server._id, userId }).populate('roles', 'permissions');
   if (!member) return false;
@@ -2634,6 +2635,155 @@ async function resolveInviteCode(code: string): Promise<
 
   return null;
 }
+
+// ── Server Tag routes ────────────────────────────────────────────────────────
+
+// Public server info — no auth needed, used for tag click popup
+export const serverPublicRoutes = new Elysia({ prefix: '/servers' })
+  .get('/:serverId/public-info', async ({ params, set }) => {
+    if (!isValidObjectId(params.serverId)) { set.status = 400; return { error: 'Invalid server ID' }; }
+    const server = await Server.findById(params.serverId).lean() as any;
+    if (!server) { set.status = 404; return { error: 'Server not found' }; }
+    return {
+      id: server._id,
+      name: server.name,
+      icon: server.icon ?? null,
+      description: server.description ?? null,
+      memberCount: server.memberCount ?? 0,
+      tagText: server.tagText ?? null,
+      tagIcon: server.tagIcon ?? null,
+      tagAllowJoin: server.tagAllowJoin ?? true,
+      vanityUrlCode: server.vanityUrlCode ?? null,
+    };
+  }, {
+    params: t.Object({ serverId: t.String() }),
+  });
+
+async function canManageTag(server: any, userId: string): Promise<boolean> {
+  if (server.ownerId.toString() === userId) return true;
+  return canManageRoles(server, new Types.ObjectId(userId));
+}
+
+export const serverTagRoutes = new Elysia({ prefix: '/servers' })
+  // GET tag for a server
+  .get('/:serverId/tag', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
+
+    if (!isValidObjectId(params.serverId)) { set.status = 400; return { error: 'Invalid server ID' }; }
+
+    // Use lean() to get raw MongoDB doc — reads ALL fields regardless of cached schema
+    const server = await Server.findById(params.serverId).lean() as any;
+    if (!server) { set.status = 404; return { error: 'Server not found' }; }
+
+    const membership = await ServerMember.findOne({ serverId: params.serverId, userId: user._id });
+    if (!membership) { set.status = 403; return { error: 'Not a member' }; }
+
+    return {
+      tagText: server.tagText ?? null,
+      tagIcon: server.tagIcon ?? null,
+      tagAllowJoin: server.tagAllowJoin ?? true,
+    };
+  }, {
+    params: t.Object({ serverId: t.String() }),
+  })
+
+  // PATCH tag — uses findByIdAndUpdate + strict:false to persist new fields
+  // even if the Mongoose model was cached before the schema was updated.
+  .patch('/:serverId/tag', async ({ headers, cookie, params, body, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
+
+    if (!isValidObjectId(params.serverId)) { set.status = 400; return { error: 'Invalid server ID' }; }
+
+    const serverDoc = await Server.findById(params.serverId).lean() as any;
+    if (!serverDoc) { set.status = 404; return { error: 'Server not found' }; }
+
+    if (!(await canManageTag(serverDoc, user._id.toString()))) {
+      set.status = 403;
+      return { error: 'You do not have permission to manage this server tag' };
+    }
+
+    const b = body as { tagText?: string | null; tagIcon?: string | null; tagAllowJoin?: boolean };
+    const $set: Record<string, any> = {};
+
+    if (b.tagText !== undefined) {
+      if (b.tagText === null || b.tagText === '') {
+        $set.tagText = null;
+      } else {
+        const normalized = b.tagText.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 5);
+        if (!normalized) { set.status = 400; return { error: 'Tag must contain at least one letter or number' }; }
+        $set.tagText = normalized;
+      }
+    }
+
+    if (b.tagIcon !== undefined) {
+      $set.tagIcon = b.tagIcon ?? null;
+    }
+
+    if (b.tagAllowJoin !== undefined) {
+      $set.tagAllowJoin = b.tagAllowJoin;
+    }
+
+    if (Object.keys($set).length === 0) {
+      return { success: true, tagText: serverDoc.tagText ?? null, tagIcon: serverDoc.tagIcon ?? null, tagAllowJoin: serverDoc.tagAllowJoin ?? true };
+    }
+
+    // strict:false bypasses Mongoose's cached schema — saves the fields even if
+    // the model was registered before these fields were added to the schema.
+    const updated = await (Server as any).findByIdAndUpdate(
+      params.serverId,
+      { $set },
+      { new: true, strict: false, lean: true }
+    ) as any;
+
+    await cache.del(`server:${params.serverId}`);
+
+    return {
+      success: true,
+      tagText: updated?.tagText ?? null,
+      tagIcon: updated?.tagIcon ?? null,
+      tagAllowJoin: updated?.tagAllowJoin ?? true,
+    };
+  }, {
+    params: t.Object({ serverId: t.String() }),
+    body: t.Object({
+      tagText: t.Optional(t.Nullable(t.String({ maxLength: 5 }))),
+      tagIcon: t.Optional(t.Nullable(t.String())),
+      tagAllowJoin: t.Optional(t.Boolean()),
+    }),
+  })
+
+  // DELETE tag icon only
+  .delete('/:serverId/tag/icon', async ({ headers, cookie, params, set }) => {
+    const { user, error: authError } = await getAuth(headers, cookie as Record<string, { value?: unknown }>);
+    if (!user) { set.status = 401; return { error: authError || 'Unauthorized' }; }
+
+    if (!isValidObjectId(params.serverId)) { set.status = 400; return { error: 'Invalid server ID' }; }
+
+    const serverDoc = await Server.findById(params.serverId).lean() as any;
+    if (!serverDoc) { set.status = 404; return { error: 'Server not found' }; }
+
+    if (!(await canManageTag(serverDoc, user._id.toString()))) {
+      set.status = 403;
+      return { error: 'You do not have permission to manage this server tag' };
+    }
+
+    if (serverDoc.tagIcon) {
+      try { await storage.deleteByUrl(serverDoc.tagIcon); } catch { /* best-effort */ }
+    }
+
+    await (Server as any).findByIdAndUpdate(
+      params.serverId,
+      { $set: { tagIcon: null } },
+      { strict: false }
+    );
+    await cache.del(`server:${params.serverId}`);
+
+    return { success: true };
+  }, {
+    params: t.Object({ serverId: t.String() }),
+  });
 
 // Invite routes
 export const inviteRoutes = new Elysia({ prefix: '/invites' })
