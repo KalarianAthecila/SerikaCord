@@ -1,17 +1,25 @@
-import { S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import { Upload } from '@aws-sdk/lib-storage';
-import { config } from '../config';
-import { nanoid } from 'nanoid';
 import crypto from 'crypto';
+import fs from 'fs';
+import { nanoid } from 'nanoid';
+import path from 'path';
+import { config } from '../config';
 import { sanitizeSvgBuffer } from '../security/svgSanitizer';
+
+// Use local disk when B2 credentials are not configured (dev-only fallback).
+const useLocalStorage = !config.B2_KEY_ID || !config.B2_APPLICATION_KEY;
+if (useLocalStorage) {
+  console.warn('⚠️ B2 credentials not configured — using local disk storage (dev only). Files will be saved to public/uploads/');
+}
 
 // Initialize S3 client for Backblaze B2
 const s3Client = new S3Client({
   endpoint: `https://${config.B2_ENDPOINT}`,
   region: config.B2_REGION,
   credentials: {
-    accessKeyId: config.B2_KEY_ID,
-    secretAccessKey: config.B2_APPLICATION_KEY,
+    accessKeyId: config.B2_KEY_ID || 'placeholder',
+    secretAccessKey: config.B2_APPLICATION_KEY || 'placeholder',
   },
   forcePathStyle: true,
 });
@@ -187,10 +195,18 @@ export class StorageService {
 
     const hash = await calculateHash(buffer);
 
-    // Sanitize SVGs server-side to strip <script>, event handlers, etc.
-    // This makes SVG uploads safe even if opened directly in a browser tab.
+    // Sanitize SVGs server-side
     if (contentType === 'image/svg+xml') {
       buffer = sanitizeSvgBuffer(buffer);
+    }
+
+    // ----- Local disk fallback (no B2 credentials) -----
+    if (useLocalStorage) {
+      const keyParts = key.split('/');
+      const dir = path.join(process.cwd(), 'public', 'uploads', ...keyParts.slice(0, -1));
+      fs.mkdirSync(dir, { recursive: true });
+      fs.writeFileSync(path.join(process.cwd(), 'public', 'uploads', ...keyParts), buffer);
+      return { url: `/uploads/${key}`, key, size, contentType, hash };
     }
 
     // S3 metadata values must be ASCII — encode non-ASCII filenames
@@ -239,6 +255,10 @@ export class StorageService {
 
   // Delete a file
   async delete(key: string): Promise<void> {
+    if (useLocalStorage) {
+      try { fs.unlinkSync(path.join(process.cwd(), 'public', 'uploads', ...key.split('/'))); } catch { /* best-effort */ }
+      return;
+    }
     await s3Client.send(new DeleteObjectCommand({
       Bucket: config.B2_BUCKET_NAME,
       Key: key,

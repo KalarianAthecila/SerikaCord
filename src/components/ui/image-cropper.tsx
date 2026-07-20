@@ -1,21 +1,21 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { Button } from "@/components/ui/button";
+import {
+    Dialog,
+    DialogContent,
+    DialogDescription,
+    DialogFooter,
+    DialogHeader,
+    DialogTitle,
+} from "@/components/ui/dialog";
+import { Slider } from "@/components/ui/slider";
 import { cdnImage } from "@/lib/utils";
+import { useGT } from "gt-next";
+import { RotateCcw, ZoomIn, ZoomOut } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import ReactCrop, { type Crop, centerCrop, makeAspectCrop } from "react-image-crop";
 import "react-image-crop/dist/ReactCrop.css";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
-import { Button } from "@/components/ui/button";
-import { Slider } from "@/components/ui/slider";
-import { ZoomIn, ZoomOut, RotateCcw } from "lucide-react";
-import { useGT } from "gt-next";
 
 interface ImageCropperProps {
   open: boolean;
@@ -232,13 +232,13 @@ export function ImageCropper({
 
         <div className="flex flex-col gap-4">
           {/* Crop Area */}
-          <div className="flex items-center justify-center bg-black/20 rounded-lg p-2 max-h-[400px] overflow-hidden">
+          <div className="flex items-center justify-center rounded-lg p-2 overflow-auto">
             <ReactCrop
               crop={crop}
               onChange={(_, percentCrop) => setCrop(percentCrop)}
               aspect={aspectRatio}
               circularCrop={circular}
-              className="max-w-full max-h-[380px]"
+              className="max-w-full"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -249,8 +249,10 @@ export function ImageCropper({
                 style={{
                   transform: `scale(${scale})`,
                   transformOrigin: "center center",
+                  maxHeight: "400px",
+                  display: "block",
                 }}
-                className="max-w-full max-h-[380px] object-contain"
+                className="max-w-full"
               />
             </ReactCrop>
           </div>
