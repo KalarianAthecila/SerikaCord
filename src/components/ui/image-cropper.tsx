@@ -231,14 +231,16 @@ export function ImageCropper({
         </DialogHeader>
 
         <div className="flex flex-col gap-4">
-          {/* Crop Area */}
-          <div className="flex items-center justify-center rounded-lg p-2 overflow-auto">
+          {/* Crop Area — overflow-hidden is required so react-image-crop's
+               absolutely-positioned selection stays anchored to the image.
+               object-contain is intentionally absent to prevent letterbox bars. */}
+          <div className="flex items-center justify-center rounded-lg overflow-hidden">
             <ReactCrop
               crop={crop}
               onChange={(_, percentCrop) => setCrop(percentCrop)}
               aspect={aspectRatio}
               circularCrop={circular}
-              className="max-w-full"
+              className="max-w-full max-h-[420px]"
             >
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img
@@ -249,10 +251,8 @@ export function ImageCropper({
                 style={{
                   transform: `scale(${scale})`,
                   transformOrigin: "center center",
-                  maxHeight: "400px",
-                  display: "block",
                 }}
-                className="max-w-full"
+                className="block max-w-full max-h-[420px]"
               />
             </ReactCrop>
           </div>
