@@ -193,13 +193,13 @@ async function resolveDisplayedTag(displayedTagServerId?: string | null) {
   if (!displayedTagServerId) return null;
   try {
     const server = await Server.findById(displayedTagServerId);
-    if (!server || !(server as any).tagText) return null;
+    if (!server || !server.tagText) return null;
     return {
       serverId: server.id,
       serverName: server.name,
       serverIcon: server.icon ?? null,
-      tagText: (server as any).tagText as string,
-      tagIcon: ((server as any).tagIcon ?? null) as string | null,
+      tagText: server.tagText,
+      tagIcon: server.tagIcon ?? null,
     };
   } catch { return null; }
 }
@@ -573,8 +573,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       showTimezone: user.showTimezone,
       status: user.status,
       customStatus: user.customStatus,
-      displayedTagServerId: (user as any).displayedTagServerId ?? null,
-      displayedTag: await resolveDisplayedTag((user as any).displayedTagServerId),
+      displayedTagServerId: user.displayedTagServerId ?? null,
+      displayedTag: await resolveDisplayedTag(user.displayedTagServerId),
       isPremium: user.isPremium,
       premiumSince: user.premiumSince,
       premiumTier: user.premiumTier,
@@ -611,8 +611,8 @@ const userRoutes = new Elysia({ prefix: '/users' })
       showTimezone: user.showTimezone,
       status: user.status,
       customStatus: user.customStatus,
-      displayedTagServerId: (user as any).displayedTagServerId ?? null,
-      displayedTag: await resolveDisplayedTag((user as any).displayedTagServerId),
+      displayedTagServerId: user.displayedTagServerId ?? null,
+      displayedTag: await resolveDisplayedTag(user.displayedTagServerId),
       isPremium: user.isPremium,
       premiumSince: user.premiumSince,
       premiumTier: user.premiumTier,
@@ -1776,7 +1776,7 @@ const userRoutes = new Elysia({ prefix: '/users' })
       badges: targetUser.badges || [],
       status: getPublicPresenceStatus(targetUser),
       customStatus: targetUser.customStatus,
-      displayedTag: await resolveDisplayedTag((targetUser as any).displayedTagServerId),
+      displayedTag: await resolveDisplayedTag(targetUser.displayedTagServerId),
       isPremium: targetUser.isPremium,
       isSystem: targetUser.isSystem || false,
       isBot: Boolean(targetUser.isBot),

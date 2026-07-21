@@ -514,10 +514,12 @@ export const uploadRoutes = new Elysia({ prefix: '/upload' })
     if (!isValidImageType(file.type)) { set.status = 400; return { error: 'Invalid file type. Only JPEG, PNG, GIF, and WebP are allowed.' }; }
     if (file.size > 256 * 1024) { set.status = 400; return { error: 'Tag icon must be less than 256KB.' }; }
     try {
-      const oldIcon = (server as any).tagIcon;
+      const oldIcon = server.tagIcon;
       if (oldIcon) { try { await storage.deleteByUrl(oldIcon); } catch { /* best-effort */ } }
+      // Tag icons use the 'emojis' category (same size limit, same allowed types).
+      // Consider a dedicated 'tag-icons' category if different constraints are needed.
       const result = await storage.uploadFromFormData(file, 'emojis', { serverId: params.serverId, userId: user.id });
-      await Server.updateById(server.id, { tagIcon: result.url } as any);
+      await Server.updateById(server.id, { tagIcon: result.url });
       return { success: true, url: result.url };
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : 'Failed to upload tag icon';

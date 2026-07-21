@@ -11,7 +11,7 @@ import { sanitizeSvgBuffer } from '../security/svgSanitizer';
 const missingB2Credentials = !config.B2_KEY_ID || !config.B2_APPLICATION_KEY;
 const useLocalStorage = config.NODE_ENV !== 'production' && missingB2Credentials;
 if (useLocalStorage) {
-  console.warn('⚠️ B2 credentials not configured — using local disk storage (dev only). Files will be saved to public/uploads/');
+  console.warn('B2 credentials not configured — using local disk storage (dev only). Files will be saved to public/uploads/');
 }
 
 if (config.NODE_ENV === 'production' && missingB2Credentials) {
@@ -298,6 +298,14 @@ export class StorageService {
 
   // Check if file exists
   async exists(key: string): Promise<boolean> {
+    if (useLocalStorage) {
+      try {
+        await fs.promises.access(getSafeLocalPath(key));
+        return true;
+      } catch {
+        return false;
+      }
+    }
     try {
       await getS3Client().send(new HeadObjectCommand({
         Bucket: config.B2_BUCKET_NAME,
@@ -315,6 +323,14 @@ export class StorageService {
     contentType: string;
     lastModified: Date | undefined;
   } | null> {
+    if (useLocalStorage) {
+      try {
+        const stat = await fs.promises.stat(getSafeLocalPath(key));
+        return { size: stat.size, contentType: 'application/octet-stream', lastModified: stat.mtime };
+      } catch {
+        return null;
+      }
+    }
     try {
       const response = await getS3Client().send(new HeadObjectCommand({
         Bucket: config.B2_BUCKET_NAME,

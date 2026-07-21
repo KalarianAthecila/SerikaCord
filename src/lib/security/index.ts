@@ -1,9 +1,9 @@
-import { RateLimiterRedis, RateLimiterMemory, RateLimiterRes } from 'rate-limiter-flexible';
+import crypto from 'crypto';
+import { RateLimiterMemory, RateLimiterRedis, RateLimiterRes } from 'rate-limiter-flexible';
 import sanitizeHtml from 'sanitize-html';
 import xss from 'xss';
-import crypto from 'crypto';
-import { getRedis } from '../db/redis';
 import { config } from '../config';
+import { getRedis } from '../db/redis';
 
 // Rate limiter configurations
 const rateLimiters: Map<string, RateLimiterRedis | RateLimiterMemory> = new Map();
@@ -69,6 +69,9 @@ export const rateLimiters_config = {
 
   // Bug reports
   bugReport: { points: 5, duration: 600 }, // 5 bug reports / feedback every 10 minutes
+
+  // Public server info (tag popup) — unauthenticated, generous but still capped
+  publicInfo: { points: 60, duration: 60 }, // 60 lookups per minute per IP
 } as const;
 
 export async function checkRateLimit(
@@ -325,7 +328,7 @@ export function secureCompare(a: string, b: string): boolean {
 }
 
 // Re-export encryption utilities
-export { encryptMessage, decryptMessage, encryptForStorage, decryptFromStorage, isEncrypted } from './encryption';
+export { decryptFromStorage, decryptMessage, encryptForStorage, encryptMessage, isEncrypted } from './encryption';
 
 // Route param names that must always be UUIDs. Composite ids like
 // voice roomIds ("channel-<id>", "dm:<id>") are intentionally excluded.

@@ -3964,7 +3964,10 @@ function convertDiscordOverwrites(
 
 // Public server info — no auth needed, for tag click popup
 export const serverPublicRoutes = new Elysia({ prefix: '/servers' })
-  .get('/:serverId/public-info', async ({ params, set }) => {
+  .get('/:serverId/public-info', async ({ params, request, set }) => {
+    const ip = getClientIP(request);
+    const rateLimit = await checkRateLimit('publicInfo', ip);
+    if (!rateLimit.success) { set.status = 429; return { error: 'Too many requests', retryAfter: rateLimit.retryAfter }; }
     const server = await Server.findById(params.serverId);
     if (!server) { set.status = 404; return { error: 'Server not found' }; }
     return {
@@ -3974,10 +3977,9 @@ export const serverPublicRoutes = new Elysia({ prefix: '/servers' })
       banner: server.banner ?? null,
       description: server.description ?? null,
       memberCount: server.memberCount ?? 0,
-      tagText: (server as any).tagText ?? null,
-      tagIcon: (server as any).tagIcon ?? null,
-      tagAllowJoin: (server as any).tagAllowJoin ?? true,
-      vanityUrlCode: server.vanityUrlCode ?? null,
+      tagText: server.tagText ?? null,
+      tagIcon: server.tagIcon ?? null,
+      tagAllowJoin: server.tagAllowJoin ?? true,
     };
   }, {
     params: t.Object({ serverId: t.String() }),
@@ -3991,7 +3993,7 @@ export const serverTagRoutes = new Elysia({ prefix: '/servers' })
     if (!server) { set.status = 404; return { error: 'Server not found' }; }
     const membership = await ServerMember.findOne({ serverId: params.serverId, userId: user.id });
     if (!membership) { set.status = 403; return { error: 'Not a member' }; }
-    return { tagText: (server as any).tagText ?? null, tagIcon: (server as any).tagIcon ?? null, tagAllowJoin: (server as any).tagAllowJoin ?? true };
+    return { tagText: server.tagText ?? null, tagIcon: server.tagIcon ?? null, tagAllowJoin: server.tagAllowJoin ?? true };
   }, { params: t.Object({ serverId: t.String() }) })
 
   .patch('/:serverId/tag', async ({ headers, cookie, params, body, set }) => {
@@ -4003,7 +4005,7 @@ export const serverTagRoutes = new Elysia({ prefix: '/servers' })
       set.status = 403; return { error: 'You do not have permission to manage this server tag' };
     }
     const b = body as { tagText?: string | null; tagIcon?: string | null; tagAllowJoin?: boolean };
-    const patch: Record<string, any> = {};
+    const patch: Partial<typeof import('@/lib/models').Server.table.$inferInsert> = {};
     if (b.tagText !== undefined) {
       if (!b.tagText) { patch.tagText = null; }
       else {
@@ -4017,10 +4019,10 @@ export const serverTagRoutes = new Elysia({ prefix: '/servers' })
     }
     if (b.tagIcon !== undefined) patch.tagIcon = b.tagIcon ?? null;
     if (b.tagAllowJoin !== undefined) patch.tagAllowJoin = b.tagAllowJoin;
-    if (Object.keys(patch).length) await Server.updateById(params.serverId, patch as any);
+    if (Object.keys(patch).length) await Server.updateById(params.serverId, patch);
     await cache.del(`server:${params.serverId}`);
     const updated = await Server.findById(params.serverId);
-    return { success: true, tagText: (updated as any)?.tagText ?? null, tagIcon: (updated as any)?.tagIcon ?? null, tagAllowJoin: (updated as any)?.tagAllowJoin ?? true };
+    return { success: true, tagText: updated?.tagText ?? null, tagIcon: updated?.tagIcon ?? null, tagAllowJoin: updated?.tagAllowJoin ?? true };
   }, {
     params: t.Object({ serverId: t.String() }),
     body: t.Object({
@@ -4038,10 +4040,10 @@ export const serverTagRoutes = new Elysia({ prefix: '/servers' })
     if (server.ownerId !== user.id && !(await canManageRoles(server, user.id))) {
       set.status = 403; return { error: 'You do not have permission to manage this server tag' };
     }
-    if ((server as any).tagIcon) {
-      try { const { storage } = await import('@/lib/services/storage'); await storage.deleteByUrl((server as any).tagIcon); } catch { /* best-effort */ }
+    if (server.tagIcon) {
+      try { const { storage } = await import('@/lib/services/storage'); await storage.deleteByUrl(server.tagIcon); } catch { /* best-effort */ }
     }
-    await Server.updateById(params.serverId, { tagIcon: null } as any);
+    await Server.updateById(params.serverId, { tagIcon: null });
     await cache.del(`server:${params.serverId}`);
     return { success: true };
   }, { params: t.Object({ serverId: t.String() }) });

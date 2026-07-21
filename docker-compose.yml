@@ -77,6 +77,8 @@ services:
     container_name: serikacord-postgres
     restart: unless-stopped
     ports:
+      # Non-standard host port 5433 avoids conflicts with a local PostgreSQL instance on the default 5432.
+      # Set POSTGRES_URI=postgresql://serikacord:devpostgres123@localhost:5433/serikacord in .env
       - "5433:5432"
     environment:
       - POSTGRES_USER=serikacord
@@ -99,6 +101,8 @@ services:
     container_name: serikacord-redis
     restart: unless-stopped
     ports:
+      # Non-standard host port 6380 avoids conflicts with a local Redis instance on the default 6379.
+      # Set REDIS_URL=redis://:${REDIS_PASSWORD}@localhost:6380/0 in .env
       - "6380:6379"
     command: redis-server --requirepass ${REDIS_PASSWORD} --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
     volumes:

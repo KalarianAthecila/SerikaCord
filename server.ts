@@ -127,7 +127,7 @@ async function main() {
     for (const ws of liveSockets) {
       const conn = ws.data.conn;
       if (!conn) continue;
-      if (ws.readyState !== 1 /* WebSocket.OPEN */) continue;
+      if (ws.readyState !== WebSocket.OPEN) continue;
       if (conn.data.authenticated && isHeartbeatExpired(conn)) {
         try { ws.close(4009, 'Session timed out'); } catch { ws.terminate(); }
         continue;

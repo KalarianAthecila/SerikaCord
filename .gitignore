@@ -17,6 +17,7 @@
 # next.js
 /.next/
 /public/uploads/
+# Auto-generated changelog (produced by release scripts, not hand-edited)
 /CHANGES.md
 /out/
 

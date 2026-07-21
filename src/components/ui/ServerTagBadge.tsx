@@ -17,7 +17,6 @@ interface ServerInfo {
   memberCount: number;
   tagText: string | null;
   tagAllowJoin: boolean;
-  vanityUrlCode: string | null;
 }
 
 interface ServerTagBadgeProps {
@@ -68,8 +67,8 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
 
     setJoining(true);
     try {
-      const code = info.vanityUrlCode ?? serverId;
-      const res = await fetch(`/api/invites/${code}`, { method: "POST" });
+      // Use the dedicated server join endpoint; it respects joinMode on the server.
+      const res = await fetch(`/api/servers/${info.id}/join`, { method: "POST" });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) {
         const errorText = String((data as { error?: string })?.error || "").toLowerCase();
@@ -96,7 +95,7 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
   if (loading) {
     return (
       <div className="flex items-center justify-center p-6">
-        <Loader2 className="w-5 h-5 animate-spin text-[#8B5CF6]" />
+        <Loader2 className="w-5 h-5 animate-spin text-[--app-accent]" />
       </div>
     );
   }
@@ -106,7 +105,7 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
   return (
     <div className="w-72">
       {/* Banner area */}
-      <div className="relative h-16 rounded-t-xl overflow-hidden bg-gradient-to-r from-[#8B5CF6] to-[#6366F1]">
+      <div className="relative h-16 rounded-t-xl overflow-hidden bg-gradient-to-r from-[--app-accent] to-[--accent-hover]">
         {info.banner && (
           // eslint-disable-next-line @next/next/no-img-element
           <img
@@ -121,7 +120,7 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
         {/* Server icon */}
         <Avatar className="w-16 h-16 rounded-2xl">
           <AvatarImage src={info.icon ?? undefined} />
-          <AvatarFallback className="bg-[#8B5CF6] text-white text-xl rounded-2xl">
+          <AvatarFallback className="bg-[--app-accent] text-white text-xl rounded-2xl">
             {info.name.charAt(0).toUpperCase()}
           </AvatarFallback>
         </Avatar>
@@ -129,9 +128,9 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
         <div className="mt-2">
           <h3 className="text-white font-bold text-base leading-tight">{info.name}</h3>
           {info.description && (
-            <p className="text-[#9a9ab0] text-xs mt-1 line-clamp-2">{info.description}</p>
+            <p className="text-[--text-muted] text-xs mt-1 line-clamp-2">{info.description}</p>
           )}
-          <div className="flex items-center gap-1.5 mt-2 text-xs text-[#9a9ab0]">
+          <div className="flex items-center gap-1.5 mt-2 text-xs text-[--text-muted]">
             <Users className="w-3.5 h-3.5" />
             <span>{info.memberCount.toLocaleString()} members</span>
           </div>
@@ -141,7 +140,7 @@ function ServerTagPopupContent({ serverId, onClose }: { serverId: string; onClos
           <button
             onClick={() => void handleJoin()}
             disabled={joining}
-            className="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 bg-[#8B5CF6] hover:bg-[#7C3AED] disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors"
+            className="mt-3 w-full flex items-center justify-center gap-2 py-2 px-4 bg-[--app-accent] hover:bg-[--accent-hover] disabled:opacity-60 text-white rounded-lg text-sm font-medium transition-colors"
           >
             {joining ? (
               <Loader2 className="w-4 h-4 animate-spin" />
@@ -169,8 +168,8 @@ export function ServerTagBadge({ tagText, tagIcon, serverId, noPopup, className 
     <span
       className={cn(
         "inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[11px] font-bold tracking-wider select-none",
-        "bg-[#8B5CF6]/15 text-[#a78bfa] border border-[#8B5CF6]/25",
-        !noPopup && "cursor-pointer hover:bg-[#8B5CF6]/25 hover:text-[#c4b5fd] transition-colors",
+        "bg-[--app-accent]/15 text-[--app-accent] border border-[--app-accent]/25",
+        !noPopup && "cursor-pointer hover:bg-[--app-accent]/25 hover:text-[--text-primary] transition-colors",
         className
       )}
     >
@@ -193,7 +192,7 @@ export function ServerTagBadge({ tagText, tagIcon, serverId, noPopup, className 
         side="top"
         align="start"
         sideOffset={6}
-        className="w-auto p-0 border border-[#2b2d31] bg-[#111115] rounded-xl overflow-hidden shadow-2xl"
+        className="w-auto p-0 border border-[--bg-hover] bg-[--bg-app] rounded-xl overflow-hidden shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <ServerTagPopupContent serverId={serverId} onClose={() => setOpen(false)} />
