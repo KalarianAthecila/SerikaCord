@@ -220,7 +220,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
               expanded ? "w-[128px] h-[128px]" : "w-[92px] h-[92px]"
             )}>
               <AvatarImage src={cdnImage(user.avatar)} />
-              <AvatarFallback className="bg-[#5865F2] text-white text-2xl">
+              <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-2xl">
                 {user.displayName.charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>
@@ -241,7 +241,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                 <Button
                   size="sm"
                   onClick={openSettings}
-                  className="bg-[#5865F2] hover:bg-[#4752c4] text-white h-9 rounded-full px-4"
+                  className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110 h-9 rounded-full px-4"
                 >
                   <Edit3 className="w-4 h-4 mr-1.5" />
                   {gt('Edit Profile')}
@@ -260,7 +260,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
               <>
                 <Button
                   size="sm"
-                  className="bg-[#5865F2] hover:bg-[#4752c4] text-white h-9 rounded-full px-4"
+                  className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110 h-9 rounded-full px-4"
                 >
                   <MessageCircle className="w-4 h-4 mr-1.5" />
                   {gt('Message')}
@@ -277,16 +277,16 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="bg-[#111214] border-[#1e1f22] text-[#b5bac1]">
-                    <DropdownMenuItem className="hover:bg-[#5865F2] hover:text-white cursor-pointer">
+                    <DropdownMenuItem className="hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] cursor-pointer">
                       <UserPlus className="w-4 h-4 mr-2" />
                       {gt('Add Friend')}
                     </DropdownMenuItem>
-                    <DropdownMenuItem className="hover:bg-[#5865F2] hover:text-white cursor-pointer">
+                    <DropdownMenuItem className="hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] cursor-pointer">
                       <Volume2 className="w-4 h-4 mr-2" />
                       {gt('Call')}
                     </DropdownMenuItem>
                     <DropdownMenuSeparator className="bg-[#2b2d31]" />
-                    <DropdownMenuItem onClick={copyUserId} className="hover:bg-[#5865F2] hover:text-white cursor-pointer">
+                    <DropdownMenuItem onClick={copyUserId} className="hover:bg-[var(--app-accent)] hover:text-[var(--text-on-accent)] cursor-pointer">
                       {copiedId ? <Check className="w-4 h-4 mr-2" /> : <Copy className="w-4 h-4 mr-2" />}
                       {copiedId ? gt('Copied!') : gt('Copy User ID')}
                     </DropdownMenuItem>
@@ -383,15 +383,15 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
           {expanded ? (
             <Tabs defaultValue="about" className="w-full">
               <TabsList className="w-full bg-[#1e1f22] rounded-lg h-10">
-                <TabsTrigger value="about" className="flex-1 data-[state=active]:bg-[#5865F2] data-[state=active]:text-white rounded-md">
+                <TabsTrigger value="about" className="flex-1 data-[state=active]:bg-[var(--app-accent)] data-[state=active]:text-[var(--text-on-accent)] rounded-md">
                   {gt('About Me')}
                 </TabsTrigger>
                 {!isCurrentUser && (
                   <>
-                    <TabsTrigger value="servers" className="flex-1 data-[state=active]:bg-[#5865F2] data-[state=active]:text-white rounded-md">
+                    <TabsTrigger value="servers" className="flex-1 data-[state=active]:bg-[var(--app-accent)] data-[state=active]:text-[var(--text-on-accent)] rounded-md">
                       {gt('Mutual Servers')}
                     </TabsTrigger>
-                    <TabsTrigger value="friends" className="flex-1 data-[state=active]:bg-[#5865F2] data-[state=active]:text-white rounded-md">
+                    <TabsTrigger value="friends" className="flex-1 data-[state=active]:bg-[var(--app-accent)] data-[state=active]:text-[var(--text-on-accent)] rounded-md">
                       {gt('Mutual Friends')}
                     </TabsTrigger>
                   </>
@@ -410,7 +410,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                           size="sm"
                           variant="ghost"
                           onClick={openSettings}
-                          className="text-[#00A8FC] hover:text-[#00A8FC] hover:bg-[#00A8FC]/10"
+                          className="text-[var(--app-accent)] hover:text-[var(--app-accent)] hover:bg-[var(--app-accent)]/10"
                         >
                           <Edit3 className="w-4 h-4 mr-1.5" />
                           {gt('Add Bio')}
@@ -477,7 +477,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                             <div key={server.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1f22] transition-colors cursor-pointer">
                               <Avatar className="w-10 h-10">
                                 <AvatarImage src={cdnImage(server.icon)} />
-                                <AvatarFallback className="bg-[#5865F2] text-white text-sm">
+                                <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
                                   {server.name.charAt(0)}
                                 </AvatarFallback>
                               </Avatar>
@@ -499,7 +499,7 @@ function ProfileContent({ user, onClose, copyUserId, copiedId, formatDate, expan
                             <div key={friend.id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[#1e1f22] transition-colors cursor-pointer">
                               <Avatar className="w-10 h-10">
                                 <AvatarImage src={cdnImage(friend.avatar)} />
-                                <AvatarFallback className="bg-[#5865F2] text-white text-sm">
+                                <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
                                   {friend.username.charAt(0)}
                                 </AvatarFallback>
                               </Avatar>

@@ -204,11 +204,11 @@ export function SwitchAccountsDialog({
             <div className="space-y-2">
               {/* Current account */}
               {user && (
-                <div className="flex items-center gap-3 p-3 rounded-lg bg-[#1e1f22] border border-[#5865F2]/30">
+                <div className="flex items-center gap-3 p-3 rounded-lg bg-[#1e1f22] border border-[var(--app-accent)]/30">
                   <div className="relative">
                     <Avatar className="w-10 h-10">
                       <AvatarImage src={cdnImage(user.avatar)} />
-                      <AvatarFallback className="bg-[#5865F2] text-white text-sm">
+                      <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
                         {user.displayName?.charAt(0).toUpperCase() || "?"}
                       </AvatarFallback>
                     </Avatar>
@@ -244,7 +244,7 @@ export function SwitchAccountsDialog({
                     >
                       <Avatar className="w-10 h-10">
                         <AvatarImage src={cdnImage(account.avatar)} />
-                        <AvatarFallback className="bg-[#5865F2] text-white text-sm">
+                        <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
                           {account.displayName?.charAt(0).toUpperCase() || account.username.charAt(0).toUpperCase()}
                         </AvatarFallback>
                       </Avatar>
@@ -301,7 +301,7 @@ export function SwitchAccountsDialog({
                 <div className="flex items-center gap-3 p-3 rounded-lg bg-[#1e1f22]">
                   <Avatar className="w-12 h-12">
                     <AvatarImage src={cdnImage(selectedAccount.avatar)} />
-                    <AvatarFallback className="bg-[#5865F2] text-white">
+                    <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)]">
                       {selectedAccount.displayName?.charAt(0).toUpperCase() || selectedAccount.username.charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
@@ -319,7 +319,7 @@ export function SwitchAccountsDialog({
                     type="email"
                     value={email}
                     onChange={(e) => setEmail(e.target.value)}
-                    className="w-full px-3 py-2 rounded bg-[var(--app-surface-alt)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] border border-[var(--border-strong)] focus:outline-none focus:border-[#5865F2] transition-colors"
+                    className="w-full px-3 py-2 rounded bg-[var(--app-surface-alt)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] border border-[var(--border-strong)] focus:outline-none focus:border-[var(--app-accent)] transition-colors"
                     placeholder={gt("email@example.com")}
                     autoFocus
                   />
@@ -335,7 +335,7 @@ export function SwitchAccountsDialog({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") void handleLogin();
                   }}
-                  className="w-full px-3 py-2 rounded bg-[var(--app-surface-alt)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] border border-[var(--border-strong)] focus:outline-none focus:border-[#5865F2] transition-colors"
+                  className="w-full px-3 py-2 rounded bg-[var(--app-surface-alt)] text-sm text-[var(--text-primary)] placeholder:text-[var(--text-muted)] border border-[var(--border-strong)] focus:outline-none focus:border-[var(--app-accent)] transition-colors"
                   placeholder={gt("Password")}
                   autoFocus={!!selectedAccount}
                 />
@@ -352,7 +352,7 @@ export function SwitchAccountsDialog({
                   "w-full py-2.5 rounded-lg font-medium text-sm transition-all",
                   isLoading || !password.trim()
                     ? "bg-[#1e1f22] text-[var(--text-muted)] cursor-not-allowed"
-                    : "bg-[#5865F2] hover:bg-[#4752c4] text-white"
+                    : "bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110"
                 )}
               >
                 {isLoading ? gt("Logging in...") : gt("Login")}

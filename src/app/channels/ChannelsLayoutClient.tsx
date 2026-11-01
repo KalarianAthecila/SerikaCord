@@ -159,7 +159,7 @@ function AuthGate({ children }: { children: React.ReactNode }) {
           <div className="flex gap-3">
             <Link
               href="/login"
-              className="px-6 py-3 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium rounded-md transition-colors"
+              className="px-6 py-3 bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110 font-medium rounded-md transition-colors"
             >
               {gt("Sign In")}
             </Link>

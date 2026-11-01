@@ -522,8 +522,8 @@ function SerikaVideoEmbed({ videoId, url }: { videoId: string; url: string }) {
         </div>
       )}
       <div className="absolute inset-0 flex items-center justify-center bg-black/20 group-hover:bg-black/40 transition-colors">
-        <div className="w-16 h-16 rounded-full bg-[#8B5CF6] flex items-center justify-center shadow-2xl group-hover:scale-110 group-hover:bg-[#7C3AED] transition-all duration-300">
-          <Play className="w-7 h-7 text-white ml-1" fill="white" />
+        <div className="w-16 h-16 rounded-full bg-[var(--app-accent)] text-[var(--text-on-accent)] flex items-center justify-center shadow-2xl group-hover:scale-110 group-hover:brightness-110 transition-all duration-300">
+          <Play className="w-7 h-7 ml-1" fill="currentColor" />
         </div>
       </div>
       <div className="absolute bottom-0 left-0 right-0 flex items-center justify-between gap-2 px-3 py-2 bg-gradient-to-t from-black/90 via-black/60 to-transparent">
@@ -1312,8 +1312,8 @@ function PlayerCardEmbed({ url, preview, onSuppress }: { url: string; preview: O
               loading="lazy"
             />
             <div className="absolute inset-0 flex items-center justify-center bg-black/30 group-hover/embed-card:bg-black/40 transition-colors">
-              <div className="w-14 h-14 rounded-full bg-[#8B5CF6] flex items-center justify-center shadow-2xl group-hover/embed-card:scale-110 transition-transform">
-                <Play className="w-6 h-6 text-white ml-1" fill="white" />
+              <div className="w-14 h-14 rounded-full bg-[var(--app-accent)] text-[var(--text-on-accent)] flex items-center justify-center shadow-2xl group-hover/embed-card:scale-110 transition-transform">
+                <Play className="w-6 h-6 ml-1" fill="currentColor" />
               </div>
             </div>
           </div>

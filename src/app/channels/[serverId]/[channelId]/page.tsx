@@ -255,7 +255,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
               <ArrowLeft className="w-5 h-5" />
             </button>
           )}
-          <Volume2 className="w-5 h-5 text-[#8B5CF6] flex-shrink-0" />
+          <Volume2 className="w-5 h-5 text-[var(--app-accent)] flex-shrink-0" />
           <span className="font-semibold text-[var(--text-primary)] truncate">{channelName}</span>
         </div>
         <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-[var(--app-surface-alt)] text-xs text-[var(--app-muted)] ring-1 ring-white/5">
@@ -269,8 +269,8 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
         {!isConnected ? (
           /* Not joined — show join screen */
           <div className="flex-1 flex flex-col items-center justify-center text-center">
-            <div className="w-24 h-24 rounded-full bg-gradient-to-b from-[#8B5CF6]/20 to-[var(--app-surface-alt)] ring-1 ring-[#8B5CF6]/20 shadow-[0_0_40px_rgba(139,92,246,0.25)] flex items-center justify-center mb-5">
-              <Volume2 className="w-11 h-11 text-[#8B5CF6]" />
+            <div className="w-24 h-24 rounded-full bg-gradient-to-b from-[var(--app-accent)]/20 to-[var(--app-surface-alt)] ring-1 ring-[var(--app-accent)]/20 shadow-[0_0_40px_color-mix(in_srgb,var(--app-accent)_25%,transparent)] flex items-center justify-center mb-5">
+              <Volume2 className="w-11 h-11 text-[var(--app-accent)]" />
             </div>
             <h2 className="text-lg font-semibold text-[var(--text-primary)] mb-1">{channelName}</h2>
             <p className="text-sm text-[var(--app-muted-2)] mb-4">
@@ -288,7 +288,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                   >
                     <Avatar className="w-12 h-12">
                       {p.avatar && <AvatarImage src={cdnImage(p.avatar)} alt={p.username} />}
-                      <AvatarFallback className="bg-[#8B5CF6]/20 text-[#8B5CF6]">
+                      <AvatarFallback className="bg-[var(--app-accent)]/20 text-[var(--app-accent)]">
                         {(p.displayName || p.username || "?").charAt(0).toUpperCase()}
                       </AvatarFallback>
                     </Avatar>
@@ -308,7 +308,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
             <button
               onClick={joinVoice}
               disabled={isJoining}
-              className="flex items-center gap-2 px-7 py-3 rounded-full bg-gradient-to-b from-[#8B5CF6] to-[#7C3AED] hover:from-[#9d70f8] hover:to-[#8B5CF6] text-white font-semibold shadow-[0_4px_20px_rgba(139,92,246,0.45)] transition-all active:scale-95 hover:scale-[1.03] disabled:opacity-50"
+              className="flex items-center gap-2 px-7 py-3 rounded-full bg-[var(--app-accent)] text-[var(--text-on-accent)] font-semibold shadow-[0_4px_20px_color-mix(in_srgb,var(--app-accent)_45%,transparent)] transition-all hover:brightness-110 active:scale-95 hover:scale-[1.03] disabled:opacity-50"
             >
               {isJoining ? <Loader size={20} /> : <PhoneOff className="w-5 h-5 rotate-[135deg]" />}
               {isJoining ? gt("Joining...") : gt("Join Voice")}
@@ -366,7 +366,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                     "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                     isMobile ? "w-9 h-9" : "w-10 h-10",
                     isVideoOn
-                      ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                      ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)] hover:bg-[var(--app-accent)]/30"
                       : "bg-[var(--app-border)] text-[var(--app-muted)] hover:bg-[var(--border-strong)] hover:text-[var(--text-primary)]"
                   )}
                 >
@@ -381,7 +381,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                     "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                     isMobile ? "w-9 h-9" : "w-10 h-10",
                     noiseSuppression
-                      ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                      ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)] hover:bg-[var(--app-accent)]/30"
                       : "bg-[var(--app-border)] text-[var(--app-muted)] hover:bg-[var(--border-strong)] hover:text-[var(--text-primary)]"
                   )}
                 >
@@ -397,7 +397,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                       className={cn(
                         "flex items-center justify-center w-10 h-10 rounded-full transition-all active:scale-95 hover:scale-105",
                         isScreenSharing
-                          ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                          ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)] hover:bg-[var(--app-accent)]/30"
                           : "bg-[var(--app-border)] text-[var(--app-muted)] hover:bg-[var(--border-strong)] hover:text-[var(--text-primary)]"
                       )}
                     >
@@ -421,7 +421,7 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                       "flex items-center justify-center rounded-full transition-all active:scale-95 hover:scale-105",
                       isMobile ? "w-9 h-9" : "w-10 h-10",
                       showSoundboard
-                        ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                        ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)] hover:bg-[var(--app-accent)]/30"
                         : "bg-[var(--app-border)] text-[var(--app-muted)] hover:bg-[var(--border-strong)] hover:text-[var(--text-primary)]"
                     )}
                   >
@@ -456,8 +456,8 @@ function VoiceChannelView({ channelId, channelName, serverId }: { channelId: str
                         className={cn(
                           "flex flex-col items-center gap-1 p-2 rounded-lg border transition-all",
                           playingSoundId === sound.id
-                            ? "bg-[#8B5CF6]/20 border-[#8B5CF6] scale-95"
-                            : "bg-[var(--bg-app)] border-[var(--app-border)] hover:border-[#8B5CF6]/50 hover:bg-[var(--bg-hover)]"
+                            ? "bg-[var(--app-accent)]/20 border-[var(--app-accent)] scale-95"
+                            : "bg-[var(--bg-app)] border-[var(--app-border)] hover:border-[var(--app-accent)]/50 hover:bg-[var(--bg-hover)]"
                         )}
                       >
                         <span className="text-lg">{sound.emoji || "🔊"}</span>

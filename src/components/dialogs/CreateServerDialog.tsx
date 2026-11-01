@@ -153,8 +153,8 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                 className="w-full p-3 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] border border-[var(--border-subtle)] transition-colors flex items-center justify-between group active:scale-[0.98]"
               >
                 <div className="flex items-center gap-3">
-                  <div className="w-12 h-12 rounded-full bg-[#8B5CF6] flex items-center justify-center">
-                    <Hash className="w-6 h-6 text-white" />
+                  <div className="w-12 h-12 rounded-full bg-[var(--app-accent)] flex items-center justify-center">
+                    <Hash className="w-6 h-6 text-[var(--text-on-accent)]" />
                   </div>
                   <span className="font-medium"><T>Create My Own</T></span>
                 </div>
@@ -167,7 +167,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
               >
                 <div className="flex items-center gap-3">
                   <div className="w-12 h-12 rounded-full bg-[var(--app-accent)] flex items-center justify-center">
-                    <LayoutTemplate className="w-6 h-6 text-white" />
+                    <LayoutTemplate className="w-6 h-6 text-[var(--text-on-accent)]" />
                   </div>
                   <span className="font-medium"><T>Start From a Template</T></span>
                 </div>
@@ -183,8 +183,8 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                   className="w-full p-3 rounded-lg bg-[var(--bg-card)] hover:bg-[var(--bg-hover)] border border-[var(--border-subtle)] transition-colors flex items-center justify-between group active:scale-[0.98]"
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-12 h-12 rounded-full bg-[#7C3AED] flex items-center justify-center">
-                      <Users className="w-6 h-6 text-white" />
+                    <div className="w-12 h-12 rounded-full bg-[var(--app-accent)] flex items-center justify-center">
+                      <Users className="w-6 h-6 text-[var(--text-on-accent)]" />
                     </div>
                     <span className="font-medium"><T>Join a Server</T></span>
                   </div>
@@ -240,7 +240,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                     className="hidden"
                   />
                   {iconPreview ? (
-                    <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-dashed border-[#8B5CF6] hover:border-[#A78BFA] transition-colors">
+                    <div className="w-20 h-20 rounded-full overflow-hidden border-2 border-dashed border-[var(--app-accent)] hover:brightness-110 transition-colors">
                       <img src={iconPreview} alt="Server icon" className="w-full h-full object-cover" />
                     </div>
                   ) : (
@@ -261,7 +261,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                   id="serverName"
                   value={serverName}
                   onChange={(e) => setServerName(e.target.value)}
-                  className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-0"
+                  className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-0"
                 />
               </div>
 
@@ -281,7 +281,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
               <Button
                 onClick={handleCreate}
                 disabled={!serverName.trim() || isLoading}
-                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+                className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110"
               >
                 {isLoading ? gt("Creating...") : gt("Create")}
               </Button>
@@ -313,7 +313,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                   value={inviteCode}
                   onChange={(e) => setInviteCode(e.target.value)}
                   placeholder="https://serikacord.app/invite/coolserver"
-                  className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-0"
+                  className="bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-0"
                 />
               </div>
 
@@ -338,7 +338,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
               <Button
                 onClick={handleJoin}
                 disabled={!inviteCode.trim() || isLoading}
-                className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+                className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110"
               >
                 {isLoading ? gt("Joining...") : gt("Join Server")}
               </Button>
@@ -350,8 +350,8 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
           <>
             <DialogHeader className="p-4 text-center max-sm:px-12 max-sm:pt-6">
               <div className="flex justify-center mb-3">
-                <div className="w-14 h-14 rounded-full bg-[#8B5CF6]/20 flex items-center justify-center">
-                  <Rocket className="w-7 h-7 text-[#8B5CF6]" />
+                <div className="w-14 h-14 rounded-full bg-[var(--app-accent)]/20 flex items-center justify-center">
+                  <Rocket className="w-7 h-7 text-[var(--app-accent)]" />
                 </div>
               </div>
               <DialogTitle className="text-2xl font-bold"><T>Set up your server</T></DialogTitle>
@@ -374,7 +374,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                       placeholder={gt("A brief description of your server...")}
                       rows={3}
                       maxLength={500}
-                      className="w-full p-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[#8B5CF6] resize-none text-sm"
+                      className="w-full p-3 rounded-lg bg-[var(--bg-card)] border border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus:outline-none focus:border-[var(--app-accent)] resize-none text-sm"
                     />
                     <p className="text-xs text-[var(--text-muted)] text-right">{onboardDesc.length}/500</p>
                   </div>
@@ -394,16 +394,16 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                       <button
                         key={opt.key}
                         onClick={() => setOnboardJoinMode(opt.key)}
-                        className={`w-full p-3 rounded-lg border transition-colors flex items-center gap-3 text-left ${selected ? "bg-[#8B5CF6]/10 border-[#8B5CF6]/50" : "bg-[var(--bg-card)] border-[var(--border-subtle)] hover:border-[var(--border-strong)]"}`}
+                        className={`w-full p-3 rounded-lg border transition-colors flex items-center gap-3 text-left ${selected ? "bg-[var(--app-accent)]/10 border-[var(--app-accent)]/50" : "bg-[var(--bg-card)] border-[var(--border-subtle)] hover:border-[var(--border-strong)]"}`}
                       >
-                        <div className={`p-2 rounded-full ${selected ? "text-[#8B5CF6]" : "text-[var(--text-secondary)]"}`}>
+                        <div className={`p-2 rounded-full ${selected ? "text-[var(--app-accent)]" : "text-[var(--text-secondary)]"}`}>
                           <Icon className="w-5 h-5" />
                         </div>
                         <div className="flex-1">
                           <span className={`font-medium text-sm block ${selected ? "text-[var(--text-primary)]" : "text-[var(--text-secondary)]"}`}>{opt.title}</span>
                           <span className="text-xs text-[var(--text-secondary)]">{opt.desc}</span>
                         </div>
-                        {selected && <Check className="w-4 h-4 text-[#8B5CF6]" />}
+                        {selected && <Check className="w-4 h-4 text-[var(--app-accent)]" />}
                       </button>
                     );
                   })}
@@ -427,7 +427,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
               {onboardStep === 0 ? (
                 <Button
                   onClick={() => setOnboardStep(1)}
-                  className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+                  className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110"
                 >
                   {gt("Next")}
                 </Button>
@@ -435,7 +435,7 @@ export function CreateServerDialog({ open, onOpenChange }: CreateServerDialogPro
                 <Button
                   onClick={handleOnboardFinish}
                   disabled={isLoading}
-                  className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+                  className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110"
                 >
                   {isLoading ? gt("Finishing...") : gt("Finish Setup")}
                 </Button>

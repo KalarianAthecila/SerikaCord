@@ -527,7 +527,7 @@ export function FullProfileDialog({
               ) : view.customization?.profileColor ? (
                 <div className="absolute inset-0" style={{ backgroundColor: view.customization.profileColor }} />
               ) : (
-                <div className="absolute inset-0 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#4F46E5]" />
+                <div className="absolute inset-0 bg-[var(--app-accent)]" />
               )}
               <div className="absolute inset-0 bg-gradient-to-t from-[#0c0c10]/70 via-transparent to-transparent" />
 
@@ -564,7 +564,7 @@ export function FullProfileDialog({
                 <div className="relative">
                   <Avatar className="w-[88px] h-[88px] border-[5px] border-[#0c0c10] shadow-lg">
                     <AvatarImage src={cdnImage(view.avatar || undefined)} />
-                    <AvatarFallback className="bg-[#8B5CF6] text-white text-3xl">
+                    <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-3xl">
                       {displayName.charAt(0).toUpperCase()}
                     </AvatarFallback>
                   </Avatar>
@@ -651,7 +651,7 @@ export function FullProfileDialog({
                   <>
                     <button
                       onClick={handleSendMessage}
-                      className="flex items-center gap-1.5 px-3.5 py-2 max-sm:min-h-11 max-sm:px-4 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all"
+                      className="flex items-center gap-1.5 px-3.5 py-2 max-sm:min-h-11 max-sm:px-4 rounded-lg bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110 active:scale-[0.97] text-sm font-medium transition-all"
                     >
                       <MessageSquare className="w-4 h-4" />
                       {gt("Message")}
@@ -860,7 +860,7 @@ export function FullProfileDialog({
                 >
                   {tab.label}
                   {activeTab === tab.id && (
-                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[#8B5CF6] rounded-full" />
+                    <span className="absolute bottom-0 left-0 right-0 h-0.5 bg-[var(--app-accent)] rounded-full" />
                   )}
                 </button>
               ))}
@@ -951,8 +951,8 @@ export function FullProfileDialog({
                               // eslint-disable-next-line @next/next/no-img-element
                               <img src={entry.imageUrl} alt={entry.name} className="w-9 h-9 rounded-md object-cover shrink-0 bg-black/30" />
                             ) : (
-                              <div className="w-9 h-9 rounded-md bg-[#8B5CF6]/20 flex items-center justify-center shrink-0">
-                                <span className="text-sm font-bold text-[#8B5CF6]">{(entry.name || "?").charAt(0).toUpperCase()}</span>
+                              <div className="w-9 h-9 rounded-md bg-[var(--app-accent)]/20 flex items-center justify-center shrink-0">
+                                <span className="text-sm font-bold text-[var(--app-accent)]">{(entry.name || "?").charAt(0).toUpperCase()}</span>
                               </div>
                             )}
                             <div className="flex-1 min-w-0">
@@ -982,7 +982,7 @@ export function FullProfileDialog({
                       <div key={f.id || f._id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.04] transition-colors">
                         <Avatar className="w-8 h-8">
                           <AvatarImage src={cdnImage(f.avatar || undefined)} />
-                          <AvatarFallback className="bg-[#8B5CF6] text-white text-sm">
+                          <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
                             {(f.displayName || f.username || "?").charAt(0).toUpperCase()}
                           </AvatarFallback>
                         </Avatar>
@@ -1009,7 +1009,7 @@ export function FullProfileDialog({
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={cdnImage(s.icon)} alt={s.name} className="w-8 h-8 rounded-full object-cover" />
                         ) : (
-                          <div className="w-8 h-8 rounded-full bg-[#8B5CF6] flex items-center justify-center text-white text-sm font-bold">
+                          <div className="w-8 h-8 rounded-full bg-[var(--app-accent)] flex items-center justify-center text-[var(--text-on-accent)] text-sm font-bold">
                             {(s.name || "?").charAt(0).toUpperCase()}
                           </div>
                         )}

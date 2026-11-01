@@ -181,6 +181,7 @@ export function AudioTrimmerDialog({
     const startX = (selStart / audioBuffer.duration) * width;
     const endX = (selEnd / audioBuffer.duration) * width;
     const progressX = isPlaying ? (playbackPos / audioBuffer.duration) * width : -1;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue("--app-accent").trim() || "#8B5CF6";
 
     // Draw waveform bars
     for (let x = 0; x < width; x++) {
@@ -196,28 +197,24 @@ export function AudioTrimmerDialog({
       const isPastProgress = progressX >= 0 && x <= progressX && x >= startX;
 
       if (isPastProgress) {
-        // Played portion — bright purple/white
-        ctx.fillStyle = "#a78bfa";
+        ctx.fillStyle = "#ffffff";
       } else if (inSelection) {
-        // Selected but not yet played — medium purple
-        ctx.fillStyle = "#8B5CF6";
+        ctx.fillStyle = accent;
       } else {
-        // Outside selection — dark gray
         ctx.fillStyle = "#2a2a3a";
       }
       ctx.fillRect(x, (height - barHeight) / 2, 1, barHeight);
     }
 
     // Selection overlay glow
-    const gradient = ctx.createLinearGradient(startX, 0, endX, 0);
-    gradient.addColorStop(0, "rgba(139, 92, 246, 0.08)");
-    gradient.addColorStop(0.5, "rgba(139, 92, 246, 0.04)");
-    gradient.addColorStop(1, "rgba(139, 92, 246, 0.08)");
-    ctx.fillStyle = gradient;
+    ctx.save();
+    ctx.globalAlpha = 0.08;
+    ctx.fillStyle = accent;
     ctx.fillRect(startX, 0, endX - startX, height);
+    ctx.restore();
 
     // Selection border lines
-    ctx.fillStyle = "#8B5CF6";
+    ctx.fillStyle = accent;
     ctx.fillRect(startX - 0.5, 0, 2, height);
     ctx.fillRect(endX - 1.5, 0, 2, height);
 
@@ -388,8 +385,8 @@ export function AudioTrimmerDialog({
         {/* Header */}
         <div className="flex items-center justify-between mb-1">
           <div className="flex items-center gap-2.5">
-            <div className="size-8 rounded-lg bg-[#8B5CF6]/15 flex items-center justify-center">
-              <Scissors className="w-4.5 h-4.5 text-[#8B5CF6]" />
+            <div className="size-8 rounded-lg bg-[var(--app-accent)]/15 flex items-center justify-center">
+              <Scissors className="w-4.5 h-4.5 text-[var(--app-accent)]" />
             </div>
             <h2 className="text-white font-semibold text-lg">{gt("Trim Sound")}</h2>
           </div>
@@ -454,7 +451,7 @@ export function AudioTrimmerDialog({
                   "text-xs font-semibold px-2.5 py-1 rounded-full",
                   isOverMax
                     ? "bg-red-500/10 text-red-400"
-                    : "bg-[#8B5CF6]/10 text-[#a78bfa]",
+                    : "bg-[var(--app-accent)]/10 text-[var(--app-accent)]",
                 )}
               >
                 {selectionLength.toFixed(1)}s / {maxDuration}s
@@ -468,7 +465,7 @@ export function AudioTrimmerDialog({
                   "h-full rounded-full transition-all duration-150",
                   isOverMax
                     ? "bg-red-500"
-                    : "bg-gradient-to-r from-[#8B5CF6] to-[#a78bfa]",
+                    : "bg-[var(--app-accent)]",
                 )}
                 style={{ width: `${Math.min(selPercent, 100)}%` }}
               />
@@ -488,7 +485,7 @@ export function AudioTrimmerDialog({
                   value={selStart}
                   onChange={(e) => handleStartChange(Number(e.target.value))}
                   aria-label={gt("Selection start")}
-                  className="w-full accent-[#8B5CF6]"
+                  className="w-full accent-[var(--app-accent)]"
                 />
               </div>
               <div>
@@ -503,7 +500,7 @@ export function AudioTrimmerDialog({
                   value={selEnd}
                   onChange={(e) => handleEndChange(Number(e.target.value))}
                   aria-label={gt("Selection end")}
-                  className="w-full accent-[#8B5CF6]"
+                  className="w-full accent-[var(--app-accent)]"
                 />
               </div>
             </div>
@@ -515,7 +512,7 @@ export function AudioTrimmerDialog({
                 className={cn(
                   "flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-medium transition-all active:scale-95",
                   isPlaying
-                    ? "bg-[#8B5CF6]/15 text-[#a78bfa] border border-[#8B5CF6]/30"
+                    ? "bg-[var(--app-accent)]/15 text-[var(--app-accent)] border border-[var(--app-accent)]/30"
                     : "bg-[#1a1a22] hover:bg-[#222230] border border-[#222230] text-white",
                 )}
               >
@@ -533,7 +530,7 @@ export function AudioTrimmerDialog({
                 <button
                   onClick={handleConfirm}
                   disabled={isExporting || selectionLength <= 0 || isOverMax}
-                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-95 text-white text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110 active:scale-95 text-sm font-semibold transition-all disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   {isExporting ? (
                     <Loader size={16} />

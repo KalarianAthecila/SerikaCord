@@ -264,7 +264,7 @@ export function CreateChannelDialog({
                 onClick={() => setChannelType("text")}
                 className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
                   channelType === "text"
-                    ? "bg-[#8B5CF6]/10 border-[#8B5CF6]"
+                    ? "bg-[var(--app-accent)]/10 border-[var(--app-accent)]"
                     : "bg-[var(--bg-card)] border-[var(--border-subtle)] hover:border-[var(--border-strong)]"
                 }`}
               >
@@ -278,12 +278,12 @@ export function CreateChannelDialog({
                 <div
                   className={`ml-auto w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     channelType === "text"
-                      ? "border-[#8B5CF6] bg-[#8B5CF6]"
+                      ? "border-[var(--app-accent)] bg-[var(--app-accent)]"
                       : "border-[var(--text-muted)]"
                   }`}
                 >
                   {channelType === "text" && (
-                    <div className="w-2 h-2 rounded-full bg-white" />
+                    <div className="w-2 h-2 rounded-full bg-[var(--text-on-accent)]" />
                   )}
                 </div>
               </button>
@@ -292,7 +292,7 @@ export function CreateChannelDialog({
                 onClick={() => setChannelType("voice")}
                 className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
                   channelType === "voice"
-                    ? "bg-[#8B5CF6]/10 border-[#8B5CF6]"
+                    ? "bg-[var(--app-accent)]/10 border-[var(--app-accent)]"
                     : "bg-[var(--bg-card)] border-[var(--border-subtle)] hover:border-[var(--border-strong)]"
                 }`}
               >
@@ -306,12 +306,12 @@ export function CreateChannelDialog({
                 <div
                   className={`ml-auto w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     channelType === "voice"
-                      ? "border-[#8B5CF6] bg-[#8B5CF6]"
+                      ? "border-[var(--app-accent)] bg-[var(--app-accent)]"
                       : "border-[var(--text-muted)]"
                   }`}
                 >
                   {channelType === "voice" && (
-                    <div className="w-2 h-2 rounded-full bg-white" />
+                    <div className="w-2 h-2 rounded-full bg-[var(--text-on-accent)]" />
                   )}
                 </div>
               </button>
@@ -320,7 +320,7 @@ export function CreateChannelDialog({
                 onClick={() => setChannelType("forum")}
                 className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
                   channelType === "forum"
-                    ? "bg-[#8B5CF6]/10 border-[#8B5CF6]"
+                    ? "bg-[var(--app-accent)]/10 border-[var(--app-accent)]"
                     : "bg-[var(--bg-card)] border-[var(--border-subtle)] hover:border-[var(--border-strong)]"
                 }`}
               >
@@ -334,12 +334,12 @@ export function CreateChannelDialog({
                 <div
                   className={`ml-auto w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     channelType === "forum"
-                      ? "border-[#8B5CF6] bg-[#8B5CF6]"
+                      ? "border-[var(--app-accent)] bg-[var(--app-accent)]"
                       : "border-[var(--text-muted)]"
                   }`}
                 >
                   {channelType === "forum" && (
-                    <div className="w-2 h-2 rounded-full bg-white" />
+                    <div className="w-2 h-2 rounded-full bg-[var(--text-on-accent)]" />
                   )}
                 </div>
               </button>
@@ -348,7 +348,7 @@ export function CreateChannelDialog({
                 onClick={() => setChannelType("category")}
                 className={`w-full p-3 rounded-lg flex items-center gap-3 transition-colors border ${
                   channelType === "category"
-                    ? "bg-[#8B5CF6]/10 border-[#8B5CF6]"
+                    ? "bg-[var(--app-accent)]/10 border-[var(--app-accent)]"
                     : "bg-[var(--bg-card)] border-[var(--border-subtle)] hover:border-[var(--border-strong)]"
                 }`}
               >
@@ -362,12 +362,12 @@ export function CreateChannelDialog({
                 <div
                   className={`ml-auto w-5 h-5 rounded-full border-2 flex items-center justify-center ${
                     channelType === "category"
-                      ? "border-[#8B5CF6] bg-[#8B5CF6]"
+                      ? "border-[var(--app-accent)] bg-[var(--app-accent)]"
                       : "border-[var(--text-muted)]"
                   }`}
                 >
                   {channelType === "category" && (
-                    <div className="w-2 h-2 rounded-full bg-white" />
+                    <div className="w-2 h-2 rounded-full bg-[var(--text-on-accent)]" />
                   )}
                 </div>
               </button>
@@ -414,7 +414,7 @@ export function CreateChannelDialog({
                     ? "new-forum"
                     : gt("New Category")
                 }
-                className="pl-10 bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[#8B5CF6] focus-visible:ring-offset-0"
+                className="pl-10 bg-[var(--bg-card)] border-[var(--border-subtle)] text-[var(--text-primary)] placeholder:text-[var(--text-muted)] focus-visible:ring-[var(--app-accent)] focus-visible:ring-offset-0"
               />
             </div>
           </div>
@@ -494,7 +494,7 @@ export function CreateChannelDialog({
             <div className="flex items-center justify-between p-3 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg-card)]">
               <div className="space-y-0.5">
                 <Label htmlFor="ticket-toggle" className="font-medium cursor-pointer text-sm flex items-center gap-1.5">
-                  <Ticket className="w-4 h-4 text-[#8B5CF6]" /> <T>Ticket System</T>
+                  <Ticket className="w-4 h-4 text-[var(--app-accent)]" /> <T>Ticket System</T>
                 </Label>
                 <div className="text-xs text-[var(--text-muted)] max-w-[280px]">
                   <T>Each new post becomes a private ticket, visible only to its creator and your configured support roles.</T>
@@ -521,7 +521,7 @@ export function CreateChannelDialog({
             <Button
               onClick={goToAccessStep}
               disabled={!normalizeChannelName(channelName)}
-              className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+              className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110"
             >
               {gt("Next")}
             </Button>
@@ -529,7 +529,7 @@ export function CreateChannelDialog({
             <Button
               onClick={handleCreate}
               disabled={!normalizeChannelName(channelName) || isLoading}
-              className="bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+              className="bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:bg-[var(--app-accent)] hover:brightness-110"
             >
               {isLoading ? gt("Creating...") : channelType === "category" ? gt("Create Category") : gt("Create Channel")}
             </Button>

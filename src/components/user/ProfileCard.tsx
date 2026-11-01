@@ -374,7 +374,7 @@ export function ProfileCard({
             style={getProfileBannerStyle(user.customization)}
           />
         ) : (
-          <div className="absolute inset-0 bg-gradient-to-br from-[#8B5CF6] via-[#7C3AED] to-[#4F46E5]" />
+          <div className="absolute inset-0 bg-[var(--app-accent)]" />
         )}
         <div className="absolute inset-0 bg-gradient-to-t from-[#0c0c10]/70 via-transparent to-transparent" />
 
@@ -397,7 +397,7 @@ export function ProfileCard({
           <div className="relative">
             <Avatar className="w-[88px] h-[88px] border-[5px] border-[#0c0c10] shadow-lg">
               <AvatarImage src={cdnImage(user.avatar || undefined)} />
-              <AvatarFallback className="bg-[#8B5CF6] text-white text-3xl">
+              <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-3xl">
                 {displayName.charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>
@@ -424,7 +424,7 @@ export function ProfileCard({
               {!hideMessageButton && !limited && (
                 <button
                   onClick={handleSendMessage}
-                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#8B5CF6] hover:bg-[#7C3AED] active:scale-[0.97] text-white text-sm font-medium transition-all"
+                  className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110 active:scale-[0.97] text-sm font-medium transition-all"
                 >
                   <MessageSquare className="w-4 h-4" />
                   {gt("Message")}

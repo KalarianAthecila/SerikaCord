@@ -250,7 +250,7 @@ export function VoiceBar({ channelName, className, hideForRoomId }: VoiceBarProp
               className={cn(
                 "flex items-center justify-center w-10 h-10 sm:w-8 sm:h-8 rounded-lg transition-all active:scale-95",
                 isVideoOn
-                  ? "bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                  ? "bg-[var(--app-accent)]/20 text-[var(--app-accent)] hover:bg-[var(--app-accent)]/30"
                   : "bg-[var(--app-border)] text-[var(--app-muted)] hover:bg-[var(--border-strong)] hover:text-[var(--text-primary)]"
               )}
             >
@@ -265,7 +265,7 @@ export function VoiceBar({ channelName, className, hideForRoomId }: VoiceBarProp
               className={cn(
                 "items-center justify-center w-10 h-10 sm:w-8 sm:h-8 rounded-lg transition-all active:scale-95",
                 isScreenSharing
-                  ? "flex bg-[#8B5CF6]/20 text-[#8B5CF6] hover:bg-[#8B5CF6]/30"
+                  ? "flex bg-[var(--app-accent)]/20 text-[var(--app-accent)] hover:bg-[var(--app-accent)]/30"
                   : "hidden md:flex bg-[var(--app-border)] text-[var(--app-muted)] hover:bg-[var(--border-strong)] hover:text-[var(--text-primary)]"
               )}
             >

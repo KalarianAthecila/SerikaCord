@@ -23,6 +23,7 @@
 - **More room for channels on a phone** — Server Guide, Events, Channels & Roles and Members scroll with the channel list, so a short screen is not stuck with those rows pinned above it (CORD-88).
 - **Calls play through Firefox** — other people in a call are audible in Firefox, and the microphone list fills in after you join instead of staying on Default (CORD-89).
 - **Reset undoes a nameplate change** — the unsaved-changes Reset button puts the nameplate back with the rest of the profile (CORD-90).
+- **Buttons follow your accent colour** — Message, Edit Profile, Join Voice, create and invite actions, and the other filled buttons use the accent you picked instead of staying purple.
 
 ### Performance
 

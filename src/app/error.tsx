@@ -31,7 +31,7 @@ export default function ErrorBoundary({
       <div className="flex gap-3">
         <button
           onClick={reset}
-          className="flex items-center gap-2 px-6 py-3 bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium rounded-lg transition-colors text-sm"
+          className="flex items-center gap-2 px-6 py-3 bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110 font-medium rounded-lg transition-colors text-sm"
         >
           <RefreshCw className="w-4 h-4" />
           <T>Try Again</T>

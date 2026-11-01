@@ -325,7 +325,7 @@ export function InviteDialog({ open, onOpenChange, channelId, serverId }: Invite
                   "px-4 py-2 rounded-md font-medium transition-colors flex items-center gap-2 shrink-0 max-sm:min-h-11",
                   copied
                     ? "bg-[#23A559] text-white"
-                    : "bg-[#8B5CF6] hover:bg-[#7C3AED] text-white"
+                    : "bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110"
                 )}
               >
                 {copied ? (
@@ -414,7 +414,7 @@ export function InviteDialog({ open, onOpenChange, channelId, serverId }: Invite
               <button
                 onClick={generateInvite}
                 disabled={isLoading}
-                className="w-full py-2 max-sm:min-h-11 rounded-md bg-[#8B5CF6] hover:bg-[#7C3AED] text-white font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                className="w-full py-2 max-sm:min-h-11 rounded-md bg-[var(--app-accent)] text-[var(--text-on-accent)] hover:brightness-110 font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
               >
                 <RefreshCw className={cn("w-4 h-4", isLoading && "animate-spin")} />
                 {gt("Generate New Link")}

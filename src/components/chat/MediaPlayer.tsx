@@ -221,13 +221,13 @@ export function AudioMediaPlayer({
       <div className="flex items-center gap-3 p-3 bg-[var(--app-surface-alt)] rounded-lg max-w-sm transition-colors">
         <button
           onClick={togglePlay}
-          className="flex-shrink-0 w-10 h-10 rounded-full bg-gradient-to-br from-[#8B5CF6] to-[#7C3AED] flex items-center justify-center hover:from-[#7C3AED] hover:to-[#6D28D9] transition-all shadow-lg shadow-purple-500/20"
+          className="flex-shrink-0 w-10 h-10 rounded-full bg-[var(--app-accent)] text-[var(--text-on-accent)] flex items-center justify-center hover:brightness-110 transition-all shadow-lg shadow-[color-mix(in_srgb,var(--app-accent)_35%,transparent)]"
           aria-label={isPlaying ? gt("Pause") : gt("Play")}
         >
           {isPlaying ? (
-            <Pause className="w-5 h-5 text-white" fill="white" />
+            <Pause className="w-5 h-5" fill="currentColor" />
           ) : (
-            <Play className="w-5 h-5 text-white ml-0.5" fill="white" />
+            <Play className="w-5 h-5 ml-0.5" fill="currentColor" />
           )}
         </button>
 
@@ -241,7 +241,7 @@ export function AudioMediaPlayer({
             onClick={handleSeek}
           >
             <div
-              className="absolute inset-y-0 left-0 bg-gradient-to-r from-[#8B5CF6] to-[#7C3AED] rounded-full transition-all"
+              className="absolute inset-y-0 left-0 bg-[var(--app-accent)] rounded-full transition-all"
               style={{ width: `${progress}%` }}
             />
             <div
