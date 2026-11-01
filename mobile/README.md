@@ -78,8 +78,25 @@ that the hosted web app feature-detects:
 ### Release
 
 Pushing a `v*` tag runs the `Release Build` workflow
-(`.github/workflows/build.yml`), which signs the APK with the
-`ANDROID_KEYSTORE_*` secrets and attaches it to the GitHub release.
+(`.github/workflows/build.yml`). It signs both artifacts with the
+`ANDROID_KEYSTORE_*` secrets (same certificate since v2.0.0) and attaches
+them to the GitHub release:
+
+- `SerikaCord-<tag>.apk` — sideload / the download page
+- `SerikaCord-<tag>.aab` — the Play Store package (Android App Bundle)
+
+Play Console will not accept the APK. Upload the `.aab`. It is signed with
+the upload key `E9:2E:EE:4B:95:6B:34:F4:36:5A:9B:A2:EC:48:86:D1:D2:26:55:C3:4A:32:BC:8D:E4:C1:FD:00:03:93:C6:BF`
+(SHA-256). Enrol that certificate as the Play upload key. Play re-signs the
+app for users with its own app-signing key.
+
+To send each release to the **internal testing** track automatically, add a
+GitHub Actions secret `PLAY_SERVICE_ACCOUNT_JSON` (the raw JSON key of a Play
+Console service account with permission to release to testing tracks). The
+app has to exist in Play Console first; create it once by uploading an `.aab`
+by hand. Without the secret the workflow still publishes the `.aab` on the
+GitHub release and skips the Play upload. A failed Play upload does not block
+the GitHub release.
 
 ---
 

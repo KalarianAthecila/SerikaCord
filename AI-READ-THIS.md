@@ -84,7 +84,7 @@ git push && git push origin vX.Y.Z        # the script never pushes
 3. Moves the `## Unreleased` body into `## vX.Y.Z — YYYY-MM-DD` with a `**Tag:** ... · **Commit:** <short sha>` line (the HEAD the release was cut from) and leaves a fresh Unreleased with the standard headings. Refuses an empty Unreleased unless `--allow-empty`.
 4. `--commit` commits only the files it touched; `--tag` (needs `--commit`) creates the annotated tag.
 
-The tag push triggers the GitHub Actions `Release Build` workflow (Tauri desktop + Android APK) and `build-qt.yml`; both take the version from the tag.
+The tag push triggers the GitHub Actions `Release Build` workflow (Tauri desktop, Android APK, and a Play Store `.aab`) and `build-qt.yml`; both take the version from the tag. Play Console upload is optional and needs `PLAY_SERVICE_ACCOUNT_JSON` (`mobile/README.md`).
 
 The iOS app ships separately: pushing an `ios-vX.Y.Z` tag runs `.github/workflows/ios.yml` (App Store IPA → GitHub release, never marked latest → TestFlight). Setup and secrets: `mobile/README.md`.
 
@@ -100,7 +100,7 @@ Releases are cut by the maintainer (not by agents) with the release script descr
 under "Releasing a new version" above: `bun run release:dry`, then
 `bun run release <patch|minor|major> --commit --tag`, merge `canary` into `main`,
 and push the tag. Tags matching `v*` trigger the GitHub Actions `Release Build`
-(Tauri + Android) and `Release Build (Qt)` workflows.
+(Tauri, Android APK, and Play Store `.aab`) and `Release Build (Qt)` workflows.
 
 ---
 

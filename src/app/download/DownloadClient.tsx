@@ -108,7 +108,7 @@ export default function DownloadClient({ release }: { release: ReleaseInfo }) {
     windows: gt("Windows 10 or newer, 64-bit"),
     mac: gt("macOS 12 or newer, Apple silicon"),
     linux: gt("64-bit, most distributions"),
-    android: gt("Android 6.0 or newer"),
+    android: gt("Android 7.0 or newer"),
   };
 
   const primaryPlatform: Platform | null =

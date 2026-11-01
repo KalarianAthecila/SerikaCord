@@ -56,7 +56,7 @@ export async function AppsSection() {
           <PlatformTile href="/download" icon={<WindowsMark className="h-5 w-5" />} name="Windows" note={gt("Windows 10 or newer")} />
           <PlatformTile href="/download" icon={<AppleMark className="h-5 w-5" />} name="macOS" note={gt("Apple silicon Macs")} />
           <PlatformTile href="/download" icon={<LinuxMark className="h-5 w-5" />} name="Linux" note={gt("Most 64-bit distributions")} />
-          <PlatformTile href="/download" icon={<AndroidMark className="h-5 w-5" />} name="Android" note={gt("Android 6.0 or newer")} />
+          <PlatformTile href="/download" icon={<AndroidMark className="h-5 w-5" />} name="Android" note={gt("Android 7.0 or newer")} />
           <PlatformTile href="/channels/me" icon={<Globe className="h-5 w-5" />} name={gt("Web")} note={gt("Any modern browser, nothing to install")} />
           <PlatformTile
             href="/download"

@@ -10,6 +10,9 @@
 
 ### Changes
 
+- **A Play Store package ships with each release** — Android releases include a signed app bundle next to the APK. That bundle is what Google Play accepts.
+- **The Play app needs Android 7** — Google Play automatic protection requires Android 7.0 or newer, so the Android app no longer installs on Android 6.
+
 ### Bug Fixes
 
 - **Names keep their room on phones** — the channel, thread or DM name stays readable, and the back and call buttons stay clear. Search, pins, notifications and the other header buttons move into a More menu whenever the header is narrow, including a phone on its side. A DM keeps the call button on the bar.

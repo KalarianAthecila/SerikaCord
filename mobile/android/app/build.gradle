@@ -7,7 +7,7 @@ android {
         applicationId "dev.serika.serikacord"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 52
+        versionCode 53
         versionName "2.5.1"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         aaptOptions {
@@ -38,6 +38,13 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
             signingConfig signingConfigs.release
+        }
+    }
+    // Play rejects bundles whose native libraries are zip-aligned to 4 KB.
+    // Uncompressed JNI in the AAB is 16 KB aligned (AGP 8.5+).
+    packaging {
+        jniLibs {
+            useLegacyPackaging = false
         }
     }
 }
