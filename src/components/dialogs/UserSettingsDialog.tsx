@@ -870,6 +870,8 @@ export function UserSettingsDialog({ open, onOpenChange, initialTab }: UserSetti
         setProfileCardBorderColor(user.customization?.profileCardBorderColor || "");
         setProfileCardBorderGlow(user.customization?.profileCardBorderGlow ?? false);
         setProfileCardBorderWidth(user.customization?.profileCardBorderWidth ?? 1);
+        const savedPlate = user.customization?.nameplate;
+        setNameplate(savedPlate ? { ...savedPlate, gradient: savedPlate.gradient ? [...savedPlate.gradient] : savedPlate.gradient } : { type: "none" });
       }
     } else {
       serverProfile.discard();

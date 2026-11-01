@@ -22,6 +22,7 @@
 - **The inbox dot stays on the icon** — the blue unread mark sits on the inbox icon instead of floating off to the side and shifting the icon (CORD-87).
 - **More room for channels on a phone** — Server Guide, Events, Channels & Roles and Members scroll with the channel list, so a short screen is not stuck with those rows pinned above it (CORD-88).
 - **Calls play through Firefox** — other people in a call are audible in Firefox, and the microphone list fills in after you join instead of staying on Default (CORD-89).
+- **Reset undoes a nameplate change** — the unsaved-changes Reset button puts the nameplate back with the rest of the profile (CORD-90).
 
 ### Performance
 
