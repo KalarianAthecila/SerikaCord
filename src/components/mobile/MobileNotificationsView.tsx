@@ -15,7 +15,7 @@ export function MobileNotificationsView() {
   const gt = useGT();
 
   return (
-    <div className="flex h-full flex-col bg-[var(--bg-app)]">
+    <div data-touch-scope="" className="flex h-full flex-col bg-[var(--bg-app)]">
       <header className="safe-area-top flex-shrink-0 px-4 pb-2 pt-3">
         <div className="flex items-center justify-between">
           <h1 className="text-2xl font-bold text-[var(--text-primary)]">{gt("Notifications")}</h1>

@@ -420,7 +420,7 @@ export function MobileMessagesView({ onAddFriend }: MobileMessagesViewProps) {
   const regularMessages = filteredMessages.filter(m => !m.isPinned && !m.isFavorite);
 
   return (
-    <div className="flex flex-col h-full bg-[var(--bg-app)]">
+    <div data-touch-scope="" className="flex flex-col h-full bg-[var(--bg-app)]">
       {/* Header */}
       <div className="theme-solid flex flex-col px-5 bg-[var(--bg-app)] sticky top-0 z-10 pt-safe">
         <div className="flex items-center justify-between pt-4 pb-3">

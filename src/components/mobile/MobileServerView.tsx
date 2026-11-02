@@ -188,7 +188,7 @@ export function MobileServerView() {
   const banner = currentServer.banner ? cdnImage(currentServer.banner) : null;
 
   return (
-    <div className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-app)]">
+    <div data-touch-scope="" className="flex h-full min-w-0 flex-1 flex-col bg-[var(--bg-app)]">
       {/* Server header: optional banner, then the name (opens the server sheet) */}
       <div className="relative flex-shrink-0">
         {banner ? (

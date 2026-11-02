@@ -34,6 +34,13 @@ export function AppProviders({ children }: { children: ReactNode }) {
   useEffect(() => {
     preloadE2eeFor(pathname);
   }, [pathname]);
+  // iOS Safari / WKWebView only applies :active (tap feedback, see the
+  // coarse-pointer rules in globals.css) when a touchstart listener exists.
+  useEffect(() => {
+    const noop = () => {};
+    document.addEventListener("touchstart", noop, { passive: true });
+    return () => document.removeEventListener("touchstart", noop);
+  }, []);
   // One tooltip delay group for every page (the first tooltip waits a beat,
   // neighbours then open instantly), plus the global native-`title` upgrade.
   return (

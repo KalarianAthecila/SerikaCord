@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { exceedsLongPressSlop, LONG_PRESS_MS } from "@/lib/mobile/channelGroups";
+import { hapticTick } from "@/lib/native/haptics";
 
 /**
  * Touch long-press for list rows on phones (server icons, channels, DMs).
@@ -39,6 +40,7 @@ export function useLongPress<T>(onLongPress: (item: T) => void) {
       timer.current = window.setTimeout(() => {
         timer.current = null;
         fired.current = true;
+        hapticTick();
         callback.current(item);
       }, LONG_PRESS_MS);
     },

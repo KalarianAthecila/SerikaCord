@@ -32,6 +32,8 @@
 - **Buttons follow your accent colour** — Message, Edit Profile, Join Voice, create and invite actions, and the other filled buttons use the accent you picked instead of staying purple.
 - **Profiles read on light colours** — a profile with light colours (or a gradient from light to dark) shows dark, readable text for the name, roles, dates, notes and buttons, with a soft backing behind the text where a gradient needs it. Dark profiles look the same as before. Applies to the profile popout, full profile, DM profile panel, your own profile on phones and the profile previews in settings.
 - Do Not Disturb really silences notifications: with your status set to Do Not Disturb, messages no longer pop desktop or browser notifications, play sounds or show toasts, and your phone gets no message pushes. Incoming calls still show up, silently on desktop, and still ring on your phone.
+- **Phones feel more responsive** — buttons and rows dim the moment you tap them, channel rows and header buttons are finger-sized, the code block Copy button and the GIF favourite star show on touch screens instead of only on hover, text fields never zoom the page on iPhone or iPad, and long-pressing a message or a channel and swiping to reply give a light tap of haptic feedback in the app.
+- **Easier-to-read secondary text** — timestamps, previews, category names and other faint text are a little stronger, so they read on the light theme (they were too pale there) and pass contrast checks on the dark theme.
 
 ### Performance
 

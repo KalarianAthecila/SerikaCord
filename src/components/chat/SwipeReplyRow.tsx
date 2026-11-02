@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Reply } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { hapticTick } from "@/lib/native/haptics";
 import { gestureAxis, GESTURE_IGNORE_SELECTOR, GESTURE_SETTLE_CLASS, GESTURE_SLOP, resistedDrag, type GestureAxis } from "@/lib/mobile/gestures";
 
 /** Drag distance (px) past which releasing triggers a reply. */
@@ -39,6 +40,8 @@ export function SwipeReplyRow({
   const replying = useRef(false);
   const pressTimer = useRef<number | null>(null);
   const suppressClick = useRef(false);
+  // Past the reply threshold: one haptic tick when it arms (native apps).
+  const armed = useRef(false);
 
   const clearPress = useCallback(() => {
     if (pressTimer.current !== null) {
@@ -53,6 +56,7 @@ export function SwipeReplyRow({
     start.current = null;
     axis.current = null;
     replying.current = false;
+    armed.current = false;
     setDragging(false);
     setOffset(0);
   };
@@ -71,6 +75,7 @@ export function SwipeReplyRow({
         pressTimer.current = null;
         suppressClick.current = true;
         start.current = null;
+        hapticTick();
         onLongPress(clientX, clientY);
       }, LONG_PRESS_MS);
     }
@@ -97,6 +102,9 @@ export function SwipeReplyRow({
     suppressClick.current = true;
     setDragging(true);
     setOffset(-resistedDrag(-dx * 0.75, SWIPE_REPLY_THRESHOLD, 28));
+    const nowArmed = -dx * 0.75 >= SWIPE_REPLY_THRESHOLD;
+    if (nowArmed && !armed.current) hapticTick();
+    armed.current = nowArmed;
   };
 
   const onTouchEnd = (e: React.TouchEvent) => {
