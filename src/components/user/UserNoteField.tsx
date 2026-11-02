@@ -27,7 +27,7 @@ export function UserNoteField({ userId, className }: { userId: string; className
         placeholder={gt("Click to add a note")}
         className={cn(
           "w-full resize-none rounded-md bg-transparent px-1.5 py-1 text-xs text-[var(--text-primary)] placeholder:text-[var(--text-muted)]",
-          "outline-none border border-transparent focus:border-[var(--border-subtle)] focus:bg-[var(--bg-app)] [field-sizing:content] max-h-32"
+          "outline-none border border-transparent focus:border-[var(--border-subtle)] focus:bg-[var(--profile-input-bg,var(--bg-app))] [field-sizing:content] max-h-32"
         )}
       />
     </div>

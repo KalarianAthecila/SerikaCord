@@ -32,6 +32,7 @@ import { cn, cdnImage } from "@/lib/utils";
 import { BadgeList, type BadgeId as UIBadgeId } from "@/components/ui/badges";
 import { MarkdownRenderer } from "@/components/chat/MarkdownRenderer";
 import { getProfileBannerStyle, getProfileBackgroundStyle } from "@/lib/userDisplayNameStyle";
+import { computeProfilePalette } from "@/lib/profiles/profileContrast";
 import { useGT } from "gt-next";
 import { statusLabelInvisible } from "@/lib/statusLabels";
 import { toServerStatus } from "@/lib/presenceChoice";
@@ -142,6 +143,8 @@ export function UserProfilePopup({ children }: UserProfilePopupProps) {
 
   const cardBgStyle = getProfileBackgroundStyle(user.customization, { opaque: true });
   const hasCardBg = Object.keys(cardBgStyle).length > 0;
+  // The action rows sit straight on the card colours: give them text that reads there.
+  const actionVars = hasCardBg ? computeProfilePalette(user.customization).vars : undefined;
 
   const renderProfileCard = () => (
     <>
@@ -266,7 +269,7 @@ export function UserProfilePopup({ children }: UserProfilePopupProps) {
           </div>
 
           {/* Actions */}
-          <div className="mt-2 space-y-0.5">
+          <div className="mt-2 space-y-0.5" style={actionVars}>
             {/* Edit Profiles */}
             <button
               onClick={handleEditProfile}

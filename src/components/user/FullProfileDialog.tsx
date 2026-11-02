@@ -38,6 +38,7 @@ import { overlaySelfProfile, readEditorOpen, resolveSelfTag, writeEditorOpen } f
 import { StatusBadge, StatusIcon } from "@/components/user/StatusBadge";
 import { useServerProfileDraft, useServerProfileIndex } from "@/components/user/profileEditor/useServerProfileDraft";
 import { overriddenFields, withServerProfile, type MemberProfileOverrides } from "@/lib/profiles/memberProfile";
+import { computeProfilePalette, profileNameContrastStyle, readableRoleColor } from "@/lib/profiles/profileContrast";
 import { emitMemberProfileChanged, onMemberProfileChanged } from "@/lib/profiles/memberProfileEvents";
 
 // Own-profile editing: the side panel and the full status dialog are their
@@ -177,6 +178,8 @@ export function FullProfileDialog({
     // A nickname handed in by the caller belongs to the server it came from.
     return withServerProfile({ ...base, nickname: shownOverrides || editingServer ? null : base.nickname }, shownOverrides);
   }, [isSelf, currentUser, fullUser, servers, shownServerId, shownOverrides, editorOpen, editingServer]);
+  // Text colours that read on this profile's own card colours (see profileContrast.ts).
+  const palette = useMemo(() => computeProfilePalette(view.customization), [view.customization]);
 
   // Load the member's server profile (and again when it changes elsewhere).
   const callerHasProfile = user.serverProfile !== undefined && user.serverProfile !== null;
@@ -434,6 +437,8 @@ export function FullProfileDialog({
       <DialogContent
         className={cn(
           "p-0 gap-0 bg-[#0c0c10] border-white/[0.06] overflow-hidden sw-scrollbars",
+          // The close button sits on the tab pane: use the card's own text colours.
+          "[&>[data-slot=dialog-close]]:text-[var(--profile-muted)] [&>[data-slot=dialog-close]]:hover:text-[var(--profile-fg)] [&>[data-slot=dialog-close]]:hover:bg-[var(--profile-hover)]",
           // Own profile on desktop: the edit tab sits outside the card's left
           // edge, so the card itself can't clip; the inner layout clips instead.
           isSelf && "md:overflow-visible",
@@ -447,7 +452,9 @@ export function FullProfileDialog({
           isSelf && "md:transition-[width,max-width] md:duration-200 md:ease-out motion-reduce:transition-none",
           isSelf && editorOpen && "md:!w-[min(1280px,96vw)] md:!max-w-[1280px]"
         )}
-        style={getProfileBackgroundStyle(view.customization, { opaque: true })}
+        // Only the --profile-* tokens here (not the global text overrides), so
+        // the editor panel keeps the app's own colours.
+        style={{ ...getProfileBackgroundStyle(view.customization, { opaque: true }), ...palette.tokens }}
         // Phones: drag the sheet down (handle, or the profile scrolled to the
         // top) to close; the X is screen-reader only there.
         dragToDismiss
@@ -517,7 +524,7 @@ export function FullProfileDialog({
             </aside>
           )}
           {/* Left panel — profile summary (transparent; the sheet root carries the theme) */}
-          <div className="w-full md:w-[360px] shrink-0 md:overflow-y-auto scrollbar-thin">
+          <div className="w-full md:w-[360px] shrink-0 md:overflow-y-auto scrollbar-thin bg-[var(--profile-scrim)]" style={palette.vars}>
             {/* Banner */}
             <div className="relative h-[140px]">
               {view.banner ? (
@@ -529,7 +536,7 @@ export function FullProfileDialog({
               ) : (
                 <div className="absolute inset-0 bg-[var(--app-accent)]" />
               )}
-              <div className="absolute inset-0 bg-gradient-to-t from-[#0c0c10]/70 via-transparent to-transparent" />
+              <div className="absolute inset-0 bg-gradient-to-t from-[var(--profile-banner-fade)] via-transparent to-transparent" />
 
               {isSelf && (
                 <button
@@ -562,7 +569,7 @@ export function FullProfileDialog({
               {/* Avatar */}
               <div className="absolute -top-11 left-4 z-20">
                 <div className="relative">
-                  <Avatar className="w-[88px] h-[88px] border-[5px] border-[#0c0c10] shadow-lg">
+                  <Avatar className="w-[88px] h-[88px] border-[5px] border-[var(--profile-ring)] shadow-lg">
                     <AvatarImage src={cdnImage(view.avatar || undefined)} />
                     <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-3xl">
                       {displayName.charAt(0).toUpperCase()}
@@ -579,7 +586,7 @@ export function FullProfileDialog({
                       <span className="px-2 text-center">{gt("Change Avatar")}</span>
                     </button>
                   )}
-                  <StatusBadge status={status} size={16} ring={4} ringColor="#0c0c10" className="absolute bottom-1 right-1 z-20" />
+                  <StatusBadge status={status} size={16} ring={4} ringColor="var(--profile-ring)" className="absolute bottom-1 right-1 z-20" />
                   {/* Custom status: a thought bubble rising from the avatar */}
                   {(isSelf || hasCustomStatus(view.customStatus, view.customization)) && (
                     <div className="absolute left-[86px] top-0 z-30 w-max max-w-[244px] max-md:max-w-[min(320px,calc(100vw-130px))]">
@@ -637,7 +644,7 @@ export function FullProfileDialog({
                       type="button"
                       onClick={() => pickMedia("avatar")}
                       aria-label={gt("Change Avatar")}
-                      className="hidden pointer-coarse:flex absolute top-0 right-0 z-20 size-7 items-center justify-center rounded-full border-2 border-[#0c0c10] bg-black/70 text-white"
+                      className="hidden pointer-coarse:flex absolute top-0 right-0 z-20 size-7 items-center justify-center rounded-full border-2 border-[var(--profile-ring)] bg-black/70 text-white"
                     >
                       <Camera className="w-3.5 h-3.5" />
                     </button>
@@ -660,7 +667,7 @@ export function FullProfileDialog({
                       friendRequestSent ? (
                         <button
                           disabled
-                          className="flex items-center gap-1.5 px-3 py-2 max-sm:min-h-11 rounded-lg bg-white/[0.06] text-[#9a9aad] text-sm font-medium cursor-not-allowed"
+                          className="flex items-center gap-1.5 px-3 py-2 max-sm:min-h-11 rounded-lg bg-[var(--profile-button-bg)] text-[var(--profile-muted)] text-sm font-medium cursor-not-allowed"
                         >
                           <Clock className="w-4 h-4" />
                           {gt("Pending")}
@@ -670,7 +677,7 @@ export function FullProfileDialog({
                           onClick={handleAddFriend}
                           aria-label={gt("Add friend")}
                           title={gt("Add Friend")}
-                          className="p-2 max-sm:size-11 max-sm:flex max-sm:items-center max-sm:justify-center rounded-lg bg-white/[0.06] hover:bg-white/[0.12] active:scale-[0.97] text-white transition-all"
+                          className="p-2 max-sm:size-11 max-sm:flex max-sm:items-center max-sm:justify-center rounded-lg bg-[var(--profile-button-bg)] hover:bg-[var(--profile-button-hover)] active:scale-[0.97] text-[var(--profile-fg)] transition-all"
                         >
                           <UserPlus className="w-4 h-4" />
                         </button>
@@ -694,16 +701,16 @@ export function FullProfileDialog({
                       inputClassName="text-lg font-bold"
                     >
                       <h3
-                        className={cn("text-xl font-bold text-white leading-tight truncate pr-7", getDisplayNameStyleClasses(view.customization?.displayNameStyle))}
-                        style={getDisplayNameStyleInline(view.customization?.displayNameStyle)}
+                        className={cn("text-xl font-bold text-[var(--profile-fg)] leading-tight truncate pr-7", getDisplayNameStyleClasses(view.customization?.displayNameStyle))}
+                        style={{ ...getDisplayNameStyleInline(view.customization?.displayNameStyle), ...profileNameContrastStyle(view.customization?.displayNameStyle, palette) }}
                       >
                         {displayName}
                       </h3>
                     </InlineEditable>
                   ) : (
                     <h3
-                      className={cn("text-xl font-bold text-white leading-tight truncate", getDisplayNameStyleClasses(view.customization?.displayNameStyle))}
-                      style={getDisplayNameStyleInline(view.customization?.displayNameStyle)}
+                      className={cn("text-xl font-bold text-[var(--profile-fg)] leading-tight truncate", getDisplayNameStyleClasses(view.customization?.displayNameStyle))}
+                      style={{ ...getDisplayNameStyleInline(view.customization?.displayNameStyle), ...profileNameContrastStyle(view.customization?.displayNameStyle, palette) }}
                     >
                       {displayName}
                     </h3>
@@ -716,7 +723,7 @@ export function FullProfileDialog({
                 </div>
                 <button
                   onClick={handleCopyUsername}
-                  className="group flex items-center gap-1.5 text-sm text-[#9a9aad] hover:text-white transition-colors"
+                  className="group flex items-center gap-1.5 text-sm text-[var(--profile-muted)] hover:text-[var(--profile-fg)] transition-colors"
                   title={gt("Copy username")}
                 >
                   @{view.username}
@@ -736,25 +743,25 @@ export function FullProfileDialog({
                     className="mt-0.5 w-fit max-w-full"
                     inputClassName="text-xs"
                   >
-                    <div className={cn("text-xs pr-7 min-h-6 flex items-center", view.pronouns ? "text-[#9a9aad]" : "text-white/35 italic")}>
+                    <div className={cn("text-xs pr-7 min-h-6 flex items-center", view.pronouns ? "text-[var(--profile-muted)]" : "text-[var(--profile-faint)] italic")}>
                       {view.pronouns || gt("Add pronouns")}
                     </div>
                   </InlineEditable>
                 ) : view.pronouns && (
-                  <div className="text-xs text-[#9a9aad] mt-0.5">{view.pronouns}</div>
+                  <div className="text-xs text-[var(--profile-muted)] mt-0.5">{view.pronouns}</div>
                 )}
                 <div className="flex items-center gap-1.5 mt-1.5">
                   <StatusIcon status={status} size={10} />
-                  <span className="text-xs text-[#9a9aad]">{statusLabel(status, gt)}</span>
+                  <span className="text-xs text-[var(--profile-muted)]">{statusLabel(status, gt)}</span>
                 </div>
                 {view.showTimezone && view.timezone && localTime && (
                   <div className="flex items-center gap-1.5 mt-1.5">
-                    <Clock className="w-3.5 h-3.5 text-[#9a9aad] shrink-0" />
-                    <span className="text-xs text-[#9a9aad]">
+                    <Clock className="w-3.5 h-3.5 text-[var(--profile-muted)] shrink-0" />
+                    <span className="text-xs text-[var(--profile-muted)]">
                       {localTime}
                     </span>
-                    <span className="text-[#4e5058] text-xs">&bull;</span>
-                    <span className="text-xs text-[#9a9aad]">{view.timezone}</span>
+                    <span className="text-[var(--profile-faint)] text-xs">&bull;</span>
+                    <span className="text-xs text-[var(--profile-muted)]">{view.timezone}</span>
                   </div>
                 )}
               </div>
@@ -768,8 +775,8 @@ export function FullProfileDialog({
 
               {/* About Me */}
               {isSelf ? (
-                <div className="mt-4 rounded-lg bg-white/[0.03] border border-white/[0.05] p-3">
-                  <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-1">{gt("About Me")}</h4>
+                <div className="mt-4 rounded-lg bg-[var(--profile-section-bg)] border border-[var(--profile-section-border)] p-3">
+                  <h4 className="text-[11px] font-bold text-[var(--profile-muted)] uppercase tracking-wide mb-1">{gt("About Me")}</h4>
                   <InlineEditable
                     field="bio"
                     value={view.bio || ""}
@@ -778,16 +785,16 @@ export function FullProfileDialog({
                     placeholder={gt("Tell everyone a little about yourself")}
                   >
                     {view.bio ? (
-                      <div className="text-sm text-[#e2e2ee] whitespace-pre-wrap break-words pr-7"><MarkdownRenderer content={view.bio} /></div>
+                      <div className="text-sm text-[var(--profile-text)] whitespace-pre-wrap break-words pr-7"><MarkdownRenderer content={view.bio} /></div>
                     ) : (
-                      <div className="text-sm text-white/35 italic pr-7 py-0.5">{gt("Double-click to write something about yourself")}</div>
+                      <div className="text-sm text-[var(--profile-faint)] italic pr-7 py-0.5">{gt("Double-click to write something about yourself")}</div>
                     )}
                   </InlineEditable>
                 </div>
               ) : view.bio && (
-                <div className="mt-4 rounded-lg bg-white/[0.03] border border-white/[0.05] p-3">
-                  <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-1">{gt("About Me")}</h4>
-                  <div className="text-sm text-[#e2e2ee] whitespace-pre-wrap break-words"><MarkdownRenderer content={view.bio} /></div>
+                <div className="mt-4 rounded-lg bg-[var(--profile-section-bg)] border border-[var(--profile-section-border)] p-3">
+                  <h4 className="text-[11px] font-bold text-[var(--profile-muted)] uppercase tracking-wide mb-1">{gt("About Me")}</h4>
+                  <div className="text-sm text-[var(--profile-text)] whitespace-pre-wrap break-words"><MarkdownRenderer content={view.bio} /></div>
                 </div>
               )}
 
@@ -799,15 +806,15 @@ export function FullProfileDialog({
               {/* Roles */}
               {memberRoles.length > 0 && (
                 <div className="mt-3">
-                  <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-1.5">{gt("Roles")}</h4>
+                  <h4 className="text-[11px] font-bold text-[var(--profile-muted)] uppercase tracking-wide mb-1.5">{gt("Roles")}</h4>
                   <div className="flex flex-wrap gap-1">
                     {memberRoles.map((role) => (
                       <span
                         key={role.id}
-                        className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-white/[0.06]"
+                        className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-[var(--profile-border)]"
                         style={{
-                          backgroundColor: role.color ? `${role.color}1a` : "rgba(255,255,255,0.04)",
-                          color: role.color || "#b8b8c8",
+                          backgroundColor: role.color ? `${role.color}1a` : "var(--profile-chip-bg)",
+                          color: readableRoleColor(role.color, palette),
                         }}
                       >
                         <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: role.color || "#888888" }} />
@@ -820,7 +827,7 @@ export function FullProfileDialog({
 
               {/* Dates */}
               {(view.joinedAt || view.createdAt) && (
-                <div className="mt-4 flex items-center gap-4 text-sm text-[#9a9aad]">
+                <div className="mt-4 flex items-center gap-4 text-sm text-[var(--profile-muted)]">
                   <CalendarDays className="w-4 h-4 shrink-0" />
                   <div className="flex flex-wrap gap-x-4 gap-y-0.5">
                     {view.createdAt && (
@@ -842,11 +849,11 @@ export function FullProfileDialog({
           </div>
 
           {/* Right panel — tabs */}
-          <div className="flex-1 flex flex-col min-w-0 md:min-h-0 bg-transparent md:bg-[#111114]">
+          <div className="flex-1 flex flex-col min-w-0 md:min-h-0 bg-[var(--profile-scrim)] md:bg-[var(--profile-pane-bg)]" style={palette.vars}>
             {/* Tab bar */}
             {/* pr-12 reserves room for the dialog's absolute top-right close
                 button so the last tab never collides with it. */}
-            <div className="flex items-center gap-1 pl-4 pr-12 max-md:pr-4 pt-4 pb-0 border-b border-white/[0.06] shrink-0 overflow-x-auto scrollbar-hide">
+            <div className="flex items-center gap-1 pl-4 pr-12 max-md:pr-4 pt-4 pb-0 border-b border-[var(--profile-border)] shrink-0 overflow-x-auto scrollbar-hide">
               {tabs.map((tab) => (
                 <button
                   key={tab.id}
@@ -854,8 +861,8 @@ export function FullProfileDialog({
                   className={cn(
                     "px-4 py-2.5 max-sm:py-3 text-sm font-medium transition-colors relative whitespace-nowrap shrink-0",
                     activeTab === tab.id
-                      ? "text-white"
-                      : "text-[#9a9aad] hover:text-[#c8c8d8]"
+                      ? "text-[var(--profile-fg)]"
+                      : "text-[var(--profile-muted)] hover:text-[var(--profile-text)]"
                   )}
                 >
                   {tab.label}
@@ -916,7 +923,7 @@ export function FullProfileDialog({
                               <GameActivityCard key={`${game.type}-${game.name}`} game={game} />
                             ))}
                             {!moeActivity && !userActivity?.music && (!userActivity?.activities || userActivity.activities.length === 0) && (
-                              <div className="flex flex-col items-center justify-center text-center text-[#9a9aad] py-10 rounded-[10px] bg-white/[0.02] border border-[var(--sw-hairline)]">
+                              <div className="flex flex-col items-center justify-center text-center text-[var(--profile-muted)] py-10 rounded-[10px] bg-[var(--profile-section-bg)] border border-[var(--sw-hairline)]">
                                 <p className="text-sm">{gt("No recent activity to show.")}</p>
                               </div>
                             )}
@@ -940,12 +947,12 @@ export function FullProfileDialog({
                   {/* Persistent recent-activity history */}
                   {activityHistory.length > 0 && (
                     <div>
-                      <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-2">{gt("Recently Played")}</h4>
+                      <h4 className="text-[11px] font-bold text-[var(--profile-muted)] uppercase tracking-wide mb-2">{gt("Recently Played")}</h4>
                       <div className="space-y-1.5">
                         {activityHistory.map((entry) => (
                           <div
                             key={`${entry.type}-${entry.name}`}
-                            className="flex items-center gap-3 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/[0.05]"
+                            className="flex items-center gap-3 px-3 py-2 rounded-lg bg-[var(--profile-section-bg)] border border-[var(--profile-section-border)]"
                           >
                             {entry.imageUrl ? (
                               // eslint-disable-next-line @next/next/no-img-element
@@ -956,8 +963,8 @@ export function FullProfileDialog({
                               </div>
                             )}
                             <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-white truncate">{entry.name}</p>
-                              <p className="text-xs text-[#9a9aad] truncate">
+                              <p className="text-sm font-medium text-[var(--profile-fg)] truncate">{entry.name}</p>
+                              <p className="text-xs text-[var(--profile-muted)] truncate">
                                 {formatPlaytime(entry.durationSeconds)} · {formatRelative(entry.lastSeenAt)}
                               </p>
                             </div>
@@ -968,7 +975,7 @@ export function FullProfileDialog({
                   )}
 
                   {!moeActivity && !userActivity?.music && (!userActivity?.activities || userActivity.activities.length === 0) && activityHistory.length === 0 && (
-                    <div className="flex flex-col items-center justify-center h-full text-center text-[#9a9aad] py-20">
+                    <div className="flex flex-col items-center justify-center h-full text-center text-[var(--profile-muted)] py-20">
                       <p className="text-sm">{gt("No activity to show.")}</p>
                     </div>
                   )}
@@ -979,7 +986,7 @@ export function FullProfileDialog({
                 <div className="space-y-1">
                   {mutualFriends.length > 0 ? (
                     mutualFriends.map((f: any) => (
-                      <div key={f.id || f._id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.04] transition-colors">
+                      <div key={f.id || f._id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[var(--profile-hover)] transition-colors">
                         <Avatar className="w-8 h-8">
                           <AvatarImage src={cdnImage(f.avatar || undefined)} />
                           <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-sm">
@@ -987,13 +994,13 @@ export function FullProfileDialog({
                           </AvatarFallback>
                         </Avatar>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-white truncate">{f.displayName || f.username}</p>
-                          <p className="text-xs text-[#9a9aad] truncate">@{f.username}</p>
+                          <p className="text-sm font-medium text-[var(--profile-fg)] truncate">{f.displayName || f.username}</p>
+                          <p className="text-xs text-[var(--profile-muted)] truncate">@{f.username}</p>
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-center text-[#9a9aad] py-20">
+                    <div className="flex flex-col items-center justify-center h-full text-center text-[var(--profile-muted)] py-20">
                       <p className="text-sm">{gt("No mutual friends.")}</p>
                     </div>
                   )}
@@ -1004,7 +1011,7 @@ export function FullProfileDialog({
                 <div className="space-y-1">
                   {mutualServers.length > 0 ? (
                     mutualServers.map((s: any) => (
-                      <div key={s.id || s._id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-white/[0.04] transition-colors">
+                      <div key={s.id || s._id} className="flex items-center gap-3 p-2 rounded-lg hover:bg-[var(--profile-hover)] transition-colors">
                         {s.icon ? (
                           // eslint-disable-next-line @next/next/no-img-element
                           <img src={cdnImage(s.icon)} alt={s.name} className="w-8 h-8 rounded-full object-cover" />
@@ -1014,13 +1021,13 @@ export function FullProfileDialog({
                           </div>
                         )}
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-white truncate">{s.name}</p>
-                          {s.memberCount && <p className="text-xs text-[#9a9aad]">{s.memberCount} {gt("members")}</p>}
+                          <p className="text-sm font-medium text-[var(--profile-fg)] truncate">{s.name}</p>
+                          {s.memberCount && <p className="text-xs text-[var(--profile-muted)]">{s.memberCount} {gt("members")}</p>}
                         </div>
                       </div>
                     ))
                   ) : (
-                    <div className="flex flex-col items-center justify-center h-full text-center text-[#9a9aad] py-20">
+                    <div className="flex flex-col items-center justify-center h-full text-center text-[var(--profile-muted)] py-20">
                       <p className="text-sm">{gt("No mutual servers.")}</p>
                     </div>
                   )}

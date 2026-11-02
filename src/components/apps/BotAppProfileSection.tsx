@@ -46,15 +46,15 @@ export function BotAppProfileSection({ botUserId }: { botUserId: string }) {
   const btn = "inline-flex h-9 min-w-0 items-center justify-center gap-1.5 rounded-lg px-3 text-[13px] font-semibold transition-colors";
 
   return (
-    <div className="mt-4 overflow-hidden rounded-xl border border-white/[0.06] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--app-accent)_12%,transparent),transparent_70%)] p-3">
+    <div className="mt-4 overflow-hidden rounded-xl border border-[var(--profile-border,rgba(255,255,255,0.06))] bg-[linear-gradient(135deg,color-mix(in_srgb,var(--app-accent)_12%,transparent),transparent_70%)] p-3">
       {showStatus && (
         <div className="flex items-center gap-2.5">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[color-mix(in_srgb,var(--app-accent)_18%,transparent)] text-[var(--app-accent)]">
             {app.official ? <ShieldCheck className="size-[18px]" aria-hidden /> : <BadgeCheck className="size-[18px]" aria-hidden />}
           </div>
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-[#ededf5]">{app.official ? gt("Official app") : gt("Verified app")}</p>
-            <p className="truncate text-xs text-[#9a9aad]">
+            <p className="truncate text-sm font-semibold text-[var(--profile-fg,#ededf5)]">{app.official ? gt("Official app") : gt("Verified app")}</p>
+            <p className="truncate text-xs text-[var(--profile-muted,#9a9aad)]">
               {app.official ? gt("Made by SerikaCord") : gt("Reviewed and verified by the SerikaCord team")}
             </p>
           </div>
@@ -76,7 +76,7 @@ export function BotAppProfileSection({ botUserId }: { botUserId: string }) {
               href={pageHref}
               target="_blank"
               rel="noopener noreferrer"
-              className={`${btn} bg-white/[0.07] text-white hover:bg-white/[0.12]`}
+              className={`${btn} bg-[var(--profile-button-bg,rgba(255,255,255,0.07))] text-[var(--profile-fg,#fff)] hover:bg-[var(--profile-button-hover,rgba(255,255,255,0.12))]`}
             >
               <BookOpen className="size-4 shrink-0" aria-hidden />
               <span className="truncate">{gt("Bot page")}</span>

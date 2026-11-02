@@ -29,6 +29,7 @@
 - **Calls play through Firefox** — other people in a call are audible in Firefox, and the microphone list fills in after you join instead of staying on Default (CORD-89).
 - **Reset undoes a nameplate change** — the unsaved-changes Reset button puts the nameplate back with the rest of the profile (CORD-90).
 - **Buttons follow your accent colour** — Message, Edit Profile, Join Voice, create and invite actions, and the other filled buttons use the accent you picked instead of staying purple.
+- **Profiles read on light colours** — a profile with light colours (or a gradient from light to dark) shows dark, readable text for the name, roles, dates, notes and buttons, with a soft backing behind the text where a gradient needs it. Dark profiles look the same as before. Applies to the profile popout, full profile, DM profile panel, your own profile on phones and the profile previews in settings.
 
 ### Performance
 

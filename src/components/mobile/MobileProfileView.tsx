@@ -44,6 +44,8 @@ import { useE2ee } from "@/hooks/useE2ee";
 import { useHidesPurchases } from "@/lib/native/storePolicy";
 import { statusLabelInvisible } from "@/lib/statusLabels";
 import { StatusBadge, StatusIcon } from "@/components/user/StatusBadge";
+import { useTheme } from "@/contexts/ThemeContext";
+import { computeProfilePalette, profileNameContrastStyle } from "@/lib/profiles/profileContrast";
 
 const MobileStatusSheet = dynamic(() => import("./MobileStatusSheet").then((m) => m.MobileStatusSheet), { ssr: false });
 const CustomStatusDialog = dynamic(() => import("@/components/user/CustomStatusDialog").then((m) => m.CustomStatusDialog), { ssr: false });
@@ -77,6 +79,12 @@ export function MobileProfileView() {
   const { resolve: resolveBadges } = useBadges();
   const badges = resolveBadges(user?.badges);
   const customization = user?.customization;
+  const { settings: themeSettings } = useTheme();
+  // The name block sits on the profile colours under the page's wash (about
+  // 40% app background there); pick text that reads on that mix.
+  const appBg = themeSettings.theme === "light" ? "#f4f7fc" : themeSettings.theme === "midnight" ? "#01040b" : "#05060a";
+  const identityPalette = computeProfilePalette(customization, { opaque: false, backdrop: appBg, overlay: { color: appBg, alpha: 0.4 } });
+  const identityVars = identityPalette.custom ? identityPalette.vars : undefined;
   const hasBannerStyle =
     Boolean(user?.banner) ||
     (Array.isArray(customization?.profileGradient) && customization!.profileGradient!.length >= 2) ||
@@ -175,10 +183,11 @@ export function MobileProfileView() {
                 />
               </div>
 
+              <div style={identityVars}>
               <div className="mt-3 flex min-w-0 items-start gap-2">
                 <h1
                   className={cn("min-w-0 [overflow-wrap:anywhere] text-3xl font-extrabold text-[var(--text-primary)] leading-tight", getDisplayNameStyleClasses(customization?.displayNameStyle))}
-                  style={getDisplayNameStyleInline(customization?.displayNameStyle)}
+                  style={{ ...getDisplayNameStyleInline(customization?.displayNameStyle), ...(identityVars ? profileNameContrastStyle(customization?.displayNameStyle, identityPalette) : {}) }}
                 >
                   {displayName}
                 </h1>
@@ -196,6 +205,7 @@ export function MobileProfileView() {
                   className="mt-2 max-w-full text-sm text-[var(--text-secondary)]"
                 />
               ) : null}
+              </div>
 
               {/* Online status pill (tap to change, like Discord's You tab) */}
               <button

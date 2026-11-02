@@ -1,7 +1,7 @@
 "use client";
 
 import { ServerTagPill } from "@/components/user/ServerTagPill";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
@@ -46,6 +46,7 @@ import { StatusBadge, StatusIcon } from "@/components/user/StatusBadge";
 import { isVerifiedBotUser } from "@/lib/appDirectory/official";
 import { BotAppProfileSection } from "@/components/apps/BotAppProfileSection";
 import type { MemberProfileOverrides } from "@/lib/profiles/memberProfile";
+import { computeProfilePalette, profileNameContrastStyle, readableRoleColor } from "@/lib/profiles/profileContrast";
 
 export interface ProfileCardUser {
   id: string;
@@ -346,12 +347,15 @@ export function ProfileCard({
   const shownBadges = user.isBot ? badges.filter((b) => b.id !== "official_app") : badges;
 
   const bgStyle = getProfileBackgroundStyle(user.customization, { opaque: true });
+  // Text and surface colours that read on this user's card colours (light
+  // themes get dark text); dark cards keep the classic tokens.
+  const palette = useMemo(() => computeProfilePalette(user.customization), [user.customization]);
   const isHolographic = user.customization?.profileCardEffect === 'holographic';
 
   return (
     <div
       className={cn(
-        "w-[min(340px,calc(100vw-1.5rem))] max-h-[100dvh] overflow-y-auto overflow-x-hidden border border-white/[0.06] shadow-2xl transition-all duration-300 bg-[#0c0c10]",
+        "w-[min(340px,calc(100vw-1.5rem))] max-h-[100dvh] overflow-y-auto overflow-x-hidden border border-[var(--profile-border)] shadow-2xl transition-all duration-300 bg-[#0c0c10]",
         // The fallback matches the collision padding (12px a side) so the very
         // first measurement, before Radix sets the variable, already fits.
         fitToViewport && "flex flex-col overscroll-contain scrollbar-thin max-h-[var(--radix-popover-content-available-height,calc(100dvh-24px))]",
@@ -359,7 +363,7 @@ export function ProfileCard({
         isHolographic && "holographic-animation",
         className
       )}
-      style={bgStyle}
+      style={{ ...bgStyle, ...palette.vars }}
     >
       {/* Banner — tall, Discord-profile style */}
       <div className="relative h-[120px] shrink-0">
@@ -376,7 +380,7 @@ export function ProfileCard({
         ) : (
           <div className="absolute inset-0 bg-[var(--app-accent)]" />
         )}
-        <div className="absolute inset-0 bg-gradient-to-t from-[#0c0c10]/70 via-transparent to-transparent" />
+        <div className="absolute inset-0 bg-gradient-to-t from-[var(--profile-banner-fade)] via-transparent to-transparent" />
 
         {/* Mod view button in the top right of the banner */}
         {!isSelf && !limited && user.id && serverId && isAdminOfServer && onOpenModView && (
@@ -391,17 +395,17 @@ export function ProfileCard({
         )}
       </div>
 
-      <div className="relative flex-1 flex flex-col min-h-0 px-4 pb-4">
+      <div className="relative flex-1 flex flex-col min-h-0 px-4 pb-4 bg-[var(--profile-scrim)]">
         {/* Avatar overlapping the banner */}
         <div className="absolute -top-11 left-4">
           <div className="relative">
-            <Avatar className="w-[88px] h-[88px] border-[5px] border-[#0c0c10] shadow-lg">
+            <Avatar className="w-[88px] h-[88px] border-[5px] border-[var(--profile-ring)] shadow-lg">
               <AvatarImage src={cdnImage(user.avatar || undefined)} />
               <AvatarFallback className="bg-[var(--app-accent)] text-[var(--text-on-accent)] text-3xl">
                 {displayName.charAt(0).toUpperCase()}
               </AvatarFallback>
             </Avatar>
-            <StatusBadge status={status} size={16} ring={4} ringColor="#0c0c10" className="absolute bottom-1 right-1" />
+            <StatusBadge status={status} size={16} ring={4} ringColor="var(--profile-ring)" className="absolute bottom-1 right-1" />
             {/* Custom status: a thought bubble rising from the avatar (as in FullProfileDialog) */}
             {hasCustomStatus(user.customStatus, user.customization) && (
               <>
@@ -434,7 +438,7 @@ export function ProfileCard({
                 friendRequestSent ? (
                   <button
                     disabled
-                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/[0.06] text-[#9a9aad] text-sm font-medium cursor-not-allowed"
+                    className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[var(--profile-button-bg)] text-[var(--profile-muted)] text-sm font-medium cursor-not-allowed"
                   >
                     <Clock className="w-4 h-4" />
                     {gt("Pending")}
@@ -444,7 +448,7 @@ export function ProfileCard({
                     onClick={handleAddFriend}
                     aria-label={gt("Add friend")}
                     title={gt("Add Friend")}
-                    className="p-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] active:scale-[0.97] text-white transition-all"
+                    className="p-2 rounded-lg bg-[var(--profile-button-bg)] hover:bg-[var(--profile-button-hover)] active:scale-[0.97] text-[var(--profile-fg)] transition-all"
                   >
                     <UserPlus className="w-4 h-4" />
                   </button>
@@ -458,8 +462,8 @@ export function ProfileCard({
         <div className="mt-4 shrink-0">
           <div className="flex items-center gap-2 flex-wrap">
             <h3
-              className={cn("text-xl font-bold text-white leading-tight truncate", getDisplayNameStyleClasses(user.customization?.displayNameStyle))}
-              style={getDisplayNameStyleInline(user.customization?.displayNameStyle)}
+              className={cn("text-xl font-bold text-[var(--profile-fg)] leading-tight truncate", getDisplayNameStyleClasses(user.customization?.displayNameStyle))}
+              style={{ ...getDisplayNameStyleInline(user.customization?.displayNameStyle), ...profileNameContrastStyle(user.customization?.displayNameStyle, palette) }}
             >
               {displayName}
             </h3>
@@ -469,7 +473,7 @@ export function ProfileCard({
                 "inline-flex items-center gap-0.5 px-1.5 py-0.5 text-[10px] font-bold rounded leading-none shrink-0 tracking-wide select-none uppercase",
                 isVerifiedBotUser(user)
                   ? "bg-[#5865F2] text-white"
-                  : "bg-[#4f545c]/30 text-[#b9bbbe] border border-white/[0.04]"
+                  : "bg-[var(--profile-chip-bg)] text-[var(--profile-muted)] border border-[var(--profile-border)]"
               )}>
                 {isVerifiedBotUser(user) && <Check className="w-3 h-3 shrink-0 stroke-[3px]" />}
                 {gt("Bot")}
@@ -478,7 +482,7 @@ export function ProfileCard({
           </div>
           <button
             onClick={handleCopyUsername}
-            className="group flex items-center gap-1.5 text-sm text-[#9a9aad] hover:text-white transition-colors"
+            className="group flex items-center gap-1.5 text-sm text-[var(--profile-muted)] hover:text-[var(--profile-fg)] transition-colors"
             title={gt("Copy username")}
           >
             @{user.username}
@@ -489,20 +493,20 @@ export function ProfileCard({
             )}
           </button>
           {user.pronouns && (
-            <div className="text-xs text-[#9a9aad] mt-0.5">{user.pronouns}</div>
+            <div className="text-xs text-[var(--profile-muted)] mt-0.5">{user.pronouns}</div>
           )}
           <div className="flex items-center gap-1.5 mt-1.5">
             <StatusIcon status={status} size={10} />
-            <span className="text-xs text-[#9a9aad]">{statusLabel(status, gt)}</span>
+            <span className="text-xs text-[var(--profile-muted)]">{statusLabel(status, gt)}</span>
           </div>
           {user.showTimezone && user.timezone && localTime && (
             <div className="flex items-center gap-1.5 mt-1.5">
-              <Clock className="w-3.5 h-3.5 text-[#9a9aad] shrink-0" />
-              <span className="text-xs text-[#9a9aad]">
+              <Clock className="w-3.5 h-3.5 text-[var(--profile-muted)] shrink-0" />
+              <span className="text-xs text-[var(--profile-muted)]">
                 {localTime}
               </span>
-              <span className="text-[#4e5058] text-xs">•</span>
-              <span className="text-xs text-[#9a9aad]">{user.timezone}</span>
+              <span className="text-[var(--profile-faint)] text-xs">•</span>
+              <span className="text-xs text-[var(--profile-muted)]">{user.timezone}</span>
             </div>
           )}
         </div>
@@ -542,7 +546,7 @@ export function ProfileCard({
         {/* Connections */}
         {!hideConnections && user.connections && user.connections.length > 0 && (
           <div className="mt-4">
-            <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-2">{gt("Connections")}</h4>
+            <h4 className="text-[11px] font-bold text-[var(--profile-muted)] uppercase tracking-wide mb-2">{gt("Connections")}</h4>
             <div className="space-y-1">
               {user.connections.map((conn) => {
                 const label = conn.displayName || conn.username || conn.accountId;
@@ -553,7 +557,7 @@ export function ProfileCard({
                     href={href}
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-white/[0.05] transition-colors group"
+                    className="flex items-center gap-2.5 px-2 py-1.5 rounded-lg hover:bg-[var(--profile-hover)] transition-colors group"
                   >
                     {conn.avatar ? (
                       // eslint-disable-next-line @next/next/no-img-element
@@ -561,9 +565,9 @@ export function ProfileCard({
                     ) : (
                       <ConnectionIcon provider={conn.provider} accountId={conn.accountId} size={20} className="shrink-0" />
                     )}
-                    <span className="text-sm text-[#c8c8d8] truncate flex-1">{label}</span>
+                    <span className="text-sm text-[var(--profile-text)] truncate flex-1">{label}</span>
                     {conn.verified && <BadgeCheck className="w-3.5 h-3.5 text-green-500 shrink-0" aria-label={gt("Verified domain")} />}
-                    <svg className="w-3 h-3 text-[#9a9aad] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
+                    <svg className="w-3 h-3 text-[var(--profile-muted)] shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" /></svg>
                   </a>
                 );
               })}
@@ -573,17 +577,17 @@ export function ProfileCard({
 
         {/* Details card */}
         {(user.bio || (memberRoles.length > 0 || canManageRoles) || user.joinedAt || user.createdAt) && (
-          <div className="mt-4 rounded-lg bg-white/[0.03] border border-white/[0.05] p-3 space-y-3">
+          <div className="mt-4 rounded-lg bg-[var(--profile-section-bg)] border border-[var(--profile-section-border)] p-3 space-y-3">
             {user.bio && (
               <div>
-                <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-1">{gt("About Me")}</h4>
-                <div className="text-sm text-[#e2e2ee] whitespace-pre-wrap break-words"><MarkdownRenderer content={user.bio} /></div>
+                <h4 className="text-[11px] font-bold text-[var(--profile-muted)] uppercase tracking-wide mb-1">{gt("About Me")}</h4>
+                <div className="text-sm text-[var(--profile-text)] whitespace-pre-wrap break-words"><MarkdownRenderer content={user.bio} /></div>
               </div>
             )}
 
             {(memberRoles.length > 0 || canManageRoles) && serverId && (
               <div>
-                <h4 className="text-[11px] font-bold text-[#9a9aad] uppercase tracking-wide mb-1.5">{gt("Roles")}</h4>
+                <h4 className="text-[11px] font-bold text-[var(--profile-muted)] uppercase tracking-wide mb-1.5">{gt("Roles")}</h4>
                 <div className="flex flex-wrap gap-1">
                   {memberRoles.map((role) => (
                     <span
@@ -594,12 +598,12 @@ export function ProfileCard({
                         setRoleCtx({ x: e.clientX, y: e.clientY, role });
                       }}
                       className={cn(
-                        "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-white/[0.06] cursor-context-menu",
+                        "flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-[var(--profile-border)] cursor-context-menu",
                         canManageRoles && !serverRoles.find((r) => r.id === role.id)?.isDefault && "group pr-1"
                       )}
                       style={{
-                        backgroundColor: role.color ? `${role.color}1a` : "rgba(255,255,255,0.04)",
-                        color: role.color || "#b8b8c8",
+                        backgroundColor: role.color ? `${role.color}1a` : "var(--profile-chip-bg)",
+                        color: readableRoleColor(role.color, palette),
                       }}
                     >
                       <span
@@ -627,7 +631,7 @@ export function ProfileCard({
                       <PopoverTrigger asChild>
                         <button
                           disabled={isUpdatingRoles}
-                          className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-white/[0.06] bg-white/[0.04] hover:bg-white/[0.10] text-white transition-colors"
+                          className="flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border border-[var(--profile-border)] bg-[var(--profile-chip-bg)] hover:bg-[var(--profile-button-hover)] text-[var(--profile-fg)] transition-colors"
                           title={gt("Add role")}
                         >
                           <Plus className="w-3.5 h-3.5" />
@@ -668,7 +672,7 @@ export function ProfileCard({
             )}
 
             {(user.joinedAt || user.createdAt) && (
-              <div className="flex items-center gap-4 text-sm text-[#9a9aad]">
+              <div className="flex items-center gap-4 text-sm text-[var(--profile-muted)]">
                 <CalendarDays className="w-4 h-4 shrink-0" />
                 <div className="flex flex-wrap gap-x-4 gap-y-0.5">
                   {user.createdAt && (
@@ -707,7 +711,7 @@ export function ProfileCard({
                   setFullProfileOpen(true);
                 }
               }}
-              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] active:scale-[0.97] text-sm font-medium text-white transition-all"
+              className="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-lg bg-[var(--profile-button-bg)] hover:bg-[var(--profile-button-hover)] active:scale-[0.97] text-sm font-medium text-[var(--profile-fg)] transition-all"
             >
               <ExternalLink className="w-4 h-4" />
               {gt("View Full Profile")}
