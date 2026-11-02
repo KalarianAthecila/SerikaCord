@@ -3,6 +3,7 @@ import {
   jumpTargetForChannel,
   messageLinkSnippet,
   messageLinksIn,
+  messageQuoteLinks,
   parseAppLink,
 } from "@/lib/chat/appLinks";
 import { previewUrlOf } from "@/lib/chat/linkUrls";
@@ -120,6 +121,24 @@ describe("messageLinksIn", () => {
     const links = messageLinksIn(`${a} ${a} ${b} ${c} ${d}`);
     expect(links).toHaveLength(3);
     expect(links.map((l) => l.messageId)).toEqual([M, "55555555-5555-4555-8555-555555555555", "66666666-6666-4666-8666-666666666666"]);
+  });
+
+  test("quotes a decrypted message, including a group DM jump link", () => {
+    const url = `https://serika.chat/dm/group/${C}?jump=${M}`;
+    const content = `But I think this is true actually:\n${url}`;
+    const quoted = messageQuoteLinks({ content, e2ee: { status: "ok" } });
+    expect(quoted).toHaveLength(1);
+    expect(quoted[0]).toMatchObject({
+      kind: "message",
+      href: `/dm/group/${C}?jump=${M}`,
+      messageId: M,
+      previewUrl: `/api/group-dms/${C}/messages?around=${M}&limit=1`,
+    });
+    expect(messageQuoteLinks({ content })).toHaveLength(1);
+    expect(messageQuoteLinks({ content, e2ee: { status: "pending" } })).toEqual([]);
+    expect(messageQuoteLinks({ content, e2ee: { status: "error" } })).toEqual([]);
+    expect(messageQuoteLinks({ content, suppressEmbeds: true, e2ee: { status: "ok" } })).toEqual([]);
+    expect(messageQuoteLinks({ content: "", e2ee: { status: "ok" } })).toEqual([]);
   });
 
   test("skips code, spoilers, and off-site urls", () => {

@@ -237,6 +237,20 @@ function withoutHidden(text: string): string {
     .replace(/\|\|[\s\S]*?\|\|/g, (m) => " ".repeat(m.length));
 }
 
+/**
+ * Quote cards for one message. A decrypted message's text is already on this
+ * device, so it can be scanned. A row that is still ciphertext has nothing
+ * to scan, and "suppress embeds" hides the quote with the website preview.
+ */
+export function messageQuoteLinks(
+  message: { content?: string | null; suppressEmbeds?: boolean; e2ee?: { status?: string } | null },
+  ownHost?: string,
+): AppMessageLink[] {
+  if (!message.content || message.suppressEmbeds) return [];
+  if (message.e2ee && message.e2ee.status !== "ok") return [];
+  return messageLinksIn(message.content, ownHost);
+}
+
 /** Message links in chat text, in order, deduped, at most {@link MAX_MESSAGE_LINK_CARDS}. */
 export function messageLinksIn(text: string, ownHost?: string): AppMessageLink[] {
   if (!text) return [];

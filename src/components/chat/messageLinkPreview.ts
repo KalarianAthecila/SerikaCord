@@ -10,6 +10,7 @@ import {
   type AppMessageLink,
   type ChannelJumpInfo,
 } from "@/lib/chat/appLinks";
+import type { EncryptedPreviewLabels } from "@/lib/e2ee/previewText";
 
 export interface PreviewAuthor {
   name: string;
@@ -120,10 +121,51 @@ export function ensureTarget(
 interface RawMessage {
   id?: string;
   content?: string;
+  channelId?: string;
+  authorId?: string;
+  createdAt?: string;
   attachments?: unknown[];
   sticker?: unknown;
   e2ee?: unknown;
-  author?: { displayName?: string | null; username?: string | null; avatar?: string | null } | null;
+  author?: { id?: string; displayName?: string | null; username?: string | null; avatar?: string | null } | null;
+}
+
+const QUOTE_LABELS: EncryptedPreviewLabels = {
+  attachment: "(attachment)",
+  sticker: "(attachment)",
+  spoiler: "Spoiler",
+};
+
+/** 1:1 preview URLs are `/api/dms/{otherUser}/messages`. Group URLs are not. */
+function dmPeerOf(previewUrl: string | null): string | null {
+  const match = previewUrl?.match(/^\/api\/dms\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/messages/i);
+  return match ? match[1].toLowerCase() : null;
+}
+
+/**
+ * The quoted message is encrypted. Open it on this device (the same path as
+ * a notification preview). The plaintext is not sent anywhere.
+ */
+async function openEncryptedQuote(
+  msg: RawMessage,
+  viewerId: string,
+  previewUrl: string | null,
+  labels: EncryptedPreviewLabels,
+): Promise<string | null> {
+  const channelId = typeof msg.channelId === "string" ? msg.channelId : "";
+  const authorId = msg.authorId || msg.author?.id || "";
+  if (!msg.id || !channelId || !authorId || !msg.e2ee || typeof msg.e2ee !== "object") return null;
+  try {
+    const { previewEncryptedMessage } = await import("@/lib/e2ee/client/previews");
+    const opened = await previewEncryptedMessage(
+      { id: msg.id, channelId, authorId, createdAt: msg.createdAt, e2ee: msg.e2ee },
+      viewerId,
+      { dmPeer: dmPeerOf(previewUrl), labels, max: 140 },
+    );
+    return opened?.text || null;
+  } catch {
+    return null;
+  }
 }
 
 function pickMessage(data: unknown, messageId: string): RawMessage | null {
@@ -148,7 +190,11 @@ function authorOf(msg: RawMessage): PreviewAuthor {
   return { name, avatar };
 }
 
-export function ensurePreview(link: AppMessageLink, viewerId: string | null): void {
+export function ensurePreview(
+  link: AppMessageLink,
+  viewerId: string | null,
+  labels: EncryptedPreviewLabels = QUOTE_LABELS,
+): void {
   const key = previewKey(link, viewerId);
   if (previews.has(key) || previewInflight.has(key)) return;
   if (!link.previewUrl && !link.dmChannelId) {
@@ -189,8 +235,16 @@ export function ensurePreview(link: AppMessageLink, viewerId: string | null): vo
       return;
     }
     const author = authorOf(msg);
-    if (msg.e2ee) {
-      previews.set(key, { status: "encrypted", href, author });
+    const plain = typeof msg.content === "string" ? msg.content : "";
+    // An envelope with no text: the server never had the plaintext. Read it here.
+    if (msg.e2ee && plain.length === 0) {
+      const snippet = viewerId ? await openEncryptedQuote(msg, viewerId, previewUrl, labels) : null;
+      previews.set(
+        key,
+        snippet
+          ? { status: "ok", href, author, snippet, attachment: false }
+          : { status: "encrypted", href, author },
+      );
       emit(previewListeners);
       return;
     }

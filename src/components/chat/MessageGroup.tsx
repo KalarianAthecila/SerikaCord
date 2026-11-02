@@ -8,7 +8,7 @@ import { MessageContent } from "@/components/chat/MessageContent";
 import { LinkEmbed } from "@/components/chat/LinkEmbedSlot";
 import { MessageLinkCards } from "@/components/chat/MessageLinkCard";
 import { useAppHost } from "@/components/chat/AppAnchor";
-import { messageLinksIn } from "@/lib/chat/appLinks";
+import { messageQuoteLinks } from "@/lib/chat/appLinks";
 import { RichEmbed } from "@/components/chat/RichEmbed";
 import { MessageAttachments } from "@/components/chat/MessageAttachments";
 import { MessageReactions } from "@/components/chat/MessageReactions";
@@ -374,13 +374,10 @@ function MessageRowInner<M extends ChatMessage>({
   inlineEmbedsEnabled,
 }: MessageRowProps<M>) {
   const gt = useChatGt();
-  // Quote cards for pasted message links. Encrypted messages stay local, and
-  // "suppress embeds" hides the quote the same way it hides a website preview.
+  // Quote cards for pasted message links. Decrypted text stays on this device;
+  // still-encrypted rows and "suppress embeds" produce no card.
   const linkHost = useAppHost();
-  const messageLinks = useMemo(() => {
-    if (message.e2ee || message.suppressEmbeds || !message.content) return [];
-    return messageLinksIn(message.content, linkHost);
-  }, [message.e2ee, message.suppressEmbeds, message.content, linkHost]);
+  const messageLinks = useMemo(() => messageQuoteLinks(message, linkHost), [message, linkHost]);
   // Pings you (mention, @everyone/@here, or a reply to you): Discord's
   // highlighted row.
   const pingsMe =

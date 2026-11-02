@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useSyncExternalStore } from "react";
+import { useEffect, useMemo, useSyncExternalStore } from "react";
 import { useAuth } from "@/contexts/AuthContext";
 import { cdnImage } from "@/lib/utils";
 import type { AppMessageLink } from "@/lib/chat/appLinks";
@@ -13,6 +13,7 @@ import {
   subscribePreviews,
   type MessagePreview,
 } from "./messageLinkPreview";
+import type { EncryptedPreviewLabels } from "@/lib/e2ee/previewText";
 
 const LOADING: MessagePreview = { status: "loading" };
 
@@ -22,11 +23,19 @@ function MessageLinkCard({ link }: { link: AppMessageLink }) {
   const viewerId = user?.id ?? null;
   const key = previewKey(link, viewerId);
   const preview = useSyncExternalStore(subscribePreviews, () => peekPreview(key), () => LOADING);
+  // Passed into the encrypted-quote opener. Same strings the card already shows.
+  const labels = useMemo<EncryptedPreviewLabels>(() => ({
+    attachment: gt("(attachment)"),
+    sticker: gt("(attachment)"),
+    spoiler: gt("Spoiler"),
+  }), [gt]);
 
   useEffect(() => {
-    if (link.dmChannelId && isLoading) return;
-    ensurePreview(link, viewerId);
-  }, [link, viewerId, isLoading]);
+    // Wait until we know who is signed in, so a decrypted quote uses their keys
+    // and an `@me` channel resolves to the other person.
+    if (isLoading) return;
+    ensurePreview(link, viewerId, labels);
+  }, [link, viewerId, isLoading, labels]);
 
   if (preview.status === "loading") {
     return <div className="mt-1 h-10 max-w-[min(100%,32rem)] animate-pulse rounded-md bg-[var(--app-surface-alt)]" aria-hidden />;
