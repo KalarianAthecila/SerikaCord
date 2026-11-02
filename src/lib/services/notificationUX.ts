@@ -2,6 +2,7 @@
 
 import type { IUserSettings } from "@/lib/models/User";
 import { MUTE_FOREVER, decideMessageAlert } from "@/lib/notifications/levels";
+import { isDoNotDisturb } from "@/lib/notifications/dnd";
 import {
   isChannelMutedNow,
   resolveConversation,
@@ -23,6 +24,15 @@ export function setUserNotificationSettings(n: IUserSettings['notifications'] | 
   if (typeof localStorage !== "undefined") {
     localStorage.setItem("serika-notif-sound", n?.sounds ? "true" : "false");
   }
+}
+
+// The signed-in user's own status. Do Not Disturb as a status (the red dot)
+// silences notifications just like the DND switch in notification settings.
+// AuthContext calls setOwnPresenceStatus() whenever the status changes.
+let ownStatus: string | null = null;
+
+export function setOwnPresenceStatus(status: string | null | undefined) {
+  ownStatus = status ?? null;
 }
 
 /** True when the user turned off "Mentions only" (notify on every message). */
@@ -66,8 +76,8 @@ function isWithinQuietHours(start: string, end: string, days: number[] | undefin
 
 export function isDndActive(): boolean {
   const n = getNotifSettings();
+  if (isDoNotDisturb(ownStatus, n?.dnd === true)) return true;
   if (!n) return false;
-  if (n.dnd) return true;
   if (n.dndSchedule?.enabled && n.dndSchedule.start && n.dndSchedule.end) {
     return isWithinQuietHours(n.dndSchedule.start, n.dndSchedule.end, n.dndSchedule.days);
   }

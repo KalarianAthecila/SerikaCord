@@ -26,6 +26,7 @@ import {
 } from '@/lib/push/fcm';
 import type { MentionNames } from '@/lib/chat/mentionText';
 import { decideMessageAlert, resolveNotification } from '@/lib/notifications/levels';
+import { isDoNotDisturb } from '@/lib/notifications/dnd';
 
 const table = schema.pushDevices;
 const MAX_DEVICES_PER_USER = 10;
@@ -301,6 +302,22 @@ export function dismissReadPush(userId: string, channelId: string): void {
 }
 
 /** Of these users (who have devices), the ones not actively using the app. */
+/** Of these users, the ones on Do Not Disturb (status or the notification-settings switch). Never throws. */
+async function dndUsers(userIds: string[]): Promise<Set<string>> {
+  const out = new Set<string>();
+  if (userIds.length === 0) return out;
+  const rows = await db
+    .select({ id: schema.users.id, status: schema.users.status, settings: schema.users.settings })
+    .from(schema.users)
+    .where(inArray(schema.users.id, userIds))
+    .catch(() => [] as Array<{ id: string; status: string | null; settings: unknown }>);
+  for (const r of rows) {
+    const n = (r.settings as { notifications?: { dnd?: unknown } } | null)?.notifications;
+    if (isDoNotDisturb(r.status, n?.dnd === true)) out.add(normalizeId(r.id));
+  }
+  return out;
+}
+
 async function filterInactive(userIds: string[], opts: { messages?: boolean } = {}): Promise<string[]> {
   if (userIds.length === 0) return [];
   const redis = getRedis();
@@ -317,6 +334,17 @@ async function filterInactive(userIds: string[], opts: { messages?: boolean } = 
         userIds = keep;
         if (userIds.length === 0) return [];
       }
+    }
+  }
+  if (opts.messages) {
+    // Do Not Disturb (the status, or the DND switch in notification
+    // settings): no message pushes at all, like Discord. Calls still ring.
+    const dnd = await dndUsers(userIds);
+    if (dnd.size > 0) {
+      const keepIdx = userIds.map((id, i) => (dnd.has(normalizeId(id)) ? -1 : i)).filter((i) => i >= 0);
+      away = keepIdx.map((i) => away[i]);
+      userIds = keepIdx.map((i) => userIds[i]);
+      if (userIds.length === 0) return [];
     }
   }
   const { hasActivityConnection } = await import('@/lib/api/activity');

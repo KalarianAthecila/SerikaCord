@@ -10,6 +10,7 @@ import type { BuiltinBadgeId } from "@/lib/constants/badges";
 import { isDesktopShell } from "@/lib/desktop/bridge";
 import { nativePlatform } from "@/lib/native/bridge";
 import { isDeviceIdle, onIdleChange, startIdleTracker } from "@/lib/presence/idleTracker";
+import { setOwnPresenceStatus } from "@/lib/services/notificationUX";
 
 // Built-in ids keep autocomplete; badges created in the DB are plain strings.
 export type BadgeId = BuiltinBadgeId | (string & {});
@@ -189,6 +190,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       refreshInFlight.current = false;
     }
   }, []);
+
+  // Notifications read the status synchronously: Do Not Disturb silences
+  // desktop notifications, sounds and toasts (lib/services/notificationUX).
+  const ownStatus = user?.status ?? null;
+  useEffect(() => {
+    setOwnPresenceStatus(ownStatus);
+  }, [ownStatus]);
 
   // Set up visibility change and beforeunload handlers
   useEffect(() => {
