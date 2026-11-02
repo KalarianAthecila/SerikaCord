@@ -1700,6 +1700,8 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
               {/* Composer (kept mounted but hidden while a command is filled in) */}
               <div
                 className={commandMode ? "hidden" : "contents"}
+                // MessageList hides the keyboard when the list is dragged toward older messages (CORD-91).
+                data-chat-composer=""
                 onFocus={handleComposerFocus}
                 onBlur={handleComposerBlur}
               >
@@ -1715,6 +1717,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                 />
               </div>
               {activeCommand && (
+                <div className="contents" data-chat-composer="">
                 <CommandComposer
                   key={activeCommand.spec.key}
                   spec={activeCommand.spec}
@@ -1733,6 +1736,7 @@ export const MessageBar = forwardRef<MessageBarHandle, MessageBarProps>(
                   onExit={exitCommand}
                   onHistoryStep={stepHistory}
                 />
+                </div>
               )}
 
               {/* Right-side buttons (pinned to editor row) */}

@@ -31,6 +31,7 @@ import {
 } from "@/lib/chat/unreadMarker";
 import { onHotkey } from "@/lib/keybinds";
 import { installEmojiCopyHandler } from "@/lib/chat/emojiClipboardDom";
+import { startKeyboardDismissGesture, stepKeyboardDismissGesture, type KeyboardDismissGesture } from "@/lib/chat/keyboardDismiss";
 import { isUserAttending, setListAtBottom, subscribeAttention } from "@/lib/unread/attentionTracker";
 import { cn } from "@/lib/utils";
 import { MessageGroup } from "@/components/chat/MessageGroup";
@@ -742,6 +743,61 @@ function MessageListInner<M extends ChatMessage>(
 
   // Scroll listener: bottom detection + top pagination with scroll restore.
   // Throttled via requestAnimationFrame for smoother performance.
+  // CORD-91: dragging the list toward older messages while the composer is
+  // focused hides the on-screen keyboard (Discord / iMessage). Only a real
+  // finger drag counts (see lib/chat/keyboardDismiss.ts); the draft stays in
+  // the composer. Passive listeners, so scrolling is never held up.
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    let gesture: KeyboardDismissGesture | null = null;
+    let startX = 0;
+    let startY = 0;
+    let startTop = 0;
+    const focusedComposer = (): HTMLElement | null => {
+      const el = document.activeElement as HTMLElement | null;
+      return el && el !== document.body && el.closest("[data-chat-composer]") ? el : null;
+    };
+    const selecting = () => {
+      const sel = window.getSelection?.();
+      return !!sel && !sel.isCollapsed && sel.toString().length > 0;
+    };
+    const onStart = (e: TouchEvent) => {
+      if (e.touches.length !== 1) { gesture = null; return; }
+      gesture = startKeyboardDismissGesture();
+      startX = e.touches[0].clientX;
+      startY = e.touches[0].clientY;
+      startTop = viewport.scrollTop;
+    };
+    const onMove = (e: TouchEvent) => {
+      if (!gesture || gesture.done) return;
+      const t = e.touches[0];
+      if (!t) return;
+      const composer = focusedComposer();
+      const r = stepKeyboardDismissGesture(gesture, {
+        dx: t.clientX - startX,
+        dy: t.clientY - startY,
+        scrolledTowardOlder: startTop - viewport.scrollTop,
+        multiTouch: e.touches.length > 1,
+        composerFocused: !!composer,
+        selectingText: selecting(),
+      });
+      gesture = r.gesture;
+      if (r.dismiss) composer?.blur();
+    };
+    const onEnd = () => { gesture = null; };
+    viewport.addEventListener("touchstart", onStart, { passive: true });
+    viewport.addEventListener("touchmove", onMove, { passive: true });
+    viewport.addEventListener("touchend", onEnd, { passive: true });
+    viewport.addEventListener("touchcancel", onEnd, { passive: true });
+    return () => {
+      viewport.removeEventListener("touchstart", onStart);
+      viewport.removeEventListener("touchmove", onMove);
+      viewport.removeEventListener("touchend", onEnd);
+      viewport.removeEventListener("touchcancel", onEnd);
+    };
+  }, []);
+
   const handleScroll = useCallback(() => {
     if (scrollRafRef.current !== null) return;
     scrollRafRef.current = requestAnimationFrame(() => {

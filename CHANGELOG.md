@@ -9,6 +9,7 @@
 ### Features
 
 - **Message links open here** — a link to a message, channel, DM or invite stays in the app and jumps to that message, instead of opening a new tab. A pasted message link shows a short quote you can click. The quote also shows in an encrypted chat, and an encrypted message is opened on this device.
+- **Scrolling up hides the keyboard** — on phones and tablets, dragging a chat up to read older messages closes the on-screen keyboard, like other chat apps. Your unsent text stays in the message box. Works in channels, DMs, group DMs and threads. (CORD-91)
 
 ### Changes
 
