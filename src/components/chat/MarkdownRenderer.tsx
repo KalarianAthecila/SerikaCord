@@ -10,6 +10,7 @@ import { useAuth } from "@/contexts/AuthContext";
 import { useRouter } from "next/navigation";
 import { useGT } from "gt-next";
 import { decodeHtmlEntities } from "@/lib/chat/messages";
+import { AppAnchor } from "@/components/chat/AppAnchor";
 
 type GTFunc = (str: string, params?: Record<string, unknown>) => string;
 
@@ -588,11 +589,11 @@ const CodeBlock = memo(function CodeBlock({ code, lang }: { code: string; lang: 
 export type MarkdownTextRenderer = (node: MarkdownNode, key: string) => React.ReactNode;
 
 function defaultRenderText(node: MarkdownNode, key: string): React.ReactNode {
-  if (node.type === "url") {
+  if (node.type === "url" && node.href) {
     return (
-      <a key={key} href={node.href} target="_blank" rel="noopener noreferrer" className="text-[var(--app-accent)] hover:underline break-all">
+      <AppAnchor key={key} href={node.href} className="text-[var(--app-accent)] hover:underline break-all">
         {node.content}
-      </a>
+      </AppAnchor>
     );
   }
   return <Fragment key={key}>{node.content}</Fragment>;
@@ -620,10 +621,12 @@ function renderInlineNodes(nodes: MarkdownNode[], keyPrefix: string, renderText:
           </code>
         );
       case "link":
-        return (
-          <a key={key} href={node.href} title={node.href} target="_blank" rel="noopener noreferrer" className="text-[var(--app-accent)] hover:underline break-words">
+        return node.href ? (
+          <AppAnchor key={key} href={node.href} title={node.href} className="text-[var(--app-accent)] hover:underline break-words">
             {node.content}
-          </a>
+          </AppAnchor>
+        ) : (
+          <Fragment key={key}>{node.content}</Fragment>
         );
       case "linebreak":
         return <br key={key} />;

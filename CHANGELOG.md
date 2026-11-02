@@ -8,6 +8,8 @@
 
 ### Features
 
+- **Message links open here** — a link to a message, channel, DM or invite stays in the app and jumps to that message, instead of opening a new tab. A pasted message link shows a short quote you can click.
+
 ### Changes
 
 - **A Play Store package ships with each release** — Android releases include a signed app bundle next to the APK. That bundle is what Google Play accepts.

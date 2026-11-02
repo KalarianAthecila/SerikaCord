@@ -6,6 +6,7 @@ import type { MessageEmbed } from "@/lib/chat/types";
 import { decodeHtmlEntities } from "@/lib/chat/messages";
 import { isGifUrl } from "@/lib/chat/media";
 import { MessageContent } from "@/components/chat/MessageContent";
+import { AppAnchor } from "@/components/chat/AppAnchor";
 
 /** Message-level data needed so embed text supports the same features as
  *  normal message content: mentions, custom emoji, spoilers, `<t:...>`
@@ -99,9 +100,9 @@ function SingleEmbed({ embed, onMediaClick, ctx }: { embed: MessageEmbed; onMedi
             <div className="flex items-center gap-2 mb-1.5">
               {authorIcon && <img src={authorIcon} alt="" className="w-5 h-5 rounded-full object-cover" loading="lazy" />}
               {embed.author.url && /^https?:\/\//i.test(embed.author.url) ? (
-                <a href={embed.author.url} target="_blank" rel="noopener noreferrer" className="text-white text-xs font-semibold hover:underline">
+                <AppAnchor href={embed.author.url} className="text-white text-xs font-semibold hover:underline">
                   {decodeHtmlEntities(embed.author.name)}
-                </a>
+                </AppAnchor>
               ) : (
                 <EmbedText text={embed.author.name} ctx={ctx} className="text-white text-xs font-semibold" />
               )}
@@ -111,10 +112,13 @@ function SingleEmbed({ embed, onMediaClick, ctx }: { embed: MessageEmbed; onMedi
           {embed.title && (
             <div className="mb-1">
               {embed.url && /^https?:\/\//i.test(embed.url) ? (
-                <a href={embed.url} target="_blank" rel="noopener noreferrer" className="text-[#8B5CF6] hover:underline font-semibold text-[15px] inline-flex items-center gap-1">
+                <AppAnchor
+                  href={embed.url}
+                  className="text-[#8B5CF6] hover:underline font-semibold text-[15px] inline-flex items-center gap-1"
+                  externalMark={<ExternalLink className="w-3 h-3 opacity-60" />}
+                >
                   {decodeHtmlEntities(embed.title)}
-                  <ExternalLink className="w-3 h-3 opacity-60" />
-                </a>
+                </AppAnchor>
               ) : (
                 <EmbedText text={embed.title} ctx={ctx} className="text-white font-semibold text-[15px]" />
               )}

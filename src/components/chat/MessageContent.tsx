@@ -8,6 +8,7 @@ import { cn, cdnImage, retryWithOriginalImage } from "@/lib/utils";
 import { isImageLikeUrl, isGifUrl, isGifProviderUrl } from "@/lib/chat/media";
 import { useAnimatedMedia } from "@/hooks/useAnimatedMedia";
 import { MarkdownDocument, type MarkdownTextRenderer } from "@/components/chat/MarkdownRenderer";
+import { AppAnchor } from "@/components/chat/AppAnchor";
 import { parseMarkdown, type MarkdownNode, type ParsedMarkdown } from "@/lib/chat/markdown";
 import { GifFavoriteButton } from "@/components/chat/GifFavoriteButton";
 import { MemberProfilePopup } from "@/components/user/MemberProfilePopup";
@@ -516,15 +517,13 @@ export const MessageContent = memo(function MessageContent({
         return null;
       }
       return (
-        <a
+        <AppAnchor
           key={`link-${index}`}
           href={part.url}
-          target="_blank"
-          rel="noopener noreferrer"
           className="text-[var(--app-accent)] hover:underline break-all"
         >
           {part.content}
-        </a>
+        </AppAnchor>
       );
     }
     if (part.type === "mention-user" && part.mentionId) {

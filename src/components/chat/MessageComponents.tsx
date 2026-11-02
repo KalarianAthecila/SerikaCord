@@ -11,7 +11,7 @@
  * components, which checks the component really exists on the message and
  * isn't disabled before the app gets a MESSAGE_COMPONENT interaction. The
  * button spins until the app acknowledges (or fails to) on the user's
- * activity stream. Link buttons are plain links (new tab, noopener).
+ * activity stream. Link buttons open off-site in a new tab. A link to a message, channel, DM or invite stays in the app.
  *
  * Media (thumbnails, galleries, files) follows lib/chat/componentsV2: uploads
  * and our CDN load directly, other images go through the image proxy, and
@@ -28,6 +28,7 @@ import { useServer } from "@/contexts/ServerContext";
 import { claimInteraction, onInteractionEvent, postInteraction, recentOutcome } from "@/lib/chat/interactionEvents";
 import { accentHex, componentImageSrc, componentVideoSrc, galleryLayout, isTrustedMedia, isVideoMedia } from "@/lib/chat/componentsV2";
 import { formatFileSize } from "@/lib/chat/messages";
+import { AppAnchor } from "@/components/chat/AppAnchor";
 import type { MessageComponent, SelectOption, UnfurledMedia } from "@/lib/botapi/components";
 import type { MessageAttachment } from "@/lib/chat/types";
 
@@ -453,10 +454,16 @@ export default function MessageComponents({
         return <span key={key} className={cn("chat-cbtn", style, "opacity-50 cursor-not-allowed")}>{content}</span>;
       }
       return (
-        <a key={key} href={c.url} target="_blank" rel="noopener noreferrer nofollow" className={cn("chat-cbtn", style)} title={c.url}>
+        <AppAnchor
+          key={key}
+          href={c.url}
+          rel="noopener noreferrer nofollow"
+          className={cn("chat-cbtn", style)}
+          title={c.url}
+          externalMark={<ExternalLink className="w-3.5 h-3.5 opacity-70" />}
+        >
           {content}
-          <ExternalLink className="w-3.5 h-3.5 opacity-70" />
-        </a>
+        </AppAnchor>
       );
     }
     return (

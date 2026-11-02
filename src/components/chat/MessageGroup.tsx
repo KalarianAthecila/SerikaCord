@@ -6,6 +6,9 @@ import { cn } from "@/lib/utils";
 import { SwipeReplyRow } from "@/components/chat/SwipeReplyRow";
 import { MessageContent } from "@/components/chat/MessageContent";
 import { LinkEmbed } from "@/components/chat/LinkEmbedSlot";
+import { MessageLinkCards } from "@/components/chat/MessageLinkCard";
+import { useAppHost } from "@/components/chat/AppAnchor";
+import { messageLinksIn } from "@/lib/chat/appLinks";
 import { RichEmbed } from "@/components/chat/RichEmbed";
 import { MessageAttachments } from "@/components/chat/MessageAttachments";
 import { MessageReactions } from "@/components/chat/MessageReactions";
@@ -371,6 +374,13 @@ function MessageRowInner<M extends ChatMessage>({
   inlineEmbedsEnabled,
 }: MessageRowProps<M>) {
   const gt = useChatGt();
+  // Quote cards for pasted message links. Encrypted messages stay local, and
+  // "suppress embeds" hides the quote the same way it hides a website preview.
+  const linkHost = useAppHost();
+  const messageLinks = useMemo(() => {
+    if (message.e2ee || message.suppressEmbeds || !message.content) return [];
+    return messageLinksIn(message.content, linkHost);
+  }, [message.e2ee, message.suppressEmbeds, message.content, linkHost]);
   // Pings you (mention, @everyone/@here, or a reply to you): Discord's
   // highlighted row.
   const pingsMe =
@@ -628,6 +638,9 @@ function MessageRowInner<M extends ChatMessage>({
                       onMediaClick={(src, alt) => onMediaClick(src, alt, message.id)}
                     />
                     )}
+
+                    {/* Quote cards stay up when website previews are off. Encrypted messages are skipped above. */}
+                    <MessageLinkCards links={messageLinks} />
 
                     {/* No link previews for encrypted messages: they'd send the links to the server. */}
                     {inlineEmbedsEnabled && !message.suppressEmbeds && !message.e2ee && (

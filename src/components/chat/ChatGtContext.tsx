@@ -67,6 +67,7 @@ export function ChatGtProvider({ children }: { children: ReactNode }) {
       "Replying to": gt("Replying to"),
       "message": gt("message"),
       "(attachment)": gt("(attachment)"),
+      "Original message could not be loaded": gt("Original message could not be loaded"),
       "Sending…": gt("Sending…"),
       "Pinned message": gt("Pinned message"),
       "Silent message: sent without notifications": gt("Silent message: sent without notifications"),

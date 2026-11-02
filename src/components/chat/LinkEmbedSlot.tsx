@@ -4,6 +4,8 @@ import { memo } from "react";
 import dynamic from "next/dynamic";
 import { decodeHtmlEntities } from "@/lib/chat/messages";
 import { previewUrlOf } from "@/lib/chat/linkUrls";
+import { parseAppLink } from "@/lib/chat/appLinks";
+import { useAppHost } from "@/components/chat/AppAnchor";
 import { getRenderedEmbedUrls } from "@/components/chat/RichEmbed";
 import type { MessageEmbed } from "@/lib/chat/types";
 
@@ -25,8 +27,14 @@ interface LinkEmbedProps {
 // Memoized: embeds fetch previews and must not re-run while unrelated chat
 // state (composer text, typing indicators) changes.
 export const LinkEmbed = memo(function LinkEmbed({ content, onMediaClick, onSuppress, embeds }: LinkEmbedProps) {
+  const ownHost = useAppHost();
   // Decode entities (e.g. `&amp;` in query strings) so URLs resolve correctly.
-  const url = previewUrlOf(decodeHtmlEntities(content), getRenderedEmbedUrls(embeds));
+  // A message, channel, DM or invite link gets a quote or an in-app jump, not a website card.
+  const url = previewUrlOf(
+    decodeHtmlEntities(content),
+    getRenderedEmbedUrls(embeds),
+    (candidate) => parseAppLink(candidate, ownHost) != null,
+  );
   if (!url) return null;
   // Keyed by URL so an edit that changes the link starts from an empty preview.
   return <LinkPreview key={url} url={url} onMediaClick={onMediaClick} onSuppress={onSuppress} />;
